@@ -1,38 +1,87 @@
-# advance-kit
+<p align="center">
+  <img src="docs/assets/twitter-banner.svg" alt="Advance" width="640">
+</p>
 
-A Claude Code plugin marketplace by [Advance Studio](https://github.com/anthropic-f).
+<p align="center">
+  <strong>Rigorous development workflows for Claude Code.</strong>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://github.com/advancinggg/advance-kit/releases"><img src="https://img.shields.io/github/v/release/advancinggg/advance-kit?include_prereleases&style=for-the-badge" alt="Latest release"></a>
+  <a href="https://github.com/advancinggg/advance-kit/stargazers"><img src="https://img.shields.io/github/stars/advancinggg/advance-kit?style=for-the-badge" alt="GitHub stars"></a>
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin%20marketplace-7c3aed?style=for-the-badge" alt="Claude Code plugin marketplace">
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.es.md">Español</a>
+</p>
+
+---
+
+## Overview
+
+**advance-kit** is a [Claude Code](https://github.com/anthropics/claude-code) plugin
+marketplace by Advance Studio. It bundles three production-grade plugins that turn
+Claude Code from a helpful assistant into a disciplined engineering collaborator:
+specification-driven planning, dual-model cross-audit, phase-gated file access, and a
+native macOS status surface for approvals.
 
 ## Plugins
 
-### dev
+### `dev` — Enforced development workflow
 
-Enforced dev workflow with dual-model review and phase-gated file access control.
+Enforces the full lifecycle **plan → docs → implement → audit → test → summary** on
+every development task. A `PreToolUse` hook gates file access per phase so the main
+agent cannot skip ahead or silently mutate files outside the current step.
+
+- **Dual-model review** — every audit point runs a Claude subagent (isolated context)
+  *and* a Codex exec pass (agent exploration), then merges findings across models.
+- **Independent evaluator architecture** — the plan / audit / test / adversarial phases
+  spawn fresh evaluators every round with zero implementation context, using
+  structured convergence metrics (`substantive_count`, `pass_rate`) as the objective
+  decision criterion.
+- **Spec-driven module decomposition** — the bundled `/spec` skill turns a PRD into an
+  architecture document plus self-contained MODULE specs, ready to hand off to an AI
+  agent for implementation.
+- **Cross-module regression gates** — when a task touches a contract declared in
+  `ARCHITECTURE.md §6.1`, the workflow reverse-looks-up downstream modules and runs
+  the Regression Check against their historically verified AC ledger.
 
 **Skills:**
-- `/dev [task]` — Full lifecycle: plan → docs → implement → audit → test → summary
-- `/dev:sdd [path]` — Specification Driven Development: PRD → architecture → module specs → implementation order
+- `/dev [task description]` — run the full enforced workflow
+- `/dev status | resume | abort | doctor` — inspect, resume, or reset an in-progress run
+- `/spec [path/to/PRD.md]` — generate architecture and MECE module specs from a PRD
 
 **Agents:**
-- `claude-auditor` — Isolated-context reviewer for dual-model code/plan/security review
+- `claude-auditor` — isolated-context reviewer used for every audit point
 
 **Commands:**
-- `/dev:setup` — Install optional dependencies (Codex) for dual-model review
+- `/dev:setup` — install optional dependencies (Codex CLI) for dual-model review
 
-### claude-best-practice
+### `claude-best-practice` — Coaching context
 
-Coaching skill for effective Claude Code workflows. Loaded as background context (not user-invoked).
+Background skill (not user-invoked) that teaches Claude Code the core discipline of
+working inside a real codebase: explore-plan-code sequencing, verification-first
+development, context management, prompt scoping, course correction, and session
+strategy. Loads automatically as reference material rather than as a slash command.
 
-Covers: explore-plan-code discipline, verification-first development, context management, prompt scoping, course correction, and session strategy.
+### `code-companion` — macOS Dynamic Island for code agents
 
-## Install
+A native macOS floating status pill that surfaces pending approvals and active
+sessions across Claude Code, Codex, and Gemini CLI. Click a notification to jump
+straight to the originating terminal, with rich context about what is waiting for you.
+
+## Installation
 
 ```bash
 # 1. Add the marketplace (one-time)
-claude plugin marketplace add <github-user>/advance-kit
+claude plugin marketplace add advancinggg/advance-kit
 
-# 2. Install plugins
+# 2. Install the plugins you want
 claude plugin install dev@advance-kit
 claude plugin install claude-best-practice@advance-kit
+claude plugin install code-companion@advance-kit
 
 # 3. (Optional) Install dependencies for dual-model review
 /dev:setup
@@ -43,16 +92,29 @@ claude plugin install claude-best-practice@advance-kit
 ```bash
 claude plugin update dev
 claude plugin update claude-best-practice
+claude plugin update code-companion
 ```
 
-## Optional Dependencies
+## Optional dependencies
 
-The `dev` plugin supports dual-model review (Claude + Codex). Without Codex, it falls back to single-model review.
+The `dev` plugin supports dual-model review (Claude + Codex). Without Codex it
+falls back to single-model review automatically and annotates audit conclusions as
+`single-model`.
 
 To enable dual-model review:
-1. Install [Codex CLI](https://github.com/openai/codex)
-2. Run `/dev:setup` to install the Codex plugin automatically
+
+1. Install the [Codex CLI](https://github.com/openai/codex).
+2. Run `/dev:setup` to pull in the matching Codex plugin.
+3. Verify with `/dev doctor`.
+
+## Project status
+
+| Plugin | Version | Status |
+|---|---|---|
+| `dev` | `1.1.0` | Stable — includes `dev` and `spec` skills v3.2.0 |
+| `claude-best-practice` | `1.0.0` | Stable |
+| `code-companion` | `1.0.0` | Stable (macOS only) |
 
 ## License
 
-MIT
+[MIT](LICENSE) © Advance Studio
