@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/twitter-banner.svg" alt="Advance" width="640">
+  <img src="docs/assets/banner.svg" alt="Advance" width="640">
 </p>
 
 <p align="center">
@@ -10,6 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
   <a href="https://github.com/advancinggg/advance-kit/releases"><img src="https://img.shields.io/github/v/release/advancinggg/advance-kit?include_prereleases&style=for-the-badge" alt="Latest release"></a>
   <a href="https://github.com/advancinggg/advance-kit/stargazers"><img src="https://img.shields.io/github/stars/advancinggg/advance-kit?style=for-the-badge" alt="GitHub stars"></a>
+  <a href="https://x.com/Advancinggg"><img src="https://img.shields.io/badge/follow-%40Advancinggg-000000?style=for-the-badge&logo=x&logoColor=white" alt="在 X 上关注 @Advancinggg"></a>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin%20marketplace-7c3aed?style=for-the-badge" alt="Claude Code 插件市场">
 </p>
 
@@ -104,6 +105,14 @@ claude plugin update code-companion
 | `dev` | `1.1.0` | 稳定版——包含 `dev` 和 `spec` skill v3.2.0 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
+
+## 联系方式
+
+- **X / Twitter**：[@Advancinggg](https://x.com/Advancinggg)
+- **邮箱**：[admin@advance.studio](mailto:admin@advance.studio)
+
+欢迎通过 [GitHub Issues](https://github.com/advancinggg/advance-kit/issues)
+提交 bug 反馈或功能建议。
 
 ## 许可证
 

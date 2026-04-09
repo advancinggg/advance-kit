@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/twitter-banner.svg" alt="Advance" width="640">
+  <img src="docs/assets/banner.svg" alt="Advance" width="640">
 </p>
 
 <p align="center">
@@ -10,6 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="Licencia MIT"></a>
   <a href="https://github.com/advancinggg/advance-kit/releases"><img src="https://img.shields.io/github/v/release/advancinggg/advance-kit?include_prereleases&style=for-the-badge" alt="Última versión"></a>
   <a href="https://github.com/advancinggg/advance-kit/stargazers"><img src="https://img.shields.io/github/stars/advancinggg/advance-kit?style=for-the-badge" alt="Estrellas en GitHub"></a>
+  <a href="https://x.com/Advancinggg"><img src="https://img.shields.io/badge/seguir-%40Advancinggg-000000?style=for-the-badge&logo=x&logoColor=white" alt="Seguir a @Advancinggg en X"></a>
   <img src="https://img.shields.io/badge/Claude%20Code-marketplace%20de%20plugins-7c3aed?style=for-the-badge" alt="Marketplace de plugins de Claude Code">
 </p>
 
@@ -122,6 +123,14 @@ Para habilitar la revisión con doble modelo:
 | `dev` | `1.1.0` | Estable — incluye las skills `dev` y `spec` v3.2.0 |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
+
+## Contacto
+
+- **X / Twitter**: [@Advancinggg](https://x.com/Advancinggg)
+- **Correo**: [admin@advance.studio](mailto:admin@advance.studio)
+
+Los reportes de errores y las solicitudes de funcionalidades son bienvenidos vía
+[GitHub Issues](https://github.com/advancinggg/advance-kit/issues).
 
 ## Licencia
 
