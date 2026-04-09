@@ -1,0 +1,28 @@
+{
+  "name": "code-companion-bridge",
+  "displayName": "Code Companion Bridge",
+  "description": "Exposes a local HTTP API for external tools to focus VS Code terminal and editor",
+  "version": "1.0.0",
+  "publisher": "advance-studio",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {},
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.0.0"
+  }
+}

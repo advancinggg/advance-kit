@@ -1,0 +1,46 @@
+{
+  "name": "claude-best-practice-evals",
+  "description": "Behavioral evaluations for the claude-best-practice coaching skill",
+  "cases": [
+    {
+      "name": "explore-before-code",
+      "input": "Add a new API endpoint for user preferences",
+      "expected_behavior": "Claude explores existing endpoint patterns before planning, proposes a plan before coding, and identifies test cases before implementation",
+      "success_criteria": [
+        "Reads existing endpoint files before writing new ones",
+        "Presents a plan to the user before any file edits",
+        "Defines verification criteria (tests or manual checks)"
+      ]
+    },
+    {
+      "name": "verification-first",
+      "input": "The login form is broken, users can't sign in",
+      "expected_behavior": "Claude investigates the bug, identifies root cause, writes a failing test, fixes the issue, and verifies the test passes",
+      "success_criteria": [
+        "Does not immediately edit files",
+        "Investigates and identifies root cause before fixing",
+        "Runs verification after the fix"
+      ]
+    },
+    {
+      "name": "scope-separation",
+      "input": "Refactor the auth module and also update the deploy script while you're at it",
+      "expected_behavior": "Claude suggests handling these as separate tasks rather than mixing them in one context",
+      "success_criteria": [
+        "Identifies the tasks as unrelated concerns",
+        "Suggests completing one before starting the other",
+        "Does not mix both tasks in a single implementation pass"
+      ]
+    },
+    {
+      "name": "prompt-clarification",
+      "input": "Make the dashboard look better",
+      "expected_behavior": "Claude asks clarifying questions about what 'better' means rather than guessing",
+      "success_criteria": [
+        "Asks about specific dimensions (performance, UX, visual design, accessibility)",
+        "Does not immediately start making changes",
+        "Proposes concrete improvements after clarification"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,178 @@
+#!/bin/bash
+# Code Companion Bridge
+#
+# PermissionRequest: SYNCHRONOUS — blocks until user decides
+# Other events: FIRE-AND-FORGET
+
+set -euo pipefail
+
+PORT="${COMPANION_PORT:-9527}"
+SOURCE="unknown"
+POLL_INTERVAL=0.5
+POLL_TIMEOUT=120
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --source) SOURCE="${2:-unknown}"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# Read stdin into a temp file (avoids shell escaping issues with JSON)
+TMPFILE=$(mktemp)
+trap "rm -f $TMPFILE ${TMPFILE}.new" EXIT
+cat > "$TMPFILE"
+
+RAW_HOOK=$(/usr/bin/python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" < "$TMPFILE" 2>/dev/null || echo "")
+
+# Normalize event names across CLI tools:
+# Gemini CLI uses different names than Claude Code / Codex
+case "$RAW_HOOK" in
+    BeforeTool)   HOOK="PermissionRequest" ;;
+    AfterTool)    HOOK="PostToolUse" ;;
+    AfterAgent)   HOOK="Stop" ;;
+    BeforeAgent)  HOOK="PostToolUse" ;;  # treat as working signal
+    *)            HOOK="$RAW_HOOK" ;;     # Claude/Codex names pass through
+esac
+
+# Find terminal shell PID by walking up the PPID chain
+find_terminal_pid() {
+    local P=$$
+    for i in 1 2 3 4 5; do
+        P=$(ps -o ppid= -p "$P" 2>/dev/null | tr -d ' ')
+        [ -z "$P" ] && return
+        local CMD=$(ps -o comm= -p "$P" 2>/dev/null | xargs basename 2>/dev/null)
+        case "$CMD" in
+            zsh|bash|-zsh|-bash|fish) echo "$P"; return ;;
+        esac
+    done
+}
+
+# Detect terminal app by walking further up the process tree
+find_terminal_app() {
+    local P="${1:-}"
+    [ -z "$P" ] && return
+    for i in 1 2 3 4 5 6 7 8; do
+        P=$(ps -o ppid= -p "$P" 2>/dev/null | tr -d ' ')
+        [ -z "$P" ] && return
+        local CMD=$(ps -o comm= -p "$P" 2>/dev/null || true)
+        case "$CMD" in
+            *iTerm2*|*iTermServer*) echo "iterm2"; return ;;
+            *Terminal*) echo "terminal"; return ;;
+            *Ghostty*|*ghostty*) echo "ghostty"; return ;;
+            *Electron*|*Code*|*code*) echo "vscode"; return ;;
+            *Cursor*|*cursor*) echo "cursor"; return ;;
+            *Antigravity*|*antigravity*) echo "antigravity"; return ;;
+        esac
+    done
+}
+
+TERM_PID=$(find_terminal_pid)
+
+# Resolve TTY from PID
+TERM_TTY=""
+if [ -n "$TERM_PID" ]; then
+    TERM_TTY="/dev/$(ps -o tty= -p "$TERM_PID" 2>/dev/null | tr -d ' ')"
+    [ "$TERM_TTY" = "/dev/" ] && TERM_TTY=""
+fi
+
+# Detect terminal app
+TERM_APP=$(find_terminal_app "$TERM_PID")
+
+echo "$(date '+%H:%M:%S') HOOK=$HOOK PID=$TERM_PID TTY=$TERM_TTY APP=$TERM_APP SRC=$SOURCE" >> /tmp/companion-bridge.log 2>/dev/null || true
+
+# Inject terminal_pid, terminal_tty, terminal_app + normalize hook_event_name into JSON body
+/usr/bin/python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+d['terminal_pid'] = int(sys.argv[1]) if sys.argv[1] else 0
+d['terminal_tty'] = sys.argv[2]
+d['terminal_app'] = sys.argv[3]
+d['hook_event_name'] = sys.argv[4]
+json.dump(d, sys.stdout)
+" "${TERM_PID:-0}" "${TERM_TTY}" "${TERM_APP}" "${HOOK}" < "$TMPFILE" > "${TMPFILE}.new" && mv "${TMPFILE}.new" "$TMPFILE"
+
+if [ "$HOOK" = "PermissionRequest" ]; then
+    # ═══════════════════════════════════════
+    # SYNCHRONOUS: send event, wait for decision
+    # ═══════════════════════════════════════
+
+    RESPONSE=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Source: ${SOURCE}" \
+        --max-time 5 \
+        --connect-timeout 2 \
+        -d @"$TMPFILE" \
+        "http://127.0.0.1:${PORT}/event" 2>/dev/null || echo "")
+
+    echo "$(date '+%H:%M:%S') RESPONSE=$RESPONSE" >> /tmp/companion-bridge.log 2>/dev/null || true
+
+    [ -z "$RESPONSE" ] && exit 1
+
+    DECISION_ID=$(/usr/bin/python3 -c "import sys,json; print(json.load(sys.stdin).get('decision_id',''))" <<< "$RESPONSE" 2>/dev/null || echo "")
+
+    [ -z "$DECISION_ID" ] && exit 1
+
+    # Poll for decision
+    ELAPSED=0
+    while [ "$ELAPSED" -lt "$POLL_TIMEOUT" ]; do
+        DECISION=$(curl -s --max-time 2 "http://127.0.0.1:${PORT}/decision/${DECISION_ID}" 2>/dev/null || echo "")
+        BEHAVIOR=$(/usr/bin/python3 -c "import sys,json; print(json.load(sys.stdin).get('behavior',''))" <<< "$DECISION" 2>/dev/null || echo "")
+
+        case "$BEHAVIOR" in
+            allow)
+                # Output format depends on source CLI
+                if [ "$SOURCE" = "gemini" ]; then
+                    echo '{"decision":"allow"}'
+                else
+                    echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+                fi
+                exit 0
+                ;;
+            always_allow)
+                if [ "$SOURCE" = "gemini" ]; then
+                    echo '{"decision":"allow"}'
+                else
+                    PERMS=$(/usr/bin/python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+ps = d.get('permission_suggestions', [])
+if not ps:
+    tn = d.get('tool_name', '')
+    ps = [{'type':'addRules','rules':[{'toolName':tn}],'behavior':'allow','destination':'session'}]
+json.dump(ps, sys.stdout)
+" < "$TMPFILE" 2>/dev/null || echo "[]")
+                    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\",\"updatedPermissions\":${PERMS}}}}"
+                fi
+                exit 0
+                ;;
+            deny)
+                if [ "$SOURCE" = "gemini" ]; then
+                    echo '{"decision":"deny","reason":"Denied by Code Companion"}'
+                else
+                    echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}'
+                fi
+                exit 0
+                ;;
+            terminal|dismissed)
+                exit 1
+                ;;
+        esac
+
+        sleep "$POLL_INTERVAL"
+        ELAPSED=$((ELAPSED + 1))
+    done
+
+    exit 1
+else
+    # ═══════════════════════════════════════
+    # FIRE-AND-FORGET: use @file to avoid shell escaping issues
+    # ═══════════════════════════════════════
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Source: ${SOURCE}" \
+        --max-time 2 \
+        --connect-timeout 1 \
+        -d @"$TMPFILE" \
+        "http://127.0.0.1:${PORT}/event" >/dev/null 2>&1 || true
+fi

@@ -1,0 +1,6 @@
+{
+  "name": "claude-best-practice",
+  "version": "1.0.0",
+  "description": "Claude Code best practices: explore-plan-code discipline, verification-first development, context management, prompt scoping, and session strategy.",
+  "author": { "name": "Advance Studio" }
+}

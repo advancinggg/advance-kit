@@ -1,0 +1,7 @@
+{
+  "name": "code-companion",
+  "version": "1.0.0",
+  "description": "macOS Dynamic Island for code agents. Floating status pill shows pending approvals and active sessions from Claude Code, Codex, Gemini CLI, and more. Click to jump to the correct terminal window.",
+  "author": { "name": "Advance Studio" },
+  "hooks": "./hooks/hooks.json"
+}
