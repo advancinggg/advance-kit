@@ -34,6 +34,36 @@ module specifications → determine implementation order.
 - **Independent evaluators**: Architecture and Module specs are validated by fresh evaluators (Claude + Codex) checking PRD coverage, MECE compliance, interface consistency — convergence = zero substantive findings
 - **English output**: All generated documents use English
 
+**Iron Rule — No Escape Hatch (fixes #27 and #30; a global constraint across /dev and /spec):**
+
+It is forbidden, in any phase output (ARCHITECTURE.md / MODULE-*.md / Final Report /
+the plan inside an AskUserQuestion), to invent any of the following fields:
+- "Known gaps" / "Known issues" / any "not yet aligned" free-form field
+- "TODO" / "TODO: …" / "To be addressed later" / "Pending refinement"
+- "Out of scope" (other than OUT-xxx formal scope exclusions)
+- "Deferred work" / "v2 deferred" / "follow up later"
+- "Needs follow-up design"
+- Any other free-form wording (in any language) that routes around evaluator findings.
+
+Every substantive finding (Critical + Warning) reported by the evaluators MUST take
+one of the following paths:
+1. **Fix**: edit ARCHITECTURE.md / MODULE-*.md directly; the next evaluator round
+   re-checks it.
+2. **Roll back to an upstream phase**: if the PRD itself is ambiguous or incomplete,
+   use AskUserQuestion to make the user update the PRD. /spec is NOT allowed to
+   "ghostwrite" open PRD questions.
+3. **Explicit abort**: run `/spec abort` to terminate the run. Half-finished
+   "let's call it done" is not allowed.
+
+The only legitimate "not implemented" marker is §3.6 Known Gaps & Future Work
+(present in the MODULE template), and it may be used **only** to record known
+boundaries of already-implemented functionality (for example, "v1 supports
+PostgreSQL only; the MySQL adapter ships in v2"). It **must not** be used to
+route around the current round's evaluator findings.
+
+LLM agents have a natural tendency to soften hard constraints with free-form text —
+this rule explicitly forbids that escape hatch.
+
 **Design note: /spec vs /dev enforcement model**
 
 /spec does NOT use PreToolUse hooks or check-phase.sh. Gates use AskUserQuestion (blocking call). Evaluator loops are instruction-level, not hook-enforced. This means /spec's phase discipline is a convention, not an enforced invariant — the agent CAN write outside `docs/` or skip a gate. This is a deliberate trade-off: /spec's risk profile (writing markdown docs) is lower than /dev's (modifying source code), so the lighter enforcement is acceptable.
@@ -125,8 +155,12 @@ Write `docs/.spec-state/progress.json`:
   "prd_paths": [],
   "mode": "greenfield|existing_project",
   "codex_available": true,
+  "codex_consecutive_failures": 0,
+  "degraded_from_round": null,
   "architecture_done": false,
   "architecture_eval_rounds": 0,
+  "architecture_claude_rounds_run": 0,
+  "architecture_codex_rounds_run": 0,
   "architecture_accepted_at_round": null,
   "modules_completed": {},
   "modules_accepted": {},
@@ -141,8 +175,8 @@ Write `docs/.spec-state/progress.json`:
 - After Architecture Evaluator converges → `architecture_done: true`, `architecture_eval_rounds: N` (leave `architecture_accepted_at_round: null`)
 - After user accepts architecture at round limit → `architecture_done: true`, `architecture_eval_rounds: N`, `architecture_accepted_at_round: N`
 - After Gate 2 confirmed → `phase: "modules"`, `modules_total: N`
-- Before starting each module → add to `modules_in_progress` as `{"MODULE-NNN-name": {"eval_round": 0}}`
-- After each evaluator round → increment `modules_in_progress["MODULE-NNN-name"].eval_round`
+- Before starting each module → add to `modules_in_progress` as `{"MODULE-NNN-name": {"eval_round": 0, "claude_rounds_run": 0, "codex_rounds_run": 0}}`
+- After each evaluator round → increment `modules_in_progress["MODULE-NNN-name"].eval_round`, plus `claude_rounds_run` (always) and `codex_rounds_run` (only if Codex participated this round per Sync Protocol rule 4)
 - After each module evaluator converges → move from `modules_in_progress` to `modules_completed` as `{"MODULE-NNN-name": {"eval_rounds": N}}`
 - After user accepts module at round limit → move from `modules_in_progress` to `modules_accepted` as `{"MODULE-NNN-name": {"eval_rounds": N}}`
 - All modules done → `phase: "implementation_order"` (set BEFORE starting Phase 3 generation)
@@ -307,6 +341,50 @@ Ambiguities Found (Developer Perspective):
 If critical ambiguities exist, ask user to resolve before proceeding.
 
 Use AskUserQuestion to wait for user confirmation. If user has corrections, update understanding and continue.
+
+---
+
+## Dual-Evaluator Sync Protocol (Fix #31 v3.3 — applies to all evaluator loops: Phase 1.3 Architecture, Phase 2.4 Module)
+
+The following 5 hard constraints are **shared** by every evaluator loop in /spec. Violating any one is treated as a process violation and the main agent must stop and report.
+
+1. **Parallel spawn enforcement (single-message rule)**
+   - In STEP 1, the Claude Agent call and Codex Bash call **must be fired in the same assistant response**, side-by-side. Sequential spawning (Claude first, wait, then Codex) is forbidden.
+   - Do NOT branch on "let me check Claude's result before deciding whether to run Codex".
+   - If preparatory work is needed (read files, compute inputs), do it in a **separate** response first, then use **one dedicated response** to fire both evaluators simultaneously.
+   - Violation (sequential spawn) → Codex is treated as "did not participate this round" and `eval_round` does NOT advance.
+
+2. **STEP 2 barrier assertion**
+   - Before entering STEP 2, both of the following must hold:
+     a. `claude_result != null AND format_valid(claude_result)`
+     b. `codex_result != null AND format_valid(codex_result)` **OR** `codex_available == false` (in degraded mode only check a)
+   - If either fails (output missing, empty, malformed) → STEP 2 is **forbidden**; handle per rule 3.
+   - Codex background Bash (timeout: 300000) must wait for the task-notification before reading stdout; reading before completion yields null.
+
+3. **Mid-flight degradation protocol**
+   - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the same round** (Claude's result is cached, do NOT re-run Claude).
+   - If retry also fails → `codex_consecutive_failures += 1`; merge only Claude's findings for this round, but `eval_round` advances normally.
+   - **Two consecutive round failures** → force **degraded mode**:
+     - `codex_available: false` in state file
+     - `degraded_from_round: {eval_round}` recorded
+     - All subsequent rounds skip Codex, mark as "single-evaluator"
+     - **Degradation is irreversible** within the same spec run.
+   - Any round where Codex succeeds → reset `codex_consecutive_failures = 0`.
+
+4. **Per-evaluator counters + invariant**
+   - State file maintains `claude_rounds_run` / `codex_rounds_run` (per architecture eval and per module eval).
+   - After each STEP 2 merge completes:
+     - `claude_rounds_run += 1` (always)
+     - `codex_rounds_run += 1` (only if Codex's output was valid and participated in merge this round)
+   - **Invariant** (main agent must assert this before writing STEP 3):
+     - `claude_rounds_run == eval_round`
+     - `codex_rounds_run == eval_round` **OR** `(codex_available == false AND codex_rounds_run == degraded_from_round - 1)`
+   - Invariant violation → stop the loop and AskUserQuestion to report process failure. Do NOT silently advance.
+
+5. **Rescue bypass isolation + narration discipline**
+   - `codex:codex-rescue` subagent calls are **rescue side-channels** — they do **NOT** count toward `codex_rounds_run` and do **NOT** get written to `eval_history`.
+   - All narration output (progress reports, Final Report, evaluator prompt round hints) **must NOT** use "Claude round X / Codex round Y" phrasing — always use the single unified `eval_round`.
+   - To report an evaluator's per-round finding count, reference `eval_history[-1].claude_findings` / `codex_findings` fields — do not expose separate round numbers.
 
 ---
 
@@ -507,6 +585,8 @@ repeat:
 
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn TWO fresh Architecture Evaluators in parallel
+  (Per Dual-Evaluator Sync Protocol rule 1: Claude Agent call + Codex Bash
+   MUST be fired in the SAME assistant response, not sequentially.)
   ──────────────────────────────────────────────────────────────
 
   ① Claude Architecture Evaluator (Agent, subagent_type: claude-auditor)
@@ -607,12 +687,36 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 2: Merge evaluator reports
   ──────────────────────────────────────────────────────────────
+  **Barrier assertion (Sync Protocol rule 2)**: before entering STEP 2, all of the
+  following must hold:
+    - claude_result is returned AND format is valid
+    - codex_result is returned AND format is valid, OR codex_available == false
+  If either fails → apply Sync Protocol rule 3 (retry Codex once in same round,
+  Claude's cached result is reused — do NOT re-run Claude).
+  Two consecutive rounds of Codex failure → force degraded mode:
+    - codex_available = false
+    - degraded_from_round = eval_round
+    - all subsequent rounds skip Codex, mark as single-evaluator
+
 
   - Merge uncovered PRD items (union)
   - Merge MECE violations and dependency issues (deduplicate)
   - Merge Risk & Threat Model Issues (deduplicate)
   - Both found same issue → high confidence
   - Only one found → main agent arbitrates
+
+  ──────────────────────────────────────────────────────────────
+  STEP 2.5: Per-evaluator counter update + invariant (Sync Protocol rule 4)
+  ──────────────────────────────────────────────────────────────
+  After merge completes, update progress.json:
+    architecture_claude_rounds_run += 1  (always)
+    if codex participated this round and output was valid:
+      architecture_codex_rounds_run += 1
+  Assert invariants before writing step 3 results:
+    architecture_claude_rounds_run == eval_round
+    architecture_codex_rounds_run == eval_round OR
+      (codex_available == false AND architecture_codex_rounds_run == degraded_from_round - 1)
+  Invariant violation → stop the loop and AskUserQuestion to report process failure.
 
   ──────────────────────────────────────────────────────────────
   STEP 3: Verdict
@@ -1082,6 +1186,8 @@ For each module (in topological order):
 
     ──────────────────────────────────────────────────────────────
     STEP 1: Spawn TWO fresh Module Evaluators in parallel
+    (Per Dual-Evaluator Sync Protocol rule 1: Claude Agent call + Codex Bash
+     MUST be fired in the SAME assistant response, not sequentially.)
     ──────────────────────────────────────────────────────────────
 
     ① Claude Module Evaluator (Agent, subagent_type: claude-auditor)
@@ -1198,6 +1304,28 @@ For each module (in topological order):
     ──────────────────────────────────────────────────────────────
     STEP 2: Merge & Verdict
     ──────────────────────────────────────────────────────────────
+    **Barrier assertion (Sync Protocol rule 2)**: before entering STEP 2, all of
+    the following must hold:
+      - claude_result is returned AND format is valid
+      - codex_result is returned AND format is valid, OR codex_available == false
+    If either fails → apply Sync Protocol rule 3 (retry Codex once in same round,
+    Claude's cached result is reused — do NOT re-run Claude).
+    Two consecutive rounds of Codex failure → force degraded mode:
+      - codex_available = false
+      - degraded_from_round = eval_round
+      - all subsequent rounds skip Codex, mark as single-evaluator
+
+    **STEP 2.5: Per-evaluator counter update + invariant (Sync Protocol rule 4)**
+    After merge completes, update progress.json counters for this module:
+      modules_in_progress["MODULE-NNN-name"].claude_rounds_run += 1  (always)
+      if codex participated this round and output was valid:
+        modules_in_progress["MODULE-NNN-name"].codex_rounds_run += 1
+    Assert invariants before writing step 3 results:
+      claude_rounds_run == eval_round
+      codex_rounds_run == eval_round OR
+        (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
+    Invariant violation → stop the loop and AskUserQuestion to report process failure.
+
 
     Merge rules:
     - Merge Missing Details, Interface Mismatches, Empty Sections (deduplicate)
@@ -1322,6 +1450,14 @@ Implementation requirements:
 
 ## Phase 4: Final Report
 
+**Strict template — whitelist only (fixes #27 and #30)**: the Final Report MUST be
+rendered strictly with the fields below. Adding **any** field that is not in the
+template (for example "Known gaps" / "TODO" / "Deferred items" / "not yet aligned" /
+"needs follow-up" and similar free-form fields) is **forbidden**. If a remaining
+problem from a non-converged evaluator must be recorded, the only legitimate path
+is `accepted at round N` (the user has explicitly accept-at-limit'd it), and it
+must be traceable in progress.json.
+
 After all documents are generated, present a summary to the user:
 
 ```
@@ -1351,6 +1487,15 @@ Next Steps:
   2. Begin implementation following IMPLEMENTATION_ORDER.md sequence
   3. Run corresponding integration tests after completing each module
 ```
+
+**Template field whitelist** (any field not in this list is forbidden in output):
+Document List / Module Decomposition / Implementation Phases / Critical Path /
+Evaluator Results / Next Steps
+
+**Forbidden field examples** (their presence counts as a process violation):
+~~Known Gaps~~ / ~~TODO~~ / ~~Deferred~~ / ~~Known Issues~~ /
+~~Pending refinement~~ / ~~Needs follow-up~~ /
+~~Out of Scope~~ (OUT-xxx formal scope exclusions are the only allowed form)
 
 ---
 

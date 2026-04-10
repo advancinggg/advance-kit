@@ -58,6 +58,48 @@ the full closed loop: **plan → update docs → implement → audit → test �
 - **Rollback rule**: if a fix changes the interface, acceptance criteria, or scope, you must
   roll back to the DOCS phase.
 
+**Iron Rule — No Escape Hatch (fixes #27 #28 #29 #30; a global constraint across /dev and /spec):**
+
+The main agent is **forbidden**, in any phase output (plan / DOCS / commit message / SUMMARY /
+AskUserQuestion wording), from inventing any of the following fields or concepts:
+- "Known unfixed" / "Known issues, logged for you" / "Known issues"
+- "Out-of-Scope" (anything other than the `waived_scope` YAML array formally declared in the plan)
+- "Deferred" / "Deferred work" / "TODO for you" / "TODO: fix later"
+- "Known gaps" / "Follow up later" / "v2 deferred" / "Skip for now"
+- Any other free-form wording (in any language) that routes around evaluator findings.
+
+Every substantive finding (Critical + Warning) reported by the evaluators MUST take one of the
+following paths:
+
+1. **Fix + commit**:
+   - Actually modify source/docs (the git diff must contain changes, otherwise this round does
+     not count).
+   - The commit message must include a REQ:/AC: trailer.
+   - The next evaluator round re-checks.
+
+2. **Take a rollback branch (b)/(c)/(d)**:
+   - (b) interface/AC/scope change → DOCS
+   - (c) Contract Drift → PLAN
+   - (d) REGRESSION → fix forward or abort
+
+3. **Explicit AskUserQuestion accept-at-limit**:
+   - Only legal after exceeding `max_round` (10).
+   - Once the user accepts, the main agent MUST write to state.json
+     `deferred_findings: [{round, severity, description, user_accepted_at}]`.
+   - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
+   - DoD adds a hard gate: `deferred_findings == [] OR all entries have user_accepted_at`.
+
+**No spinning in place**: between any two evaluator rounds, `git diff` (previous commit..HEAD)
+MUST contain real changes; otherwise the round counts as a "no-op attempted fix" and the
+evaluator automatically FAILs (enforced by claude-auditor.md's Anti-Escape Rule).
+
+**SUMMARY strict whitelist**: the §6.2 output template is a closed set — no extra fields may be
+added. If you want to "note a leftover problem", the only legitimate path is `deferred_findings`
+(and every entry must carry a `user_accepted_at` timestamp).
+
+LLM agents have a natural tendency to soften hard constraints with free-form text — this rule
+explicitly forbids that escape hatch.
+
 ---
 
 ## Review Architecture
@@ -150,11 +192,69 @@ evaluators, using a single objective metric (`val_bpb`) as the verdict.
     └─────────────────────────────────────────────────────────┘
 ```
 
-**Execution rules:**
-- **Wait for both evaluators to finish**: the Codex Bash call may run in the background
-  (`timeout: 300000` triggers background execution). If the Bash tool returns a background
-  task ID, you **must** wait for the task-notification to complete before reading output.
-  Do NOT advance to STEP 2 merging while either evaluator is still running.
+**Execution rules — Dual-Evaluator Sync Protocol (fix #31, v3.3; applies to every evaluator
+loop: Plan / Audit / Test / Adversarial):**
+
+The five hard constraints below must be obeyed explicitly by every round's STEP 1 / STEP 2.
+Violating any one is treated as a process violation.
+
+1. **Parallel spawn enforcement (single-message rule)**
+   - In STEP 1, the Claude Agent call and the Codex Bash call **must be fired in the same
+     assistant response**, side-by-side. Sequential spawning (Claude first, wait, then Codex)
+     is forbidden.
+   - Do NOT branch on "let me check Claude's result before deciding whether to run Codex".
+   - If preparatory work is needed (read files, compute `file_list`, etc.), do it in a
+     **separate** response first, then use **one dedicated response** to fire both evaluators
+     simultaneously.
+   - Violation (sequential spawn) → Codex counts as "did not participate this round" and
+     `eval_round` does NOT advance.
+
+2. **STEP 2 barrier assertion**
+   - Before entering STEP 2, both of the following must hold:
+     a. `claude_result != null AND format_valid(claude_result) == true`
+     b. `codex_result != null AND format_valid(codex_result) == true` **OR**
+        `codex_available == false` (in degraded mode only check a)
+   - If either fails (missing output, empty, or malformed) → STEP 2 is **forbidden**; handle
+     per rule 3.
+   - Codex background Bash (timeout: 300000) must wait for the task-notification before reading
+     stdout; reading before completion yields null.
+
+3. **Mid-flight degradation protocol**
+   - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the
+     same round** (Claude's result is cached, do NOT re-run Claude).
+   - If the same-round retry also fails → `codex_consecutive_failures += 1`; that round's
+     STEP 2 proceeds as "codex absent" (only Claude's findings are merged, but `eval_round`
+     still advances normally).
+   - **Two consecutive rounds of Codex failure** → force **degraded mode**:
+     - Write `codex_available: false` in state.json
+     - Write `degraded_from_round: {eval_round}` in state.json
+     - The corresponding eval_history entry adds `"degraded": true`
+     - All subsequent rounds skip Codex and are labelled "single-evaluator"
+     - **Degradation is irreversible** within the same task.
+   - Any round where Codex succeeds → reset `codex_consecutive_failures = 0`.
+
+4. **Per-evaluator counters + invariant**
+   - state.json maintains `claude_rounds_run` / `codex_rounds_run`.
+   - After each STEP 2 merge completes:
+     - `claude_rounds_run += 1` (always)
+     - `codex_rounds_run += 1` (only if Codex's output was valid and participated in the merge
+       this round)
+   - **Invariant** (the main agent MUST assert this before writing STEP 3):
+     - `claude_rounds_run == eval_round`
+     - `codex_rounds_run == eval_round` **OR**
+       `(codex_available == false AND codex_rounds_run == degraded_from_round - 1)`
+   - Invariant violation → stop the loop immediately and AskUserQuestion to report a process
+     failure. Do NOT silently advance with a sick state.
+
+5. **Rescue bypass isolation + narration discipline**
+   - `codex:codex-rescue` subagent calls are a **rescue side-channel**; they do **NOT** count
+     toward `codex_rounds_run` and are **NOT** written to eval_history.
+   - All narration output (progress reports, SUMMARY, the "round" hint inside evaluator
+     prompts) **must NOT** use "Claude round X / Codex round Y" phrasing. Always use the
+     single unified `eval_round`.
+   - To report an evaluator's per-round finding count, reference
+     `eval_history[-1].claude_findings` / `codex_findings` fields — do not expose separate
+     round numbers.
 
 **Evaluator iron rules:**
 1. **Fresh every round**: every round spawns brand-new agents; never reuse the previous
@@ -231,15 +331,15 @@ Read `state.json` and display:
 ```
 /dev workflow status
 
-Phase:          {phase}
-Task:           {task_id}
-Docs allowlist: {docs_allowlist}
-Test command:   {test_cmd}
-Test attempts:  {test_attempts}/{max_test_attempts}
-Eval round:     {eval_round}
-Latest pass_rate: {last eval_history entry pass_rate or "N/A"}
-Codex available:  {codex_available}
-Last updated:   {updated_at}
+Phase:            {phase}
+Task:             {task_id}
+Docs allowlist:   {docs_allowlist}
+Test command:    {test_cmd}
+Test attempts:   {test_attempts}/{max_test_attempts}
+Eval round:      {eval_round}
+Latest pass_rate:{last eval_history entry pass_rate or "N/A"}
+Codex available: {codex_available}
+Last updated:    {updated_at}
 ```
 
 ### /dev resume
@@ -351,6 +451,10 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "test_attempts": 0,
   "max_test_attempts": 10,
   "eval_round": 0,
+  "claude_rounds_run": 0,
+  "codex_rounds_run": 0,
+  "codex_consecutive_failures": 0,
+  "degraded_from_round": null,
   "eval_history": [],
   "req_ac_map": {},
   "in_scope_ac_ids": [],
@@ -362,6 +466,7 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "regression_check_ac_ids": [],
   "scope_expansion": [],
   "scope_expansion_depth": 0,
+  "deferred_findings": [],
   "codex_available": true/false,
   "sdd_mode": true/false,
   "base_branch": "{BASE}",
@@ -550,6 +655,8 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH Plan evaluators in parallel
           (brand-new agents every round)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash
+   call MUST be fired side-by-side in the SAME assistant response, not sequentially.)
   ──────────────────────────────────────────────────────────────
 
   ① Claude Plan Evaluator (Agent tool, subagent_type: claude-auditor)
@@ -603,6 +710,14 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 2: Parse structured output and merge reports
   ──────────────────────────────────────────────────────────────
+  **Barrier assertion (Sync Protocol rule 2)**: before entering this step, ALL of the
+  following must hold:
+    - claude_result has returned and is format-valid
+    - codex_result has returned and is format-valid, OR codex_available == false
+  If either fails → apply Sync Protocol rule 3 (retry Codex once in the same round; do NOT
+  re-run Claude — the cached result is reused).
+  Two consecutive rounds of Codex failure → force degraded mode
+  (codex_available = false, degraded_from_round = eval_round).
 
   From the two reports extract:
   - Critical findings list (merged, de-duplicated)
@@ -613,8 +728,16 @@ repeat:
   Compute the merged substantive_count = Critical + Warning.
 
   ──────────────────────────────────────────────────────────────
-  STEP 3: Record to eval_history
+  STEP 3: Record to eval_history + update per-evaluator counters (Sync Protocol rule 4)
   ──────────────────────────────────────────────────────────────
+  Update state.json:
+    claude_rounds_run += 1
+    if codex's output was valid and merged this round: codex_rounds_run += 1
+  Assert the invariants (violation → stop the loop and AskUserQuestion reporting a process
+  failure):
+    claude_rounds_run == eval_round
+    codex_rounds_run == eval_round OR
+      (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
 
   {
     "round": eval_round,
@@ -764,6 +887,10 @@ repeat:
 
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn FRESH audit evaluators in parallel
+  (Per Dual-Evaluator Sync Protocol rule 1: all 4 evaluators MUST be fired side-by-side
+   in the SAME assistant response, not split across sequential responses. Even under
+   degraded / lightweight mode, the actually-invoked subset still has to be fired in one
+   response.)
   ──────────────────────────────────────────────────────────────
 
   Launch 4 evaluators at once (2 pairs: doc consistency + diff review):
@@ -893,6 +1020,13 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 2: Merge evaluation reports
   ──────────────────────────────────────────────────────────────
+  **Barrier assertion (Sync Protocol rule 2)**: before entering this step, ALL of the
+  following must hold:
+    - Claude results for ① and ③ have returned and are format-valid
+    - Codex results for ② and ④ have returned and are format-valid, OR codex_available == false
+  If either fails → apply Sync Protocol rule 3 (retry Codex once in the same round).
+  Two consecutive rounds of Codex failure → force degraded mode
+  (codex_available = false, degraded_from_round = eval_round).
 
   Merge 4 reports (or 2 in degraded/lightweight mode):
   - Doc consistency: merge and de-dupe findings from Claude ① + Codex ②.
@@ -904,8 +1038,16 @@ repeat:
   Compute the merged substantive_count = Critical + Warning.
 
   ──────────────────────────────────────────────────────────────
-  STEP 3: Record to eval_history
+  STEP 3: Record to eval_history + update per-evaluator counters (Sync Protocol rule 4)
   ──────────────────────────────────────────────────────────────
+  Update state.json:
+    claude_rounds_run += 1
+    if codex's output was valid and merged this round: codex_rounds_run += 1
+  Assert the invariants (violation → stop the loop and AskUserQuestion reporting a process
+  failure):
+    claude_rounds_run == eval_round
+    codex_rounds_run == eval_round OR
+      (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
 
   {
     "round": eval_round,
@@ -992,6 +1134,8 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH evaluators in parallel
           (each round must use brand-new agents)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash call
+   MUST be fired side-by-side in the SAME assistant response, not sequentially.)
   ──────────────────────────────────────────────────────────────
 
   ① Claude Test Evaluator (Agent tool, subagent_type: claude-auditor)
@@ -1118,6 +1262,13 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 2: Merge evaluation reports
   ──────────────────────────────────────────────────────────────
+  **Barrier assertion (Sync Protocol rule 2)**: before entering this step, ALL of the
+  following must hold:
+    - claude_result has returned and is format-valid
+    - codex_result has returned and is format-valid, OR codex_available == false
+  If either fails → apply Sync Protocol rule 3 (retry Codex once in the same round).
+  Two consecutive rounds of Codex failure → force degraded mode
+  (codex_available = false, degraded_from_round = eval_round).
 
   - Extract pass/fail counts from both reports (should match; on mismatch, flag and take
     the stricter value).
@@ -1126,8 +1277,16 @@ repeat:
   - Merge coverage-gap analyses.
 
   ──────────────────────────────────────────────────────────────
-  STEP 3: Record to eval_history
+  STEP 3: Record to eval_history + update per-evaluator counters (Sync Protocol rule 4)
   ──────────────────────────────────────────────────────────────
+  Update state.json:
+    claude_rounds_run += 1
+    if codex's output was valid and merged this round: codex_rounds_run += 1
+  Assert the invariants (violation → stop the loop and AskUserQuestion reporting a process
+  failure):
+    claude_rounds_run == eval_round
+    codex_rounds_run == eval_round OR
+      (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
 
   Append the following JSON to state.json's eval_history array:
   {
@@ -1243,6 +1402,8 @@ repeat:
 
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH adversarial evaluators in parallel
+  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash call
+   MUST be fired side-by-side in the SAME assistant response, not sequentially.)
   ──────────────────────────────────────────────────────────────
 
   ① Claude Adversarial Evaluator (Agent tool, subagent_type: claude-auditor)
@@ -1283,14 +1444,29 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 2: Merge adversarial reports
   ──────────────────────────────────────────────────────────────
+  **Barrier assertion (Sync Protocol rule 2)**: before entering this step, ALL of the
+  following must hold:
+    - claude_result has returned and is format-valid
+    - codex_result has returned and is format-valid, OR codex_available == false
+  If either fails → apply Sync Protocol rule 3 (retry Codex once in the same round).
+  Two consecutive rounds of Codex failure → force degraded mode
+  (codex_available = false, degraded_from_round = eval_round).
 
   - Findings reported by both evaluators → high confidence.
   - Findings reported by only one → the main agent arbitrates.
   - Compute the merged substantive_count = Critical + Warning.
 
   ──────────────────────────────────────────────────────────────
-  STEP 3: Record to eval_history
+  STEP 3: Record to eval_history + update per-evaluator counters (Sync Protocol rule 4)
   ──────────────────────────────────────────────────────────────
+  Update state.json:
+    claude_rounds_run += 1
+    if codex's output was valid and merged this round: codex_rounds_run += 1
+  Assert the invariants (violation → stop the loop and AskUserQuestion reporting a process
+  failure):
+    claude_rounds_run == eval_round
+    codex_rounds_run == eval_round OR
+      (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
 
   {
     "round": eval_round,
@@ -1345,6 +1521,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 | **Code Quality** | Diff Review Verdict == PASS | Diff Evaluator (4.1) |
 | **Doc Consistency** | Doc Evaluator Verdict == PASS (sdd_mode only) | Doc Evaluator (4.1) |
 | **Regression** | regression_gate_status applicable + regression_pass_rate==1.0; or no_tested/no_historical_ac/no_downstream/degraded | Test Evaluator Regression Check (5.1) |
+| **Findings Closure** | deferred_findings == [] OR all entries have user_accepted_at timestamp (fix #29) | Main agent enforced |
 
 **Hard gates** (enforced by the evaluators; only over the in_scope_ac_ids in state.json):
 - pass_rate == 100% (all tests pass).
@@ -1437,6 +1614,35 @@ State transitions remain: set `phase: "adversarial"` when entering 5.2; set
 
 ### 6.2 Report
 
+**Strict template — whitelist only (fixes #27 #30)**: SUMMARY MUST be rendered strictly
+with the fields below. It is **forbidden** to add any field that is not in the template
+(for example "Known unfixed" / "Out-of-Scope" / "Deferred" / "TODO for you" /
+"Known issues, logged for you" / "Known issues" / "Known gaps" / "Follow up later" /
+"v2 deferred" / "Skip for now" — any flavour of free-form "leftover problem / unfixed"
+field).
+
+**The only legitimate "unfixed" recording path**: state.json's `deferred_findings` array
+(every entry must carry a `user_accepted_at` timestamp, produced by the AskUserQuestion
+accept-at-limit flow). Any substantive evaluator finding must take one of the following
+three paths:
+1. Fix + commit (the git diff MUST contain changes).
+2. Roll back via branch (b)/(c)/(d) to an upstream phase.
+3. After hitting max_round (10), the user explicitly accept-at-limits → write to
+   deferred_findings.
+
+**Field whitelist** (any field not in this list is forbidden in output):
+Task / Modified files / Updated docs / Acceptance criteria / Independent evaluator
+results / Requirement Traceability / Definition of Done / Cross-Module Regression /
+Coverage boundary reminder / Progress change / Overall PRD progress /
+Deferred Findings (only rendered when deferred_findings is non-empty; each entry comes
+from state.json).
+
+**Forbidden field examples** (their presence counts as a process violation):
+~~Known unfixed~~ / ~~Known issues~~ /
+~~Out-of-Scope (anything other than waived_scope formally declared in the plan)~~ /
+~~Deferred work~~ / ~~TODO for you~~ / ~~Follow up later~~ / ~~Known gaps~~ /
+~~v2 deferred~~ / ~~Needs follow-up design~~ / ~~Pending refinement~~ / ~~Skip for now~~
+
 ```
 /dev task complete
 
@@ -1497,6 +1703,12 @@ Coverage boundary reminder (when regression_gate_status != "degraded"):
   Regression check only protects AC historically verified at least once (Status=passed in §3.4).
   Newly-defined AC and AC never verified are NOT covered — relies on test_cmd full pass_rate.
   Behavior-level regression (performance, side effects) is NOT covered — only signature-level.
+
+[only render if state.json deferred_findings is non-empty:]
+Deferred Findings (user-accepted at round limit — fix #29):
+  - Round {N} [{severity}]: {description} (accepted {user_accepted_at})
+  - ...
+  REQ Status impact: {affected REQs} forced to Partial (cannot enter Verified)
 
 Progress change: {module name} {old_progress}% → {new_progress}%
 Overall PRD progress: {percentage}%
