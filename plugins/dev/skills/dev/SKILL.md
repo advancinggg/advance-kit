@@ -28,17 +28,17 @@ hooks:
     - matcher: "Edit"
       hooks:
         - type: command
-          command: "bash ${CLAUDE_SKILL_DIR}/bin/check-phase.sh"
+          command: "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT}/skills/dev\" \"$HOME/.claude/skills/dev\"; do [ -x \"$d/bin/check-phase.sh\" ] && exec bash \"$d/bin/check-phase.sh\"; done; echo \"{}\"'"
           statusMessage: "Checking dev workflow phase..."
     - matcher: "Write"
       hooks:
         - type: command
-          command: "bash ${CLAUDE_SKILL_DIR}/bin/check-phase.sh"
+          command: "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT}/skills/dev\" \"$HOME/.claude/skills/dev\"; do [ -x \"$d/bin/check-phase.sh\" ] && exec bash \"$d/bin/check-phase.sh\"; done; echo \"{}\"'"
           statusMessage: "Checking dev workflow phase..."
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "bash ${CLAUDE_SKILL_DIR}/bin/check-phase.sh"
+          command: "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT}/skills/dev\" \"$HOME/.claude/skills/dev\"; do [ -x \"$d/bin/check-phase.sh\" ] && exec bash \"$d/bin/check-phase.sh\"; done; echo \"{}\"'"
           statusMessage: "Checking dev workflow phase..."
 ---
 

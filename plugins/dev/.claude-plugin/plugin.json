@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Enforced dev workflow (plan→docs→implement→audit→test) with dual-model review, independent evaluator architecture, spec-driven module decomposition, and phase-gated file access control.",
   "author": { "name": "Advance Studio" }
 }
