@@ -129,7 +129,24 @@ codex exec "<Plan Mode Protocol + review instructions>" \
   '
 ```
 
-**Note**: the Bash tool must be called with `timeout: 300000` (5 minutes).
+**Note**: the Bash tool must be called with `timeout: 600000` (10 minutes, foreground /
+blocking). **Do NOT** pass `run_in_background: true`. See the "Known bug workaround"
+note below for why foreground is mandatory.
+
+**Known bug workaround — Codex must run in foreground** (anthropics/claude-code#21048):
+
+Claude Code 2.1.19+ has a regression where background Bash task completion notifications
+frequently fail to fire, leaving the main agent stuck on
+`Churned for Nm Ks · 1 shell still running` until the user manually sends another
+message. To side-step this entirely, **every `codex exec` call in this skill runs as a
+foreground Bash call** (`timeout: 600000`, no `run_in_background: true`):
+
+- The Bash tool does not return until `codex exec` exits, so stdout is safe to read
+  immediately on return — no task-notification race.
+- The main agent blocks for 2–10 minutes per Codex round, but this is a **deterministic
+  wait** rather than an indefinite "session appears frozen" UX failure.
+- Do NOT revert to `timeout: 300000` + background execution until upstream confirms the
+  regression is fixed (still reproducing on Claude Code 2.1.101 as of 2026-04-11).
 
 Both carry the Plan Mode Protocol prefix (built into the auditor system prompt; for codex
 exec it must be included explicitly in the prompt):
@@ -216,8 +233,10 @@ Violating any one is treated as a process violation.
         `codex_available == false` (in degraded mode only check a)
    - If either fails (missing output, empty, or malformed) → STEP 2 is **forbidden**; handle
      per rule 3.
-   - Codex background Bash (timeout: 300000) must wait for the task-notification before reading
-     stdout; reading before completion yields null.
+   - Codex foreground Bash (`timeout: 600000`, blocking): the Bash tool does NOT return
+     until `codex exec` exits, so stdout is safe to read immediately on return. There is
+     no task-notification race. **Do NOT** set `run_in_background: true` — see the
+     "Known bug workaround" note near the Codex command template for context.
 
 3. **Mid-flight degradation protocol**
    - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the
@@ -282,7 +301,7 @@ Run the test command, analyze ALL results, report structured verdict.
 Do NOT suggest fixes — only diagnose root causes.
 ```
 
-Codex Evaluator (Bash tool, codex exec, timeout: 300000):
+Codex Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking):
 ```
 codex exec "[PLAN MODE — DEEP REVIEW] ... You are an independent test evaluator.
 Round {N}. Run: {test_cmd}. Analyze ALL failures.
@@ -689,7 +708,7 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Plan Evaluator (Bash tool, codex exec, timeout: 300000)
+  ② Codex Plan Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "You are an independent plan evaluator. Round {eval_round}.
         Review this development plan. Read referenced source files to verify assumptions.
@@ -936,7 +955,7 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Doc Evaluator (Bash tool, codex exec, timeout: 300000)
+  ② Codex Doc Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "Independent doc-vs-code evaluator. Round {eval_round}.
         Compare MODULE docs against source code, chapter by chapter.
@@ -993,7 +1012,7 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ④ Codex Diff Evaluator (Bash tool, codex exec, timeout: 300000)
+  ④ Codex Diff Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "Independent diff reviewer. Round {eval_round}.
         Run: git diff {start_commit}..HEAD
@@ -1219,7 +1238,7 @@ repeat:
 
         Verdict: PASS | FAIL"
 
-  ② Codex Test Evaluator (Bash tool, codex exec, timeout: 300000)
+  ② Codex Test Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "You are an independent test evaluator. Round {eval_round}.
         Run: {test_cmd}
@@ -1426,7 +1445,7 @@ repeat:
            Source: file:line
         Verdict: PASS | FAIL"
 
-  ② Codex Adversarial Evaluator (Bash tool, codex exec, timeout: 300000)
+  ② Codex Adversarial Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "You are an independent security evaluator. Round {eval_round}. Fresh context.
         Run: git diff {start_commit}..HEAD

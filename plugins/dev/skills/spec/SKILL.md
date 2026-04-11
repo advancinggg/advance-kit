@@ -359,7 +359,7 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
      a. `claude_result != null AND format_valid(claude_result)`
      b. `codex_result != null AND format_valid(codex_result)` **OR** `codex_available == false` (in degraded mode only check a)
    - If either fails (output missing, empty, malformed) → STEP 2 is **forbidden**; handle per rule 3.
-   - Codex background Bash (timeout: 300000) must wait for the task-notification before reading stdout; reading before completion yields null.
+   - Codex foreground Bash (`timeout: 600000`, blocking): the Bash tool does NOT return until `codex exec` exits, so stdout is safe to read immediately on return. **Do NOT pass `run_in_background: true`** — see the "Known bug workaround" note near the Codex command template.
 
 3. **Mid-flight degradation protocol**
    - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the same round** (Claude's result is cached, do NOT re-run Claude).
@@ -628,7 +628,7 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Architecture Evaluator (Bash, codex exec, timeout: 300000)
+  ② Codex Architecture Evaluator (Bash, codex exec, timeout: 600000)
      prompt: "[PLAN MODE — DEEP REVIEW] Before reviewing, create a review plan. Phase 1: identify all review dimensions. Phase 2: execute systematically. Phase 3: synthesize findings with severity levels and verdict." +
        "Independent architecture evaluator. Round {eval_round}.
         Read PRD: {prd_paths}. Read: docs/ARCHITECTURE.md.
@@ -675,13 +675,25 @@ repeat:
          else empty end
        '
      ```
-     Bash timeout: 300000.
+     Bash timeout: 600000. Run in **foreground** — do NOT set `run_in_background: true`.
+
+     **Known bug workaround — Codex must run in foreground** (anthropics/claude-code#21048):
+     Claude Code 2.1.19+ has a regression where background Bash task completion notifications
+     frequently fail to fire, leaving the main agent stuck on
+     `Churned for Nm Ks · 1 shell still running` until the user manually sends another
+     message. To side-step this entirely, every `codex exec` call in this skill is fired
+     with `timeout: 600000` (10 min) as a foreground Bash call. The Bash tool does not
+     return until `codex exec` exits, so stdout is safe to read immediately — no
+     task-notification race. Do NOT revert to background execution until upstream confirms
+     the regression is fixed (still reproducing on 2.1.101 as of 2026-04-11).
 
   Fallback: codex not available → Claude only, mark as single-evaluator.
 
   **IMPORTANT: Wait for BOTH evaluators to complete before proceeding.**
-  The Codex Bash command may run in background (timeout: 300000 triggers background execution).
-  If Bash returns a background task ID, you MUST wait for the task-notification before reading output.
+  The Codex Bash command runs in the **foreground** (`timeout: 600000`, blocking;
+  **do NOT** set `run_in_background: true`). The Bash tool does not return until
+  `codex exec` exits, so stdout is safe to read immediately on return. See the
+  "Known bug workaround" note near the Codex command template for context.
   Do NOT proceed to STEP 2 until both evaluator outputs are fully available.
 
   ──────────────────────────────────────────────────────────────
@@ -1238,7 +1250,7 @@ For each module (in topological order):
           Substantive Findings: {Critical + Warning count}
           Verdict: PASS | FAIL"
 
-    ② Codex Module Evaluator (Bash, codex exec, timeout: 300000)
+    ② Codex Module Evaluator (Bash, codex exec, timeout: 600000)
        prompt: "[PLAN MODE — DEEP REVIEW] Before reviewing, create a review plan. Phase 1: identify all review dimensions. Phase 2: execute systematically. Phase 3: synthesize findings with severity levels and verdict." +
          "Independent module spec evaluator. Round {eval_round}.
           Read PRD: {prd_paths}. Read ARCHITECTURE: docs/ARCHITECTURE.md.
@@ -1292,13 +1304,15 @@ For each module (in topological order):
            else empty end
          '
        ```
-       Bash timeout: 300000.
+       Bash timeout: 600000.
 
     Fallback: codex not available → Claude only.
 
     **IMPORTANT: Wait for BOTH evaluators to complete before proceeding.**
-    The Codex Bash command may run in background (timeout: 300000 triggers background execution).
-    If Bash returns a background task ID, you MUST wait for the task-notification before reading output.
+    The Codex Bash command runs in the **foreground** (`timeout: 600000`, blocking;
+    **do NOT** set `run_in_background: true`). The Bash tool does not return until
+    `codex exec` exits, so stdout is safe to read immediately on return. See the
+    "Known bug workaround" note near the Codex command template for context.
     Do NOT proceed to STEP 2 until both evaluator outputs are fully available.
 
     ──────────────────────────────────────────────────────────────
