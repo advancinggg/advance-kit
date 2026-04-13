@@ -2,6 +2,5 @@
   "name": "dev",
   "version": "1.2.0",
   "description": "Enforced dev workflow (plan→docs→implement→audit→test) with dual-model review, independent evaluator architecture, spec-driven module decomposition, phase-gated file access control, and git auto-sync.",
-  "author": { "name": "Advance Studio" },
-  "hooks": "./hooks/hooks.json"
+  "author": { "name": "Advance Studio" }
 }
