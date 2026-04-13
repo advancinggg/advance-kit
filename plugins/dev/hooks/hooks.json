@@ -1,0 +1,33 @@
+{
+  "description": "Dev plugin — git auto-sync hooks (pull on prompt, push on stop).",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/git-auto-pull.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/git-pre-sync-check.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/git-auto-sync.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
