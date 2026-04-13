@@ -43,8 +43,8 @@ fi
 mkdir -p "$DATA_DIR"
 
 if [ -n "$GITLEAKS_BIN" ]; then
-  GITLEAKS_OUTPUT=$(git diff --cached | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || true
-  GITLEAKS_EXIT=${PIPESTATUS[1]:-$?}
+  GITLEAKS_EXIT=0
+  GITLEAKS_OUTPUT=$(git diff --cached | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GITLEAKS_EXIT=$?
   if [ "$GITLEAKS_EXIT" -eq 1 ]; then
     echo "[$(date)] GITLEAKS BLOCKED push in $(pwd)" >> "$LOG"
     echo "[$(date)] $GITLEAKS_OUTPUT" >> "$LOG"
