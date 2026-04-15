@@ -126,7 +126,9 @@ if [ "$SKIP_LLM" = "0" ]; then
       done <<< "$OUT"
 
       if [ -z "$MSG_LLM" ]; then
-        echo "[$(date)] rejected non-conventional output: $(printf '%s' "$OUT" | head -c 80)" >> "$LOG"
+        # Don't log the raw stdout content — it's diff-derived and could contain
+        # sensitive prompt-injected bytes.
+        echo "[$(date)] claude output rejected (no conventional-commit line in first 5)" >> "$LOG"
       fi
     fi
   else
