@@ -101,6 +101,7 @@ if [ "$SKIP_LLM" = "0" ]; then
     OUT=$(printf '%s' "$PROMPT" | \
       CLAUDE_SKIP_AUTOSYNC=1 ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "$CLAUDE_BIN_RESOLVED" \
         --bare -p \
+        --strict-mcp-config \
         --model haiku \
         --output-format text \
         --permission-mode bypassPermissions \
@@ -149,9 +150,9 @@ git commit -m "$MSG" || {
 }
 
 # ── Push ──
-git push origin "$BRANCH" 2>>"$LOG" || {
+if git push origin "$BRANCH" 2>>"$LOG"; then
+  echo "[$(date)] Pushed to $BRANCH" >> "$LOG"
+else
   echo "[$(date)] git push failed in $PROJECT_DIR" >> "$LOG"
-}
-
-echo "[$(date)] Pushed to $BRANCH" >> "$LOG"
+fi
 exit 0
