@@ -12,9 +12,6 @@
 #   CLAUDE_DEV_NO_AUTO_COMMIT_MSG=1 — skip LLM; use timestamp message
 #   CLAUDE_BIN                      — path to claude CLI override
 
-# ── Bash-version guard (macOS /bin/bash is 3.2; we need 4+ for empty-array expansion under set -u) ──
-[ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || exit 0
-
 set -uo pipefail
 
 cat > /dev/null  # drain hook JSON from stdin
@@ -100,8 +97,9 @@ if [ "$SKIP_LLM" = "0" ]; then
     elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=(gtimeout 60)
     fi
 
+    # Safe empty-array expansion (bash 3.2 compat: ${arr[@]:+"${arr[@]}"} pattern)
     OUT=$(printf '%s' "$PROMPT" | \
-      CLAUDE_SKIP_AUTOSYNC=1 "${TIMEOUT_CMD[@]}" "$CLAUDE_BIN_RESOLVED" \
+      CLAUDE_SKIP_AUTOSYNC=1 ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "$CLAUDE_BIN_RESOLVED" \
         --bare -p \
         --model haiku \
         --output-format text \
