@@ -857,7 +857,7 @@ repo.
 
 - Follow the interface definitions (§4) and implementation notes (§13) in the MODULE docs.
 - Code incrementally per the implementation steps in the PLAN.
-- Implement the test cases defined in MODULE §12.
+- Implement the test cases defined in MODULE §3.3 (linked to §1.5 ACs via the AC Link column).
 
 ### 3.1 User gate
 
