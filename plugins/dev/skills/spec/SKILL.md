@@ -816,9 +816,9 @@ Use Write tool to generate `docs/modules/MODULE-{number}-{module-name}.md`:
 
 ## Part 1: Requirements
 
-### 1.1 Overview
+### 1.1 Module Goals & Overview
 
-{2-3 sentences describing the module's core purpose and value}
+{2-3 sentences describing the module's core purpose, value, and goals}
 
 ### 1.2 Architecture Overview
 
@@ -1084,6 +1084,32 @@ stateDiagram-v2
 | {Rate limit} | {value} | {what it controls} |
 | {Pool size} | {value} | {what it controls} |
 
+### 2.12 State Management
+
+{If the module owns persistent state or coordinates state across other modules,
+document state transitions, ownership, and consistency model here. For modules
+without explicit state management beyond CRUD on §2.5 Data Models, mark this
+section "N/A — module is stateless beyond §2.5 schema".}
+
+**Owned state surfaces**:
+
+| Surface | Persistence | Owner | Consumers |
+|---------|-------------|-------|-----------|
+| {state name} | {DB / cache / in-memory} | {module} | {modules} |
+
+**State transitions** (Mermaid state diagram):
+
+\```mermaid
+stateDiagram-v2
+    [*] --> {initial}
+    {initial} --> {next}: {trigger}
+\```
+
+**Cross-module state protocol** (if applicable):
+- Coordination mechanism: {events / locks / version vectors / ...}
+- Consistency model: {strong / eventual / causal}
+- Failure semantics: {what happens if a participant disappears mid-transition}
+
 ---
 
 ## Part 3: Implementation
@@ -1175,6 +1201,18 @@ Generation rules (merge-preserve):
 | Date | Change |
 |------|--------|
 | {date} | Initial creation |
+
+### 3.8 Implementation Notes
+
+{Architectural rationale and pattern choices made during implementation that aren't
+obvious from §2.7 Core Logic alone. Examples: "uses event-sourcing here because the
+audit trail requires reconstruction"; "chose CQRS to isolate read scaling from
+write concurrency"; "fallback to in-memory queue when Redis unavailable, accepting
+data loss for resilience". Empty if implementation followed §2.7 verbatim.}
+
+| Decision | Rationale | Alternatives considered | Trade-off accepted |
+|----------|-----------|-------------------------|--------------------|
+| {pattern / lib / approach} | {why} | {what else was on the table} | {what we gave up} |
 ```
 
 ### 2.3 Batch Generation Strategy

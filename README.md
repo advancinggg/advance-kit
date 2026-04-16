@@ -138,7 +138,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.0.2` | Stable — AC-based module progress formula; includes `dev` and `spec` skills, plus opt-in statusline |
+| `dev` | `2.1.0` | Stable — AC-based progress formula; /dev ↔ /spec section numbering aligned (new §2.12 State Management, §3.8 Implementation Notes; §1.1 renamed to "Module Goals & Overview"); includes `dev` and `spec` skills plus opt-in statusline. **Migration note**: existing MODULE docs do NOT auto-gain §2.12/§3.8 on `/spec` rerun — add manually or use "Regenerate all". |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 
