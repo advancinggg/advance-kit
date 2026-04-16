@@ -98,11 +98,36 @@ claude plugin update code-companion
 2. 运行 `/dev:setup` 拉取匹配的 Codex 插件。
 3. 用 `/dev doctor` 验证环境。
 
+## 可选：statusline
+
+`dev` 插件自带一个两行状态栏（上下文用量、5 小时 / 7 天限额、模型名、token 统计）。
+Claude Code 的 `statusLine` 只能从用户 settings 加载，插件无法自己声明，所以需要手动接线：
+
+```bash
+# 1. 把脚本放到一个稳定路径
+mkdir -p ~/.claude/bin
+curl -fsSL https://raw.githubusercontent.com/advancinggg/advance-kit/main/plugins/dev/bin/statusline.sh \
+  -o ~/.claude/bin/statusline.sh
+chmod +x ~/.claude/bin/statusline.sh
+```
+
+然后在 `~/.claude/settings.json` 里加上：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/bin/statusline.sh",
+    "padding": 1
+  }
+}
+```
+
 ## 项目状态
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `1.1.0` | 稳定版——包含 `dev` 和 `spec` skill v3.2.0 |
+| `dev` | `2.0.1` | 稳定版——包含 `dev` / `spec` skill 和可选的 statusline |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 

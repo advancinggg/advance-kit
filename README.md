@@ -108,11 +108,37 @@ To enable dual-model review:
 2. Run `/dev:setup` to pull in the matching Codex plugin.
 3. Verify with `/dev doctor`.
 
+## Optional: statusline
+
+The `dev` plugin ships a two-line statusline (context usage, 5-hour & 7-day rate
+limits, model name, token counts). Claude Code only loads `statusLine` from user
+settings — plugins cannot declare it — so wire it up yourself:
+
+```bash
+# 1. Install the script to a stable path
+mkdir -p ~/.claude/bin
+curl -fsSL https://raw.githubusercontent.com/advancinggg/advance-kit/main/plugins/dev/bin/statusline.sh \
+  -o ~/.claude/bin/statusline.sh
+chmod +x ~/.claude/bin/statusline.sh
+```
+
+Then add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/bin/statusline.sh",
+    "padding": 1
+  }
+}
+```
+
 ## Project status
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `1.1.0` | Stable — includes `dev` and `spec` skills v3.2.0 |
+| `dev` | `2.0.1` | Stable — includes `dev` and `spec` skills, plus opt-in statusline |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 

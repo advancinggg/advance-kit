@@ -116,11 +116,38 @@ Para habilitar la revisión con doble modelo:
 2. Ejecuta `/dev:setup` para instalar el plugin de Codex correspondiente.
 3. Verifícalo con `/dev doctor`.
 
+## Opcional: statusline
+
+El plugin `dev` incluye una statusline de dos líneas (uso del contexto, límites de
+5 horas y 7 días, nombre del modelo, conteo de tokens). Claude Code solo carga
+`statusLine` desde la configuración del usuario — los plugins no pueden declararla —
+así que conéctala manualmente:
+
+```bash
+# 1. Copia el script a una ruta estable
+mkdir -p ~/.claude/bin
+curl -fsSL https://raw.githubusercontent.com/advancinggg/advance-kit/main/plugins/dev/bin/statusline.sh \
+  -o ~/.claude/bin/statusline.sh
+chmod +x ~/.claude/bin/statusline.sh
+```
+
+Luego añade a `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/bin/statusline.sh",
+    "padding": 1
+  }
+}
+```
+
 ## Estado del proyecto
 
 | Plugin | Versión | Estado |
 |---|---|---|
-| `dev` | `1.1.0` | Estable — incluye las skills `dev` y `spec` v3.2.0 |
+| `dev` | `2.0.1` | Estable — incluye las skills `dev` / `spec` y statusline opcional |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
 

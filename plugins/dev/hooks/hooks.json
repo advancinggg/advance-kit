@@ -1,5 +1,5 @@
 {
-  "description": "Dev plugin — git auto-sync (pull on prompt, scan+generate+push on stop) + statusline.",
+  "description": "Dev plugin — git auto-sync (pull on prompt, scan+generate+push on stop).",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -20,17 +20,6 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/stop.sh",
             "timeout": 120
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/statusline.sh",
-            "timeout": 5
           }
         ]
       }
