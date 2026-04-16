@@ -3,3 +3,5 @@
 .dev-state/
 node_modules/
 docs/.spec-state/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
