@@ -40,6 +40,17 @@ BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 # ── Nothing to commit? ──
 if git diff --quiet && git diff --cached --quiet \
     && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  # No new work to stage, but push any unpushed local commits (e.g., from
+  # /dev or /spec inline commits that were created without a push).
+  UPSTREAM=$(git rev-parse --abbrev-ref "@{u}" 2>/dev/null || echo "")
+  if [ -n "$UPSTREAM" ] && [ -n "$(git log "$UPSTREAM"..HEAD --oneline 2>/dev/null)" ]; then
+    echo "[$(date)] No new changes, but pushing unpushed commits in $PROJECT_DIR" >> "$LOG"
+    if git push origin "$BRANCH" 2>>"$LOG"; then
+      echo "[$(date)] Pushed to $BRANCH" >> "$LOG"
+    else
+      echo "[$(date)] git push failed in $PROJECT_DIR" >> "$LOG"
+    fi
+  fi
   exit 0
 fi
 
