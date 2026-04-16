@@ -1218,21 +1218,36 @@ data loss for resilience". Empty if implementation followed §2.7 verbatim.}
 **MODULE template version alignment** (rerun mode, section-level merge-preserve):
 
 On `/spec` rerun against a MODULE doc generated from an older template version,
-compare the doc's section headings against the current template. For every
-heading in the current template that is **missing** from the doc, append an
-empty boilerplate section (same content as first-time generation for that
-section). Never remove or renumber existing sections; never overwrite their
-content. This is additive-only — a one-way upgrade path that lets older MODULE
-docs accumulate new template sections over time without losing hand-edits.
+compare the doc's section headings against the current template. The set of
+applied headings is derived at runtime from the current template body — every
+`### N.M` heading directly inside Parts 1/2/3 of the MODULE template above is
+a candidate. (No separate enumerated list here, which would drift from the
+template; the template body IS the source of truth.)
 
-Applied headings (current template top-level `### N.M` under Parts 1/2/3):
-- Part 1: §1.1 Module Goals & Overview, §1.2-§1.7
-- Part 2: §2.1-§2.12 (includes §2.12 State Management added in 2.1.0)
-- Part 3: §3.1-§3.8 (includes §3.8 Implementation Notes added in 2.1.0)
+**Gate (before any write)**: compute the diff:
+- `sections_to_append`: headings present in current template but missing from
+  the user's doc.
+- `sections_to_rename`: §1.1 heading that currently reads exactly
+  `^### 1\.1 Overview\s*$` (target rename: `### 1.1 Module Goals & Overview`).
 
-The §1.1 heading rename from "Overview" to "Module Goals & Overview" on rerun:
-detect `^### 1\.1 Overview\s*$` and replace with `### 1.1 Module Goals & Overview`
-in-place; body text below the heading is untouched. Rename is idempotent.
+If either set is non-empty, issue AskUserQuestion:
+> "Template alignment for `{module-path}`: {N} sections to append
+> ({heading list}); {M} heading(s) to rename ({before → after}).
+> (1) Apply additive alignment. (2) Skip — keep doc as-is. (3) Abort rerun."
+
+Only apply on user selection (1). Writes are additive-only:
+- Append missing sections with empty boilerplate (same as first-time generation).
+- Rename headings in-place without touching body text.
+- Never remove or renumber existing sections; never overwrite filled content.
+
+Log the applied set to `docs/.spec-state/progress.json` under
+`template_alignment[{module-path}]: {rerun_ts, appended: [...], renamed: [...]}`
+so later runs can verify idempotence.
+
+The rename detection `^### 1\.1 Overview\s*$` is deliberately strict — docs
+with non-standard formatting (bolded heading, h4 level, etc.) are left for the
+user to align manually; the alignment pass is silent-skip on those edge cases
+(no corruption risk, just a no-op).
 
 ### 2.3 Batch Generation Strategy
 
