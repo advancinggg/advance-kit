@@ -138,7 +138,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.0.1` | Stable — includes `dev` and `spec` skills, plus opt-in statusline |
+| `dev` | `2.0.2` | Stable — AC-based module progress formula; includes `dev` and `spec` skills, plus opt-in statusline |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 

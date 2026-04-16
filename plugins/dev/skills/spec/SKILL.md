@@ -1088,11 +1088,17 @@ stateDiagram-v2
 
 ## Part 3: Implementation
 
+**Progress policy**: AC-driven. Module progress is computed from §3.4 AC Verification
+(see /dev §6.1.1 for the formula). Slices (if used as a task-organization device)
+contribute progress only through the ACs they make pass — no flat per-slice increments.
+
 ### 3.1 Current Status
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
 | {Not Started / In Progress / Production} | {0-100%} | {date} |
+
+Progress = `passed/Active=Y × 100` (§3.4-driven; see /dev §6.1.1). Denominator 0 → display "—".
 
 ### 3.2 File Structure
 

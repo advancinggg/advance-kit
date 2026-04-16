@@ -127,7 +127,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.0.1` | 稳定版——包含 `dev` / `spec` skill 和可选的 statusline |
+| `dev` | `2.0.2` | 稳定版——AC 驱动的模块进度公式；包含 `dev` / `spec` skill 和可选的 statusline |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 
