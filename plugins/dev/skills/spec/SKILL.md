@@ -1215,62 +1215,23 @@ data loss for resilience". Empty if implementation followed §2.7 verbatim.}
 | {pattern / lib / approach} | {why} | {what else was on the table} | {what we gave up} |
 ```
 
-**MODULE template version alignment** (rerun mode, section-level merge-preserve):
+**MODULE template version — migration note for rerun mode**:
 
-On `/spec` rerun against a MODULE doc generated from an older template version,
-compare the doc's section headings against the current template.
+When the template gains new sections (e.g., 2.1.0 added §2.12 State Management
+and §3.8 Implementation Notes), existing MODULE docs generated from an older
+template do NOT automatically acquire those sections on `/spec` rerun. There
+is no automated section-level merge-preserve for template additions (the
+merge-preserve machinery handles REQ-ID status, AC-ID ledger, Module-ID, and
+Contract-ID only). Two paths to upgrade a legacy doc:
+- Option A (manual): open the doc and add the new `### N.M Title` headings
+  with empty boilerplate (copy from the current template).
+- Option B (regenerate): re-run `/spec` and choose the "Regenerate all"
+  option, which discards hand-edits outside the merge-preserved surfaces.
 
-**Heading extraction (both sides)**:
-- `template_headings`: the `### N.M Title` headings appearing in `spec/SKILL.md`
-  inside the MODULE template code block — the block opens with ` ```markdown `
-  at `## Generate Module Specification` > `Use Write tool to generate …` and
-  closes at the corresponding ` ``` ` line (before this alignment rule text).
-  Agent MUST read those line boundaries from spec/SKILL.md itself before
-  applying the rule; if the code block boundaries cannot be determined
-  unambiguously, abort alignment with a process-error note and leave the
-  user's doc untouched.
-- `doc_headings`: every `### N.M ` heading at column 0 in the target MODULE doc.
-
-**Missing-section detection is by §N.M number, NOT by title string**:
-- `sections_to_append = {N.M in template_headings | N.M not in doc_headings (by number)}`.
-- This is critical: a doc that already has `### 1.1 Overview (authentication)`
-  satisfies the §1.1 presence check — the append pass MUST NOT add a second
-  `### 1.1 …` heading. Title comparison is disallowed here.
-
-**Rename detection (separate, narrow pass)**:
-- `sections_to_rename = {N.M where doc heading's title differs from template's title}`.
-- Specifically for §1.1 in 2.1.0: if the doc has exactly `### 1.1 Overview`
-  (no trailing content) and template has `### 1.1 Module Goals & Overview`,
-  rename in-place. Any variation (bolded, h4, trailing text like `(X)`) is
-  silent-skip; the rename is informational-only and the user keeps their
-  customised heading.
-
-**Gate** (before any write; user-facing AskUserQuestion):
-
-> Template alignment for `{module-path}`:
->   {N} missing sections to append: {list of §N.M Title}
->   {M} heading(s) with title drift: {list of §N.M "old" → "new"}
-> (1) Apply additive alignment (append missing + rename when exact match)
-> (2) Skip — keep doc as-is
-> (3) Abort rerun
-
-Only apply on user selection (1). `{module-path}`, heading lists, and title
-strings interpolated into the prompt MUST be escaped for markdown (backticks,
-angle brackets, pipes) before substitution so that attacker-controlled content
-in a module path or title cannot distort the prompt rendered to the user.
-
-**Writes** (additive-only):
-- Append missing sections with empty boilerplate (same content as first-time
-  generation for that §N.M).
-- Rename exact-match headings in-place; body text untouched.
-- Never remove or renumber existing sections; never overwrite filled content.
-
-**Persistence**: `docs/.spec-state/progress.json` is a session-local state
-directory (deleted at end of /spec workflow — see §0.2) and is NOT a durable
-audit trail. The idempotence guarantee comes from the detection logic itself:
-on the next rerun, the append pass sees the section already present (by §N.M
-number) and skips it. No external log is needed to verify idempotence —
-detection is idempotent by construction.
+The `/dev` DOCS-phase instructions already tell the agent to update `§2.12 /
+§3.8` when the relevant change occurs; if the target MODULE doc lacks the
+section, the agent creates it inline at that point. This self-heals on demand
+without centralized alignment logic.
 
 ### 2.3 Batch Generation Strategy
 
