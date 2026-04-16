@@ -830,7 +830,8 @@ Update the docs in `docs_allowlist` as required:
 - §2.8 Error Handling (when new error types are added)
 - §2.12 State Management (when state transitions or cross-module state protocol change)
 - §2.9 Security Considerations (when security requirements change)
-- §1.6 Non-functional Requirements + §2.11 Operational Parameters (when performance metrics or operational parameters change — §1.6 holds NFR/SLA targets; §2.11 holds operational tuning like timeouts, pool sizes)
+- §1.6 Non-functional Requirements (when SLA/NFR targets change — latency, availability, throughput; REQUIRED whenever a performance commitment to the user changes)
+- §2.11 Operational Parameters (when operational tuning changes — timeouts, rate limits, pool sizes, retry policies; internal knobs that don't alter user-facing SLA)
 - §1.5 Acceptance Criteria — **MUST** add new AC rows (ID format `MODULE-NNN-AC-nn`, REQ Source, Criterion, Verification). The §3.4 ledger is merge-preserved by /spec; new ACs are inserted there as `Active=Y, Status=untested` on the next /spec rerun.
 - §3.3 Test Cases — **MUST** design comprehensive test cases (ID format `MODULE-NNN-T{nn}`, with AC Link column referencing the AC IDs added to §1.5).
 - §3.8 Implementation Notes (when the implementation approach or architectural rationale changes)

@@ -1210,10 +1210,29 @@ audit trail requires reconstruction"; "chose CQRS to isolate read scaling from
 write concurrency"; "fallback to in-memory queue when Redis unavailable, accepting
 data loss for resilience". Empty if implementation followed §2.7 verbatim.}
 
-| Decision | Rationale | Alternatives considered | Trade-off accepted |
-|----------|-----------|-------------------------|--------------------|
+| Decision | Rationale | Alternatives considered | Trade-off |
+|----------|-----------|-------------------------|-----------|
 | {pattern / lib / approach} | {why} | {what else was on the table} | {what we gave up} |
 ```
+
+**MODULE template version alignment** (rerun mode, section-level merge-preserve):
+
+On `/spec` rerun against a MODULE doc generated from an older template version,
+compare the doc's section headings against the current template. For every
+heading in the current template that is **missing** from the doc, append an
+empty boilerplate section (same content as first-time generation for that
+section). Never remove or renumber existing sections; never overwrite their
+content. This is additive-only — a one-way upgrade path that lets older MODULE
+docs accumulate new template sections over time without losing hand-edits.
+
+Applied headings (current template top-level `### N.M` under Parts 1/2/3):
+- Part 1: §1.1 Module Goals & Overview, §1.2-§1.7
+- Part 2: §2.1-§2.12 (includes §2.12 State Management added in 2.1.0)
+- Part 3: §3.1-§3.8 (includes §3.8 Implementation Notes added in 2.1.0)
+
+The §1.1 heading rename from "Overview" to "Module Goals & Overview" on rerun:
+detect `^### 1\.1 Overview\s*$` and replace with `### 1.1 Module Goals & Overview`
+in-place; body text below the heading is untouched. Rename is idempotent.
 
 ### 2.3 Batch Generation Strategy
 
