@@ -84,8 +84,13 @@ Parse `$ARGUMENTS` FIRST:
 echo "=== /prd dependency check ==="
 which jq 2>/dev/null && echo "JQ: OK" || echo "JQ: MISSING (Codex evaluator pipeline depends on jq)"
 which codex 2>/dev/null && echo "CODEX: OK" || echo "CODEX: MISSING (single-evaluator mode)"
-[ -f "$HOME/.claude/agents/claude-auditor.md" ] || [ -f "$(dirname "$(claude config --show-paths 2>/dev/null | grep 'plugins' | head -1)")/cache/advance-kit/dev/2.3.0/agents/claude-auditor.md" ] && echo "AUDITOR: OK" || echo "AUDITOR: MISSING"
+[ -f "$HOME/.claude/agents/claude-auditor.md" ] && echo "AUDITOR: OK" || echo "AUDITOR: MISSING"
 ```
+
+(When auditor is plugin-bundled rather than user-installed, the Agent tool resolves
+`dev:claude-auditor` through plugin registry; the explicit file check above only
+catches the user-installed case. If MISSING but Agent tool still finds the subagent,
+proceed — the check is advisory.)
 
 - `jq` missing → set `codex_available: false` (Codex pipeline depends on jq)
 - `codex` missing → set `codex_available: false`
