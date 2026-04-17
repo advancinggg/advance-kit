@@ -1,15 +1,16 @@
 ---
 name: spec
-version: 3.2.0
+version: 3.3.0
 description: |
   Generate architecture and module specification documents from PRD.
   MECE module decomposition, self-contained specs for AI agent implementation.
   Independent evaluator architecture: PRD coverage evaluator ensures zero requirements lost.
   Supports greenfield and existing project modes.
+  Sub-commands: resume | abort | status | upgrade-template.
   Usage: /spec [path/to/PRD.md or path/to/prd-directory/]
   Trigger when user asks to "generate specs", "generate architecture", "decompose modules",
   "generate module docs", "spec", or "specification driven development".
-argument-hint: "[PRD path] or resume|abort|status"
+argument-hint: "[PRD path] or resume|abort|status|upgrade-template"
 allowed-tools:
   - Bash
   - Read
@@ -78,6 +79,7 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 - `resume` → read `docs/.spec-state/progress.json`, continue from current phase (skip to resume logic below)
 - `abort` → delete `docs/.spec-state/`, output "workflow aborted", exit
 - `status` → read and display `docs/.spec-state/progress.json` summary, exit
+- `upgrade-template` → jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.1–0.5 and the main workflow — upgrade-template is independent of PRD consumption.
 - anything else → treat as PRD path, proceed to 0.1
 
 ### 0.1 Dependency Check
@@ -341,6 +343,308 @@ Ambiguities Found (Developer Perspective):
 If critical ambiguities exist, ask user to resolve before proceeding.
 
 Use AskUserQuestion to wait for user confirmation. If user has corrections, update understanding and continue.
+
+---
+
+## Phase UT: Section-Level Template Upgrade (resolves Gap 4 — preserves /dev verification progress)
+
+This phase runs **only** when the `upgrade-template` sub-command is dispatched from §0.0.
+It performs section-level merge on existing `docs/ARCHITECTURE.md` and
+`docs/modules/MODULE-*.md` files so a project can upgrade to the current `/spec`
+template without rewriting hand-authored prose and without losing `/dev` verification
+progress in §3.4 AC ledgers.
+
+Phase UT is independent of the main PRD workflow — no PRD is consumed, no evaluator
+loops are run, no `progress.json` is created. If a main /spec workflow is active
+(progress.json exists and is mid-phase), Phase UT refuses per UT.7.
+
+### UT.1 Target discovery
+
+At entry:
+1. If `docs/ARCHITECTURE.md` exists → add to target set, class `arch_sections`.
+2. Glob `docs/modules/MODULE-*.md` → add each match to target set, class `module_sections`.
+3. Non-MODULE files under `docs/modules/` (e.g., `README.md`) → ignored.
+4. If target set is empty → output "No spec docs found in `docs/` — nothing to upgrade" and exit.
+5. If only one class is present (arch-only or modules-only) → proceed with that class.
+
+### UT.2 Canonical section list (kept in sync with the live templates)
+
+Source of truth: the fenced ```markdown blocks inside Phase 1.2 and Phase 2.2 of
+THIS file (search for headings `### 1.2 Architecture Document Structure` and
+`### 2.2 Unified Module Document Template`). This canonical list and the live
+template blocks must be edited together in one commit (see VERSIONING.md release
+checklist).
+
+```yaml
+module_sections:
+  part_markers:  # depth-2 structural dividers; ensured in order
+    - { id: "PART-1", anchor_prefix: "## Part 1: ", canonical_title: "Requirements",   position: "before §1.1" }
+    - { id: "PART-2", anchor_prefix: "## Part 2: ", canonical_title: "Specification",  position: "before §2.1" }
+    - { id: "PART-3", anchor_prefix: "## Part 3: ", canonical_title: "Implementation", position: "before §3.1" }
+  sections:  # depth-3 (all `### N.M`)
+    - { id: "1.1", title: "Module Goals & Overview",                depth: 3 }
+    - { id: "1.2", title: "Architecture Overview",                  depth: 3 }
+    - { id: "1.3", title: "Feature Matrix",                         depth: 3 }
+    - { id: "1.4", title: "Detailed Feature Specifications",        depth: 3 }
+    - { id: "1.5", title: "Acceptance Criteria",                    depth: 3 }
+    - { id: "1.6", title: "Non-functional Requirements",            depth: 3 }
+    - { id: "1.7", title: "Security Requirements",                  depth: 3 }
+    - { id: "2.1", title: "Module Boundary",                        depth: 3 }
+    - { id: "2.2", title: "Dependencies",                           depth: 3 }
+    - { id: "2.3", title: "Interface Definitions",                  depth: 3 }
+    - { id: "2.4", title: "API Endpoints",                          depth: 3 }
+    - { id: "2.5", title: "Data Models",                            depth: 3 }
+    - { id: "2.6", title: "Database Functions & RPCs",              depth: 3 }
+    - { id: "2.7", title: "Core Logic",                             depth: 3 }
+    - { id: "2.8", title: "Error Handling",                         depth: 3 }
+    - { id: "2.9", title: "Security Considerations",                depth: 3 }
+    - { id: "2.10", title: "Configuration & Environment Variables", depth: 3 }
+    - { id: "2.11", title: "Operational Parameters",                depth: 3 }
+    - { id: "2.12", title: "State Management",                      depth: 3 }
+    - { id: "3.1", title: "Current Status",                         depth: 3 }
+    - { id: "3.2", title: "File Structure",                         depth: 3 }
+    - { id: "3.3", title: "Test Cases",                             depth: 3 }
+    - { id: "3.4", title: "Acceptance Criteria Verification",       depth: 3 }
+    - { id: "3.5", title: "Feature Implementation Record",          depth: 3 }
+    - { id: "3.6", title: "Known Gaps & Future Work",               depth: 3 }
+    - { id: "3.7", title: "Change History",                         depth: 3 }
+    - { id: "3.8", title: "Implementation Notes",                   depth: 3 }
+
+arch_sections:
+  - { id: "1",    title: "Architecture Overview",                   depth: 2 }
+  - { id: "2",    title: "Technology Stack",                        depth: 2 }
+  - { id: "3",    title: "Module Inventory",                        depth: 2 }
+  - { id: "3.1",  title: "MECE Verification",                       depth: 3 }
+  - { id: "4",    title: "Dependency Graph",                        depth: 2 }
+  - { id: "4.1",  title: "Dependency Matrix",                       depth: 3 }
+  - { id: "4.2",  title: "Dependency Principles",                   depth: 3 }
+  - { id: "5",    title: "Data Flow",                               depth: 2 }
+  - { id: "6",    title: "Interface Definitions",                   depth: 2 }
+  - { id: "6.1",  title: "Inter-module Contract Registry",          depth: 3 }
+  - { id: "6.2",  title: "External Interfaces",                     depth: 3 }
+  - { id: "7",    title: "Non-functional Requirements Mapping",     depth: 2 }
+  - { id: "8",    title: "Key Decision Records",                    depth: 2 }
+  - { id: "9",    title: "Risk Register",                           depth: 2 }
+  - { id: "10",   title: "Requirement Traceability",                depth: 2 }
+  - { id: "11",   title: "Threat Model",                            depth: 2 }
+  - { id: "11.1", title: "Attack Surfaces",                         depth: 3 }
+  - { id: "11.2", title: "STRIDE Analysis (for modules handling auth/payment/PII)", depth: 3 }
+  - { id: "11.3", title: "Security Control Decisions",              depth: 3 }
+```
+
+### UT.3 Section classification (per target doc)
+
+For every `id` in the canonical list and in the existing doc:
+
+| Class        | In template | In doc | Action |
+|--------------|-------------|--------|--------|
+| **Kept**     | ✓           | ✓ (1×) | Preserve body verbatim. Rewrite heading line to current title + correct depth marker (`## N.` for depth 2, `### N.M` for depth 3). |
+| **Missing**  | ✓           | ✗      | Insert heading at correct depth (from canonical `depth` field), followed by boilerplate body (UT.4). Position per UT.3.2. |
+| **Orphan**   | ✗           | ✓      | Batched AskUserQuestion (UT.3.3). Default: Keep + Annotate. |
+| **Duplicate**| ✓           | ✓ (≥2) | Batched AskUserQuestion (UT.3.3). Default: Concatenate bodies in source order. |
+
+#### UT.3.1 Part-marker identity rule (MODULE only)
+
+After classification, enforce: exactly three `## Part N:` markers in order,
+immediately before §1.1 / §2.1 / §3.1.
+
+- **All three present, correct titles, correct positions** → no-op.
+- **Missing one or more** → insert per canonical list position.
+- **Duplicated** → keep first occurrence of each id, drop the rest.
+- **Out-of-order** (Part 2 appears before Part 1) → re-position each marker so it
+  immediately precedes its canonical first section.
+- **Non-canonical title** (e.g., `## Part 1: Introduction` instead of `## Part 1:
+  Requirements`) → per-doc AskUserQuestion: (1) rewrite to canonical title
+  (2) keep as-is + annotate with HTML comment (3) treat as Orphan (UT.3.3 flow)
+  (4) skip this doc.
+- **Extra Part 4+** → route to UT.3.3 Orphan handling.
+
+#### UT.3.2 Missing-section insertion position
+
+Insert after the last Kept section with a **smaller id**, before the first Kept
+section with a **larger id**. Order is lexicographic over the split-digit tuple:
+`(1,) < (1,1) < (1,2) < (1,10) < (2,) < (2,1)`.
+
+If the target doc has zero Kept sections in the relevant Part (e.g., Part 3
+entirely new), insert the Part marker first, then all Missing §3.x in order.
+
+#### UT.3.3 Batched AskUserQuestion for Orphan / Duplicate / non-canonical Part titles
+
+Per-doc single prompt:
+
+```
+docs/modules/MODULE-001-foo.md has the following non-canonical sections:
+
+Orphan (3):
+  - §4.1 "Custom Integration Notes" (12 lines)
+  - §5.0 "Legacy Debug Hooks" (30 lines)
+  - §3.9 "Rollout Plan" (8 lines)
+
+Duplicate (1):
+  - §2.5 appears twice (approx lines 140 and 210; sizes 45 / 5 lines)
+
+Non-canonical Part title (1):
+  - ## Part 1: Introduction (canonical: Requirements)
+
+Choose default action for ALL above (single selection):
+  (1) Keep + Annotate orphans; Concatenate duplicates; normalize Part titles  [recommended]
+  (2) Remove orphans; Keep first duplicate; normalize Part titles
+  (3) Per-section decisions (opens up to 10 follow-up questions; excess → (1))
+  (4) Abort upgrade of this doc
+```
+
+**Follow-up cap (option 3)**: limit to 10 AskUserQuestions per doc. Once exceeded,
+apply default-action (1) to all remaining sections. Emit end-of-doc summary:
+"Auto-applied default-action to X sections due to follow-up cap (all sections
+fully resolved — no leftover state)."
+
+### UT.4 Missing-section boilerplate (body lookup)
+
+Resolution protocol (runs once at Phase UT entry):
+
+1. Read `plugins/dev/skills/spec/SKILL.md` (this file).
+2. Track code fences (UT.5 rule 1) while scanning. **Anchor headings match only
+   when they are real `###` heading lines OUTSIDE all code fences.** The UT.2
+   canonical list YAML block (inside a ```yaml fence) does NOT match.
+3. Find the exact line matching `^### 1\.2 Architecture Document Structure$`
+   (outside fences). Within its body, locate the next ```markdown fence open and
+   capture until the matching close.
+4. Find the exact line matching `^### 2\.2 Unified Module Document Template$`
+   (outside fences). Same capture.
+5. Inside each captured block, split on canonical section headings; each heading's
+   body is text between it and the next canonical heading (or Part marker).
+6. Cache in-memory for the duration of the upgrade-template run.
+
+Template-body edits (adding a table column, rewording a placeholder) propagate
+automatically via this lookup.
+
+### UT.5 Parser spec
+
+The section-heading parser MUST:
+
+1. **Fence tracking (strict)**:
+   - A fence open/close is a line that **starts at column 0** with exactly three
+     backticks or three tildes. Lines prefixed with `\` (backslash-escaped forms
+     used as inline illustrations in prose) are NOT fences.
+   - State machine: outside → seeing `\`\`\`lang` on its own line → inside-fence
+     → seeing `\`\`\`` on its own line → outside.
+   - Heading-candidate lines inside a fence are non-heading content.
+2. Skip YAML frontmatter (`---` open/close at start of file).
+3. Heading recognition (outside fences) — match on:
+   ```
+   ^(#{2,3}) +(\d+(?:\.\d+)?)\.? +(.+?)\s*$
+   ```
+   - Group 1 = depth marker (`##` or `###`)
+   - Group 2 = numeric id with at most one dot (`1`, `3.1`, `11.3`). Canonical
+     lists use 1 or 2 segments only; multi-segment ids (`1.4.1`) are rejected by
+     this regex and treated as body content.
+   - `\.?` = OPTIONAL trailing period (ARCHITECTURE depth-2 `## N.`; MODULE
+     depth-3 `### N.M` without period).
+   - Group 3 = title (lazy match, trailing whitespace stripped).
+4. Part markers recognized separately: `^## Part (\d+): +(.+?)\s*$`. Title
+   compared to canonical; mismatch → UT.3.3 flow.
+5. Reject `####` and deeper — depth-4+ headings are body content.
+6. Reject ids with leading zeros (`01`) — canonical list has no zero-padded ids.
+
+### UT.6 Write protocol
+
+One Write call per doc (full replacement). Pre-write flow:
+
+1. Per-doc dry-run summary (printed):
+   ```
+   docs/modules/MODULE-001-foo.md:
+     Kept: 18 sections (bodies preserved)
+     Missing: 2 sections — will insert: 2.12, 3.8
+     Orphan: 0
+     Duplicate: 0
+     Part markers: 3/3 present
+     Legacy-body flags: 0
+   ```
+2. Cross-doc summary table.
+3. Single AskUserQuestion: "Apply upgrades to N docs? (1) Yes, all (2) Review each
+   doc's diff (3) Abort".
+4. If "review each": show full diff per doc via Bash `git diff --no-index` against
+   a temp file; AskUserQuestion per doc.
+5. Write docs one-by-one (atomic per doc). Error → halt loop; completed docs
+   remain upgraded; surface the error.
+
+#### UT.6.1 R5 legacy-body collision check
+
+For each **Kept** section, apply a deterministic placeholder-marker check:
+
+- **Marker set §2.12 State Management**: `"Owned state surfaces"`,
+  `"State transitions"`, `"Cross-module state protocol"` (short prose phrases
+  appearing in the live template body).
+- **Marker set §3.8 Implementation Notes**: `"Alternatives considered"` and
+  `"Trade-off"` (two short independent phrases; appear in the template's table
+  header).
+
+Before substring matching, normalize both the existing body and the marker by
+collapsing runs of whitespace (including tabs) to single spaces.
+
+Per Kept section whose marker set is non-empty: if the existing body contains
+ZERO of the marker phrases (after normalization) → flag as "legacy-body
+collision" (likely pre-2.1.0 user content at this id). Emit per-doc
+AskUserQuestion:
+
+```
+§2.12 in MODULE-003 is Kept but its body contains none of the canonical template
+landmark phrases ({phrase list}). Likely pre-2.1.0 user-authored content. Choose:
+  (1) Preserve body as-is (assume legacy user intent)
+  (2) Renumber user content to next-free id (§2.13 / §3.9) and insert fresh
+      template body at §2.12
+  (3) Skip this doc
+```
+
+### UT.7 Active-workflow hard gate
+
+If `docs/.spec-state/progress.json` exists AND its `phase` field is in
+`{"architecture", "modules", "implementation_order"}`, **REFUSE** with error:
+
+> Active /spec workflow in phase {phase}. Run `/spec abort` before
+> `upgrade-template`, then re-run `/spec` after upgrade completes if needed.
+
+If phase is `"init"` or `"report"` (no active mid-flow state), silently allow.
+
+### UT.8 §3.4 AC ledger preservation (the Gap 4 core promise)
+
+Because Missing→Insert only applies to §3.4 when §3.4 is actually Missing,
+merge-preserve holds:
+
+- §3.4 already present with `Active=Y, Status=passed` rows → Kept verbatim;
+  /dev verification progress preserved.
+- §3.4 absent (very old template) → fresh empty ledger inserted; next ordinary
+  `/spec` rerun populates rows from §1.5 per the §3.4 Generation rules block
+  inside the §2.2 MODULE template (see heading `### 3.4 Acceptance Criteria
+  Verification` within the template).
+
+This is the critical difference from "Regenerate all" (option 1 of the §0.2
+gate): Regenerate discards §3.4 body entirely; merge-preserve then re-derives
+rows from §1.5 but cannot recover `Status=passed` history because the source
+was already overwritten. `upgrade-template` preserves the history.
+
+### UT.9 Completion summary
+
+After all writes succeed, emit:
+
+```
+/spec upgrade-template: upgraded N docs
+
+Per doc:
+  docs/ARCHITECTURE.md: +2 Missing, 0 Orphan, 0 Duplicate
+  docs/modules/MODULE-001-foo.md: +2 Missing, 0 Orphan, 0 Duplicate
+  docs/modules/MODULE-002-bar.md: 0 Missing, 1 Orphan (kept+annotated), 0 Duplicate
+
+§3.4 preservation: X modules had passed AC rows preserved verbatim.
+Part markers: all 3/3 present in each MODULE doc post-upgrade.
+Legacy-body flags: Y (user-resolved via UT.6.1).
+
+Next step: commit the changes (`git add docs/ && git commit`), then verify
+downstream /dev workflows resume cleanly.
+```
+
+Phase UT exits here — it does not create `progress.json` and does not enter the
+main PRD workflow.
 
 ---
 
@@ -1219,19 +1523,28 @@ data loss for resilience". Empty if implementation followed §2.7 verbatim.}
 
 When the template gains new sections (e.g., 2.1.0 added §2.12 State Management
 and §3.8 Implementation Notes), existing MODULE docs generated from an older
-template do NOT automatically acquire those sections on `/spec` rerun. There
-is no automated section-level merge-preserve for template additions (the
-merge-preserve machinery handles REQ-ID status, AC-ID ledger, Module-ID, and
-Contract-ID only). Two paths to upgrade a legacy doc:
-- Option A (manual): open the doc and add the new `### N.M Title` headings
-  with empty boilerplate (copy from the current template).
-- Option B (regenerate): re-run `/spec` and choose the "Regenerate all"
-  option, which discards hand-edits outside the merge-preserved surfaces.
+template do NOT acquire those sections on an ordinary `/spec` rerun (the
+main-flow merge-preserve machinery handles REQ-ID status, AC-ID ledger,
+Module-ID, and Contract-ID only). Three paths to upgrade a legacy doc:
 
-The `/dev` DOCS-phase instructions already tell the agent to update `§2.12 /
+- **Option C (recommended, added in 2.2.0): `/spec upgrade-template`** —
+  section-level merge that preserves all existing bodies verbatim (including
+  §3.4 `Active=Y, Status=passed` verification progress) and inserts Missing
+  sections with boilerplate. See Phase UT for details. This is the right
+  choice when you have /dev-verified history you need to keep.
+- Option A (manual): open the doc and add the new `### N.M Title` headings
+  with empty boilerplate (copy from the current template). Low-risk for tiny
+  gaps; tedious for multi-module projects.
+- Option B (regenerate): re-run `/spec` and choose "Regenerate all", which
+  discards hand-edits outside the merge-preserved surfaces (including any
+  §3.4 `Status=passed` history that the merge-preserve machinery can't
+  re-derive from §1.5). Use only when the old docs are stale enough that
+  rewriting is preferred over preserving.
+
+The `/dev` DOCS-phase instructions also tell the agent to update `§2.12 /
 §3.8` when the relevant change occurs; if the target MODULE doc lacks the
 section, the agent creates it inline at that point. This self-heals on demand
-without centralized alignment logic.
+for active work, but Option C is the right batch upgrade path.
 
 ### 2.3 Batch Generation Strategy
 

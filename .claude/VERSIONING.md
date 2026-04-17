@@ -57,3 +57,22 @@ If a change sits on the boundary between two tiers (e.g., a minor refactor that 
 to touch user-visible wording), round **up** to the safer tier (minor over patch,
 major over minor). The cost of a too-high bump is cosmetic; the cost of a too-low bump
 is hidden breakage for downstream users.
+
+## Release checklist (for /spec template changes)
+
+When editing the Phase 1.2 ARCHITECTURE template or the Phase 2.2 MODULE template in
+`plugins/dev/skills/spec/SKILL.md`, update the Phase UT synchronized structures in
+the same commit:
+
+1. **Canonical section list** (`module_sections` / `arch_sections` YAML in Phase UT) —
+   add/remove/retitle entries to mirror the live template headings.
+2. **R5 legacy-body marker phrases** — if you reword any of the short phrases used in
+   §2.12 State Management or §3.8 Implementation Notes template bodies (e.g.,
+   `"Owned state surfaces"`, `"State transitions"`, `"Cross-module state protocol"`,
+   `"Alternatives considered"`, `"Trade-off"`), update the marker set in the Phase UT
+   R5 check so legacy-body collision detection stays accurate.
+
+The /dev test phase evaluators run T12 / T13 / T18 against the upgraded skill;
+structural drift between canonical lists and live templates fails T12/T13 and blocks
+convergence. (There is no CI pipeline — this guard runs under /dev's dual-model
+evaluator loop, not an automated CI.)

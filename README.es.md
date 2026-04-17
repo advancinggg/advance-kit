@@ -147,7 +147,7 @@ Luego añade a `~/.claude/settings.json`:
 
 | Plugin | Versión | Estado |
 |---|---|---|
-| `dev` | `2.1.0` | Estable — fórmula de progreso basada en AC; numeración de secciones /dev ↔ /spec alineada (nuevas §2.12 State Management, §3.8 Implementation Notes; §1.1 renombrada a "Module Goals & Overview"); incluye skills `dev` / `spec` y statusline opcional. **Nota de migración**: los MODULE docs existentes NO obtienen automáticamente §2.12/§3.8 al rerun de `/spec` — agregar manualmente o usar "Regenerate all". |
+| `dev` | `2.2.0` | Estable — fórmula de progreso basada en AC; numeración de secciones /dev ↔ /spec alineada (§2.12 State Management, §3.8 Implementation Notes). Añade sub-comando **`/spec upgrade-template`** para migración de plantillas a nivel de sección preservando el progreso de verificación §3.4 AC (Gap 4). Incluye skills `dev` / `spec` y statusline opcional. |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
 
