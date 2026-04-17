@@ -76,3 +76,12 @@ The /dev test phase evaluators run T12 / T13 / T18 against the upgraded skill;
 structural drift between canonical lists and live templates fails T12/T13 and blocks
 convergence. (There is no CI pipeline — this guard runs under /dev's dual-model
 evaluator loop, not an automated CI.)
+
+**Anchor-collision invariant for Phase UT**: the UT.4 body-lookup protocol searches for
+the exact lines `### 1.2 Architecture Document Structure` and `### 2.2 Unified Module
+Document Template` as real headings (outside all code fences). **Do not start any new
+line with either of these strings outside a code fence** when editing Phase UT prose,
+the canonical YAML, or other sections of SKILL.md. Prose references must either use
+backtick-wrapping (e.g., `` `### 2.2 Unified Module Document Template` ``) or mention
+the heading inside a fenced code block. Violations create false anchors that silently
+break upgrade-template's body lookup for Missing sections.

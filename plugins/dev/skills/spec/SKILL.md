@@ -366,6 +366,11 @@ At entry:
 3. Non-MODULE files under `docs/modules/` (e.g., `README.md`) → ignored.
 4. If target set is empty → output "No spec docs found in `docs/` — nothing to upgrade" and exit.
 5. If only one class is present (arch-only or modules-only) → proceed with that class.
+6. **Empty-or-frontmatter-only docs**: after stripping YAML frontmatter (opening `---` to
+   closing `---`) and blank lines, if the remainder contains zero heading candidates (per
+   UT.5 rule 3), skip the doc with a per-doc notice: "`{path}`: empty / frontmatter-only —
+   skipped (nothing to merge; re-run `/spec` to generate from scratch if needed)". The doc
+   is NOT rewritten in this case.
 
 ### UT.2 Canonical section list (kept in sync with the live templates)
 
@@ -520,6 +525,21 @@ automatically via this lookup.
 
 ### UT.5 Parser spec
 
+**Input normalization (applied before parsing)**:
+
+- **BOM**: if the first bytes of the file are `EF BB BF` (UTF-8 BOM `U+FEFF`), strip
+  them. Without this, the first line's `^` anchor match fails and the frontmatter
+  opener `---` is missed.
+- **Line endings**: normalize `\r\n` (CRLF) and lone `\r` (CR) to `\n` (LF) before
+  parsing. Docs authored on Windows or mixed-line-ending environments must not cause
+  regex anchors to silently fail.
+- **Trailing whitespace** on heading lines is tolerated by the regex (lazy title match
+  + `\s*$`).
+
+Preserve the original BOM / line-ending style in the output write IF present in the
+original, OR normalize to LF (editor default) — implementation choice documented at
+write time.
+
 The section-heading parser MUST:
 
 1. **Fence tracking (strict)**:
@@ -612,16 +632,25 @@ Because Missing→Insert only applies to §3.4 when §3.4 is actually Missing,
 merge-preserve holds:
 
 - §3.4 already present with `Active=Y, Status=passed` rows → Kept verbatim;
-  /dev verification progress preserved.
-- §3.4 absent (very old template) → fresh empty ledger inserted; next ordinary
-  `/spec` rerun populates rows from §1.5 per the §3.4 Generation rules block
-  inside the §2.2 MODULE template (see heading `### 3.4 Acceptance Criteria
-  Verification` within the template).
+  /dev verification progress preserved. **This is the primary Gap 4 path.**
+- §3.4 absent (very old template) → fresh template boilerplate inserted. Note:
+  the live §3.4 template body contains **placeholder example rows** (e.g.,
+  `MODULE-001-AC-01 | Y | untested`) illustrating the schema; these are
+  sample content, not real AC IDs. Special-case handling for §3.4 Missing:
+  strip the placeholder rows from the boilerplate before insert, leaving only
+  the table header + column descriptions. The next ordinary `/spec` rerun
+  then populates real AC IDs from §1.5 via the merge-preserve rules in the
+  live §3.4 Generation block (search heading `### 3.4 Acceptance Criteria
+  Verification` in SKILL.md for those rules). Without this special case,
+  upgrade-template would leave cross-module-polluting sample rows in the
+  upgraded doc (e.g., `MODULE-001-AC-01` references inside MODULE-003-auth.md).
 
 This is the critical difference from "Regenerate all" (option 1 of the §0.2
 gate): Regenerate discards §3.4 body entirely; merge-preserve then re-derives
 rows from §1.5 but cannot recover `Status=passed` history because the source
-was already overwritten. `upgrade-template` preserves the history.
+was already overwritten. `upgrade-template` preserves existing history and,
+for the Missing case, leaves a clean ledger ready for the next /spec rerun to
+populate accurately.
 
 ### UT.9 Completion summary
 
