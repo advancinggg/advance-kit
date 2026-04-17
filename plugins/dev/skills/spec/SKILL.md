@@ -88,6 +88,8 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 echo "=== /spec dependency check ==="
 which jq 2>/dev/null && echo "JQ: OK" || echo "JQ: MISSING (evaluator output parsing)"
 which codex 2>/dev/null && echo "CODEX: OK" || echo "CODEX: MISSING (single-evaluator mode)"
+which python3 2>/dev/null && echo "PYTHON3: OK" || echo "PYTHON3: MISSING (upgrade-template path canonicalization)"
+which mktemp 2>/dev/null && echo "MKTEMP: OK" || echo "MKTEMP: MISSING (upgrade-template atomic write)"
 [ -f "$HOME/.claude/agents/claude-auditor.md" ] && echo "AUDITOR: OK" || echo "AUDITOR: MISSING"
 ```
 
@@ -95,6 +97,8 @@ which codex 2>/dev/null && echo "CODEX: OK" || echo "CODEX: MISSING (single-eval
 - `codex` missing → set `codex_available: false`
 - Either case: evaluators run Claude-only (single-evaluator mode), warn user
 - `claude-auditor` missing → error, evaluator loops cannot function. Abort or run without evaluators (user choice via AskUserQuestion)
+- `python3` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires python3 for UT.1 path canonicalization. Install python3 and retry. (python3 is not required for the main PRD workflow.)"
+- `mktemp` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires mktemp for UT.6 atomic write. Install GNU coreutils / BSD mktemp and retry."
 
 ### 0.1 Locate PRD File(s)
 
@@ -372,24 +376,54 @@ At entry:
    skipped (nothing to merge; re-run `/spec` to generate from scratch if needed)". The doc
    is NOT rewritten in this case.
 7. **Path-confinement check** (guard against symlink / path-traversal attacks in
-   collaborative repos): for each target path, resolve to its canonical absolute path
-   and verify the resolved path starts with `{repo_root}/docs/` (with trailing slash).
-   Canonicalization primitive (portable across macOS without coreutils, Linux, WSL):
+   collaborative repos). Three independent assertions per target path; any failure
+   REFUSES the file and continues with the remaining target set:
+
+   **(a) Regular-file assertion** — the target must be a regular file (not a
+   symlink, not a directory, not a device, not a dead link). Docs upgrade is
+   restricted to real regular files for simplicity and security; symlinks are
+   refused even if they resolve inside `docs/` (eliminates the TOCTOU window
+   where cp could follow a symlink to a non-docs target between discovery and
+   write, and also catches dangling symlinks that would halt the loop at UT.6
+   step 6 `cp`):
    ```bash
-   # python3 is already a /spec dependency (see §0.1); use it for reliable realpath
+   if [ -L "$path" ]; then
+     REFUSE "$path: symlink — refused. upgrade-template only accepts regular files under docs/. If this symlink is intentional, replace it with the target file."
+   fi
+   if [ ! -f "$path" ]; then
+     REFUSE "$path: not a regular file — refused (dangling symlink, directory, or special file)."
+   fi
+   ```
+
+   **(b) Realpath-confinement assertion** — the canonical path (after resolving
+   any parent-directory symlinks) must begin with `{repo_root}/docs/` (trailing
+   slash enforced to block `docs-evil/` prefix attacks). Canonicalization uses
+   python3 (added to §0.1 dependency check); missing python3 → UT entry aborts
+   before reaching this step, so python3 is guaranteed present here:
+   ```bash
    canon=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path")
    root_canon=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \
                   "$(git rev-parse --show-toplevel)")
    case "$canon" in
      "$root_canon/docs/"*) : ok ;;
-     *) REFUSE ;;
+     *) REFUSE "$path: resolves outside docs/ — refused. (Parent symlink escape detected.)" ;;
    esac
    ```
-   If the resolved path escapes the docs tree OR the path itself is a symlink
-   pointing outside `docs/`, REFUSE that file with an error: "`{path}`: symlink or
-   path traversal outside `docs/` — refused; re-inspect your repo (hint: a
-   collaborator may have committed a malicious symlink)". Skip the file but
-   continue with the remaining target set.
+
+   **(c) Filename-sanitization assertion** — the relative path (and all
+   sub-strings that will be shown to the user in later prompts / warnings) must
+   not contain newlines, carriage returns, or control characters (< 0x20
+   excluding tab/space, plus DEL). Such characters in filenames enable
+   prompt-injection when surfaced in AskUserQuestion / warning text:
+   ```bash
+   if printf '%s' "$path" | LC_ALL=C tr -d '\t -~' | grep -q '.'; then
+     REFUSE "$path: filename contains non-printable / control characters — refused (prompt-injection vector)."
+   fi
+   ```
+   The same sanitization applies at UT.6 step 8 when listing residue filenames:
+   any `.spec-upgrade-*.*` file whose name contains control characters is
+   listed as `{path_parent}/<filename-redacted-control-chars>` instead of
+   echoed verbatim.
 8. **Size guard** (DoS prevention): per-doc byte size limit 2 MiB and line-count limit
    20 000. Docs exceeding either threshold emit a confirmation AskUserQuestion: "`{path}`
    is {size}/{lines} — over the 2 MiB / 20 000-line guard. Proceed? (1) Yes, include
@@ -578,18 +612,21 @@ line-ending mixes would produce unreadable diffs on every future /dev / /spec ru
 
 The section-heading parser MUST:
 
-1. **Fence tracking (strict)**:
-   - A fence open/close is a line that **starts at column 0** with **three OR
-     MORE** consecutive backticks or tildes (markdown allows 4+ backticks to
-     fence blocks that themselves contain 3-backtick sequences). Lines prefixed
-     with `\` (backslash-escaped forms used as inline illustrations in prose)
-     are NOT fences.
-   - Fence matching is symmetric: an opener with N backticks is closed by a
-     line whose only content is exactly N consecutive backticks (not fewer,
-     not more). State machine tracks the opener length.
+1. **Fence tracking (CommonMark-aligned)**:
+   - A fence open is a line that **starts at column 0** with **three OR MORE**
+     consecutive backticks or tildes (markdown allows 4+ backticks to fence
+     blocks that themselves contain 3-backtick sequences). Lines prefixed with
+     `\` (backslash-escaped forms used as inline illustrations in prose) are
+     NOT fences.
+   - A fence close is a line containing ONLY backticks/tildes (same char as
+     opener), of length **≥ opener length**, with optional trailing whitespace
+     (per CommonMark §4.5). An opener with 3 backticks is closed by 3, 4, 5,
+     ... backticks; an opener with 4 backticks is closed by 4+. State machine
+     tracks the opener char and length.
    - State machine: outside → seeing `\`\`\`+lang` (or `~~~+lang`) on its own
-     line at column 0 → inside-fence with opener length recorded → seeing a
-     matching closer on its own line → outside.
+     line at column 0 → inside-fence with {char, length} recorded → seeing a
+     line of ≥length of the same char (and only that char + trailing whitespace)
+     → outside.
    - Heading-candidate lines inside a fence are non-heading content.
 2. Skip YAML frontmatter (`---` open/close at start of file).
 3. Heading recognition (outside fences) — match on:
@@ -606,7 +643,12 @@ The section-heading parser MUST:
 4. Part markers recognized separately: `^## Part (\d+): +(.+?)\s*$`. Title
    compared to canonical; mismatch → UT.3.3 flow.
 5. Reject `####` and deeper — depth-4+ headings are body content.
-6. Reject ids with leading zeros (`01`) — canonical list has no zero-padded ids.
+6. Reject ids with leading zeros (`01`, `01.2`) — canonical list has no
+   zero-padded ids. Post-regex check: after successful match of Group-2 id,
+   verify the first character is not `'0'` (the regex itself allows leading
+   zeros because `\d+` accepts them). Reject with treat-as-body-content
+   semantics: the line is not classified as a heading and flows into the
+   preceding section's body.
 
 ### UT.6 Write protocol
 
@@ -642,11 +684,12 @@ tmp-file + rename. Pre-write flow:
    tmp=$(mktemp "$dir/.spec-upgrade-tmp.XXXXXX") || exit 1
    backup=$(mktemp "$dir/.spec-upgrade-backup.XXXXXX") || exit 1
    ```
-   Order: (a) `cp -p "$path" "$backup"` (preserve mode/timestamps). Reject with an
-   error if `cp` follows a symlink that resolves **outside** the docs/ tree — apply
-   the UT.1 rule-7 confinement check on the resolved path of the SOURCE `$path`, not
-   the `$backup`/`$tmp` siblings. (Confinement on `$path` is already enforced at
-   UT.1 discovery; `mktemp`-generated companions are not attacker-controllable.)
+   Order: (a) `cp -pP "$path" "$backup"` — `-p` preserves mode/timestamps,
+   `-P` does NOT follow symlinks on the source (defense-in-depth even though
+   UT.1 rule 7(a) already rejects symlinks outright). If cp fails, REFUSE the
+   doc. mktemp-generated companions are not attacker-controllable (unpredictable
+   suffix); UT.1 rule 7 guarantees `$path` is a regular file, so cp succeeds
+   in the expected case.
    (b) Write the new content to `$tmp`. (c) Verify `$tmp` has non-zero size. (d)
    `mv "$tmp" "$path"` via Bash `mv`. If any step fails, `$path` may be clobbered
    by (d) — the `$backup` is the recovery source (step 7-revert).
