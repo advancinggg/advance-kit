@@ -138,7 +138,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.2.0` | Stable — AC-based progress formula; /dev ↔ /spec section numbering aligned (§2.12 State Management, §3.8 Implementation Notes). Adds **`/spec upgrade-template`** sub-command for section-level template migration that preserves §3.4 AC verification progress (Gap 4). Includes `dev` and `spec` skills plus opt-in statusline. |
+| `dev` | `2.3.0` | Stable — AC-based progress formula; /dev ↔ /spec section numbering aligned. Adds new **`/prd` skill** for iterative PRD generation (guided dialogue, one-question-per-turn, 4-dimension coverage evaluator — adapted from Jesse Obra's brainstorming skill). MODULE template gains §1.1 "Serves PRD topics" reverse mapping, §2.13 Operations (runbook), §2.14 Observability (log/metric/trace schema). Includes `dev`, `spec`, `prd` skills plus opt-in statusline. |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 

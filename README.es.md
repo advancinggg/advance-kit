@@ -147,7 +147,7 @@ Luego añade a `~/.claude/settings.json`:
 
 | Plugin | Versión | Estado |
 |---|---|---|
-| `dev` | `2.2.0` | Estable — fórmula de progreso basada en AC; numeración de secciones /dev ↔ /spec alineada (§2.12 State Management, §3.8 Implementation Notes). Añade sub-comando **`/spec upgrade-template`** para migración de plantillas a nivel de sección preservando el progreso de verificación §3.4 AC (Gap 4). Incluye skills `dev` / `spec` y statusline opcional. |
+| `dev` | `2.3.0` | Estable — fórmula de progreso basada en AC; numeración de secciones /dev ↔ /spec alineada. Añade nueva skill **`/prd`** para generación iterativa de PRD (diálogo guiado one-question-per-turn + evaluador de cobertura de 4 dimensiones — adaptado del skill de brainstorming de Jesse Obra). La plantilla MODULE gana §1.1 "Serves PRD topics" (mapeo inverso), §2.13 Operations (runbook) y §2.14 Observability (esquema de logs/métricas/trazas). Incluye skills `dev` / `spec` / `prd` y statusline opcional. |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
 

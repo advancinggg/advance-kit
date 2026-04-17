@@ -1,11 +1,14 @@
 ---
 name: spec
-version: 3.3.0
+version: 3.4.0
 description: |
   Generate architecture and module specification documents from PRD.
   MECE module decomposition, self-contained specs for AI agent implementation.
   Independent evaluator architecture: PRD coverage evaluator ensures zero requirements lost.
   Supports greenfield and existing project modes.
+  MODULE template (2.3.0+): §1.1 includes "Serves PRD topics" reverse mapping;
+  §2.13 Operations (runbook) and §2.14 Observability (log/metric/trace schema) capture
+  operational + observability contracts.
   Sub-commands: resume | abort | status | upgrade-template.
   Usage: /spec [path/to/PRD.md or path/to/prd-directory/]
   Trigger when user asks to "generate specs", "generate architecture", "decompose modules",
@@ -463,6 +466,8 @@ module_sections:
     - { id: "2.10", title: "Configuration & Environment Variables", depth: 3 }
     - { id: "2.11", title: "Operational Parameters",                depth: 3 }
     - { id: "2.12", title: "State Management",                      depth: 3 }
+    - { id: "2.13", title: "Operations",                            depth: 3 }
+    - { id: "2.14", title: "Observability",                         depth: 3 }
     - { id: "3.1", title: "Current Status",                         depth: 3 }
     - { id: "3.2", title: "File Structure",                         depth: 3 }
     - { id: "3.3", title: "Test Cases",                             depth: 3 }
@@ -731,9 +736,21 @@ For each **Kept** section, apply a deterministic placeholder-marker check:
 - **Marker set §2.12 State Management**: `"Owned state surfaces"`,
   `"State transitions"`, `"Cross-module state protocol"` (short prose phrases
   appearing in the live template body).
+- **Marker set §2.13 Operations** (2.3.0+): `"Health check endpoint"`,
+  `"Kill switches"`, `"Rollback strategy"` (section subheadings / table
+  keywords in the live template body).
+- **Marker set §2.14 Observability** (2.3.0+): `"Structured logs"`,
+  `"Redaction list"`, `"SLO target"`.
 - **Marker set §3.8 Implementation Notes**: `"Alternatives considered"` and
   `"Trade-off"` (two short independent phrases; appear in the template's table
   header).
+
+**Note on §1.1 Serves PRD topics (2.3.0+)**: intentionally NOT included in the R5
+marker set. §1.1 body is user-authored module purpose prose with no fixed marker
+phrase — adding markers would false-positive every pre-2.3.0 MODULE doc as legacy-
+body collision. The new "Serves PRD topics" sub-section propagates to legacy MODULE
+docs via `/spec` main-flow rerun (Phase 2 auto-fills from REQUIREMENTS_REGISTRY), not
+via `upgrade-template`.
 
 Before substring matching, normalize both the existing body and the marker by
 collapsing runs of whitespace (including tabs) to single spaces.
@@ -1327,6 +1344,17 @@ Use Write tool to generate `docs/modules/MODULE-{number}-{module-name}.md`:
 
 {2-3 sentences describing the module's core purpose, value, and goals}
 
+**Serves PRD topics** (reverse mapping; auto-filled by /spec Phase 2 from
+REQUIREMENTS_REGISTRY REQ-ID back-chain — 2.3.0+):
+- `{topic1}.md` (feature via REQ-NNN, REQ-MMM)
+- `{topic2}.md` (feature via REQ-XXX)
+
+(Single-topic projects show: `docs/PRD.md (REQ-NNN, REQ-MMM)`.
+Infrastructure modules without direct PRD references show:
+`— (infrastructure, no direct PRD reference)`.
+Projects without REQUIREMENTS_REGISTRY.md show: `— (no registry)`.)
+
+
 ### 1.2 Architecture Overview
 
 {Current architecture phase description. Include architectural diagrams (Mermaid/ASCII) showing
@@ -1617,6 +1645,59 @@ stateDiagram-v2
 - Consistency model: {strong / eventual / causal}
 - Failure semantics: {what happens if a participant disappears mid-transition}
 
+### 2.13 Operations
+
+{Runbook contract — what this module needs operationally. Populate during /spec
+generation; /dev DOCS phase can refine when operational knowledge accrues.}
+
+**Health & monitoring**:
+- Health check endpoint: {GET /health or N/A}
+- Key metrics linked in §2.14 Observability
+- Critical alerts: {alert name → SLA trigger → severity}
+
+**Common failures & runbook**:
+| Symptom | Likely cause | First response | Escalation |
+|---------|--------------|----------------|------------|
+
+**Kill switches & feature flags**:
+| Flag | Default | Disable effect | Owner |
+|------|---------|---------------|-------|
+
+**Rollback strategy**:
+- Deploy unit: {container / function / migration}
+- Rollback method: {previous version deploy / migration revert / feature flag off}
+- Data migration reversibility: {reversible / forward-only — with reason}
+
+**Capacity**:
+- Normal load: {QPS / concurrent users}
+- Breaking point: {measured at}
+- Scale strategy: {horizontal / vertical / none}
+
+### 2.14 Observability
+
+{Structured telemetry contract. What gets logged / measured / traced, what does not.}
+
+**Structured logs** (event schema):
+| Event | Level | Fields | Sensitive fields (NEVER log) |
+|-------|-------|--------|------------------------------|
+
+**Metrics**:
+| Name | Type | Labels | SLO target | Alert threshold |
+|------|------|--------|-----------|-----------------|
+
+**Traces** (distributed tracing):
+- Service name: {service}
+- Key spans: {span name → what it wraps}
+- Parent-child: {propagation rules}
+
+**Redaction list** (scrubbed before log sink):
+- {field} — reason: {PII / PCI / credential}
+
+**Retention**:
+- Logs: {duration} / {sink}
+- Metrics: {duration}
+- Traces: {sample rate + duration}
+
 ---
 
 ## Part 3: Implementation
@@ -1725,8 +1806,9 @@ data loss for resilience". Empty if implementation followed §2.7 verbatim.}
 **MODULE template version — migration note for rerun mode**:
 
 When the template gains new sections (e.g., 2.1.0 added §2.12 State Management
-and §3.8 Implementation Notes), existing MODULE docs generated from an older
-template do NOT acquire those sections on an ordinary `/spec` rerun (the
+and §3.8 Implementation Notes; **2.3.0 added §2.13 Operations, §2.14 Observability,
+and a §1.1 "Serves PRD topics" sub-section**), existing MODULE docs generated from
+an older template do NOT acquire those sections on an ordinary `/spec` rerun (the
 main-flow merge-preserve machinery handles REQ-ID status, AC-ID ledger,
 Module-ID, and Contract-ID only). Three paths to upgrade a legacy doc:
 
@@ -1748,6 +1830,25 @@ The `/dev` DOCS-phase instructions also tell the agent to update `§2.12 /
 §3.8` when the relevant change occurs; if the target MODULE doc lacks the
 section, the agent creates it inline at that point. This self-heals on demand
 for active work, but Option C is the right batch upgrade path.
+
+### 2.2.1 Serves PRD topics auto-fill (2.3.0+)
+
+When generating each MODULE-NNN doc's §1.1, **automatically compute** the
+"Serves PRD topics" sub-section by reverse-mapping REQ-ID → PRD topic:
+
+1. Read `docs/REQUIREMENTS_REGISTRY.md` (if present).
+2. Filter REQ-IDs where the `Module(s)` column includes this MODULE-NNN.
+3. For each matching REQ-ID, extract the `Source` column (PRD path) + REQ-ID.
+4. Group by PRD path, emit lines of the form:
+   `- \`{topic}.md\` (feature via REQ-NNN, REQ-MMM)`
+5. Special cases:
+   - Single-topic project (only `docs/PRD.md`): emit `- \`docs/PRD.md\` (REQ-NNN, REQ-MMM)`
+   - Infrastructure module (no REQ-IDs reference it): emit `- — (infrastructure, no direct PRD reference)`
+   - Registry absent (lightweight / greenfield before /prd): emit `- — (no registry)`
+
+This is a generation-time automation; the template body in §1.1 displays the
+result as inline markdown. No runtime state; re-deriving on every /spec rerun
+is correct behavior.
 
 ### 2.3 Batch Generation Strategy
 

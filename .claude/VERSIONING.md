@@ -77,6 +77,25 @@ structural drift between canonical lists and live templates fails T12/T13 and bl
 convergence. (There is no CI pipeline — this guard runs under /dev's dual-model
 evaluator loop, not an automated CI.)
 
+**R5 marker phrases (kept in sync with Phase UT UT.6.1 — 2.3.0 updated)**:
+
+| Section | Marker phrases |
+|---|---|
+| §2.12 State Management | Owned state surfaces / State transitions / Cross-module state protocol |
+| **§2.13 Operations (2.3.0+)** | Health check endpoint / Kill switches / Rollback strategy |
+| **§2.14 Observability (2.3.0+)** | Structured logs / Redaction list / SLO target |
+| §3.8 Implementation Notes | Alternatives considered / Trade-off |
+
+**Note on §1.1 Serves PRD topics sub-section (2.3.0+)**: intentionally NOT in the R5
+marker table. §1.1 body is user-authored module purpose prose (no fixed marker
+phrase). Adding Serves PRD topics sub-section to legacy MODULEs is done via `/spec`
+main-flow rerun (Phase 2 generation instruction auto-fills from REQUIREMENTS_REGISTRY),
+not via `upgrade-template`. See /spec SKILL.md UT.6.1 "Note on §1.1" for the same
+explanation at the enforcement site.
+
+When rewording any marker phrase in the template body, update UT.6.1 marker set in
+`/spec` SKILL.md Phase UT in the same commit.
+
 **Anchor-collision invariant for Phase UT**: the UT.4 body-lookup protocol searches for
 the exact lines `### 1.2 Architecture Document Structure` and `### 2.2 Unified Module
 Document Template` as real headings (outside all code fences). **Do not start any new

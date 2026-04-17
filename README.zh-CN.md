@@ -127,7 +127,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.2.0` | 稳定版——AC 驱动的进度公式；/dev ↔ /spec 章节编号全面对齐（§2.12 State Management、§3.8 Implementation Notes）。新增 **`/spec upgrade-template`** 子命令：按 section 级 merge 升级老 MODULE / ARCHITECTURE 文档，保留 §3.4 AC 验证进度（解决 Gap 4）。包含 `dev` / `spec` skill 和可选 statusline。 |
+| `dev` | `2.3.0` | 稳定版——AC 驱动的进度公式；/dev ↔ /spec 章节编号对齐。新增 **`/prd` skill**：迭代式 PRD 生成，one-question-per-turn 对话 + 4 维度独立 evaluator 收敛（借鉴 Jesse Obra brainstorming 模式）。MODULE 模板新增 §1.1 "Serves PRD topics" 反向映射、§2.13 Operations 运维手册、§2.14 Observability 可观测性契约。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 
