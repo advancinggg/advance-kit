@@ -79,7 +79,7 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 - `resume` → read `docs/.spec-state/progress.json`, continue from current phase (skip to resume logic below)
 - `abort` → delete `docs/.spec-state/`, output "workflow aborted", exit
 - `status` → read and display `docs/.spec-state/progress.json` summary, exit
-- `upgrade-template` → jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.1–0.5 and the main workflow — upgrade-template is independent of PRD consumption.
+- `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow).
 - anything else → treat as PRD path, proceed to 0.1
 
 ### 0.1 Dependency Check
@@ -684,12 +684,15 @@ tmp-file + rename. Pre-write flow:
    tmp=$(mktemp "$dir/.spec-upgrade-tmp.XXXXXX") || exit 1
    backup=$(mktemp "$dir/.spec-upgrade-backup.XXXXXX") || exit 1
    ```
-   Order: (a) `cp -pP "$path" "$backup"` — `-p` preserves mode/timestamps,
-   `-P` does NOT follow symlinks on the source (defense-in-depth even though
-   UT.1 rule 7(a) already rejects symlinks outright). If cp fails, REFUSE the
-   doc. mktemp-generated companions are not attacker-controllable (unpredictable
-   suffix); UT.1 rule 7 guarantees `$path` is a regular file, so cp succeeds
-   in the expected case.
+   Order: (a) `cp -pP "$path" "$backup"` — `-p` preserves mode/timestamps.
+   Note on `-P` portability: GNU cp honors `-P` even without `-R` and will NOT
+   follow symlinks on the source; BSD cp (macOS) documents `-P` as "ignored
+   unless the -R option is specified" (non-recursive cp follows symlinks
+   regardless). Because UT.1 rule 7(a) already rejects symlinks upstream,
+   `$path` at this point is guaranteed a regular file; `-P` is defense-in-depth
+   on GNU and a no-op on BSD. The authoritative symlink guard is UT.1 rule
+   7(a), not cp's flag. If cp fails, REFUSE the doc. mktemp-generated
+   companions have unpredictable suffixes, so they are not attacker-controllable.
    (b) Write the new content to `$tmp`. (c) Verify `$tmp` has non-zero size. (d)
    `mv "$tmp" "$path"` via Bash `mv`. If any step fails, `$path` may be clobbered
    by (d) — the `$backup` is the recovery source (step 7-revert).
