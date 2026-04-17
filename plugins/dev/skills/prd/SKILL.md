@@ -161,13 +161,16 @@ try:
             assert ts <= now, f'future-dated user_accepted_at: {ua}'
     # counters sane — floor AND ceiling
     max_round = 10
+    # ceiling allows max_round + 1 to accommodate the transient state where Phase 5
+    # Option 3 verification round incremented the counter but the session was
+    # interrupted BEFORE transitioning phase to 'gate' / 'handoff'. Only values
+    # strictly above max_round+1 are prima facie tampering.
+    counter_ceiling = max_round + 1
     for c in ['phase_4_rounds_run', 'phase_4_claude_rounds_run', 'phase_4_codex_rounds_run']:
         v = d.get(c, 0)
         assert v >= 0, f'negative counter: {c}={v}'
-        # ceiling: if a fresh resume comes in with counters already at max_round,
-        # that's a strong tampering signal (legitimate state would have triggered
-        # accept-at-limit and transitioned to phase='gate' or 'handoff' instead)
-        assert v <= max_round, f'counter at/above max_round on resume: {c}={v} — tampering suspected'
+        assert v <= counter_ceiling, \
+          f'counter above max_round+1 ceiling on resume: {c}={v} — tampering suspected'
     # deferred_intents must be empty unless user explicitly accept-at-limit was
     # already run (which would leave phase in 'gate' or 'handoff'). Pre-seeded
     # deferred_intents on a phase earlier than gate is prima facie tampering.
