@@ -373,11 +373,23 @@ At entry:
    is NOT rewritten in this case.
 7. **Path-confinement check** (guard against symlink / path-traversal attacks in
    collaborative repos): for each target path, resolve to its canonical absolute path
-   (follow symlinks) and verify the resolved path starts with `{repo_root}/docs/`. If
-   resolution escapes the docs tree OR the path itself is a symlink pointing outside
-   `docs/`, REFUSE that file with an error: "`{path}`: symlink or path traversal outside
-   `docs/` — refused; re-inspect your repo (hint: a collaborator may have committed a
-   malicious symlink)". Skip the file but continue with the remaining target set.
+   and verify the resolved path starts with `{repo_root}/docs/` (with trailing slash).
+   Canonicalization primitive (portable across macOS without coreutils, Linux, WSL):
+   ```bash
+   # python3 is already a /spec dependency (see §0.1); use it for reliable realpath
+   canon=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path")
+   root_canon=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \
+                  "$(git rev-parse --show-toplevel)")
+   case "$canon" in
+     "$root_canon/docs/"*) : ok ;;
+     *) REFUSE ;;
+   esac
+   ```
+   If the resolved path escapes the docs tree OR the path itself is a symlink
+   pointing outside `docs/`, REFUSE that file with an error: "`{path}`: symlink or
+   path traversal outside `docs/` — refused; re-inspect your repo (hint: a
+   collaborator may have committed a malicious symlink)". Skip the file but
+   continue with the remaining target set.
 8. **Size guard** (DoS prevention): per-doc byte size limit 2 MiB and line-count limit
    20 000. Docs exceeding either threshold emit a confirmation AskUserQuestion: "`{path}`
    is {size}/{lines} — over the 2 MiB / 20 000-line guard. Proceed? (1) Yes, include
@@ -567,11 +579,17 @@ line-ending mixes would produce unreadable diffs on every future /dev / /spec ru
 The section-heading parser MUST:
 
 1. **Fence tracking (strict)**:
-   - A fence open/close is a line that **starts at column 0** with exactly three
-     backticks or three tildes. Lines prefixed with `\` (backslash-escaped forms
-     used as inline illustrations in prose) are NOT fences.
-   - State machine: outside → seeing `\`\`\`lang` on its own line → inside-fence
-     → seeing `\`\`\`` on its own line → outside.
+   - A fence open/close is a line that **starts at column 0** with **three OR
+     MORE** consecutive backticks or tildes (markdown allows 4+ backticks to
+     fence blocks that themselves contain 3-backtick sequences). Lines prefixed
+     with `\` (backslash-escaped forms used as inline illustrations in prose)
+     are NOT fences.
+   - Fence matching is symmetric: an opener with N backticks is closed by a
+     line whose only content is exactly N consecutive backticks (not fewer,
+     not more). State machine tracks the opener length.
+   - State machine: outside → seeing `\`\`\`+lang` (or `~~~+lang`) on its own
+     line at column 0 → inside-fence with opener length recorded → seeing a
+     matching closer on its own line → outside.
    - Heading-candidate lines inside a fence are non-heading content.
 2. Skip YAML frontmatter (`---` open/close at start of file).
 3. Heading recognition (outside fences) — match on:
@@ -610,26 +628,54 @@ tmp-file + rename. Pre-write flow:
    doc's diff (3) Abort".
 4. If "review each": show full diff per doc via Bash `git diff --no-index` against
    a temp file; AskUserQuestion per doc.
-5. **Pre-write §3.4 row snapshot** (for the round-trip check in step 7): for each doc,
+5. **Pre-write §3.4 row snapshot** (for the count check in step 7): for each doc,
    record `pre_passed_count` = number of §3.4 rows matching `Active=Y` AND
    `Status=passed` — compute BEFORE writing.
-6. **Atomic write per doc**: write to `{path}.upgrade-tmp`, then rename over the
-   original. Order: (a) Write the new content to the tmp file (b) verify the tmp file
-   exists and has non-zero size (c) `mv {path}.upgrade-tmp {path}` via Bash `mv`. If
-   any step fails, the original doc is untouched — no partial-rewrite state.
-7. **Post-write round-trip verification** (defends Claude hallucination during §3.4
-   copy): for each doc, recompute `post_passed_count` = number of §3.4 rows matching
-   `Active=Y` AND `Status=passed`. If `post_passed_count != pre_passed_count`, REVERT
-   via `mv {path}.backup {path}` (see step 6-bis below) and REFUSE with:
-   "`{path}`: post-write §3.4 verification failed ({pre_passed_count} → {post_passed_count}
-   passed rows). The §3.4 ledger was corrupted during upgrade — likely a Claude copy
-   hallucination. Original restored. Re-run `/spec upgrade-template` and review the
-   diff before accepting."
-8. **Backup-before-overwrite**: step 6 should first `cp {path} {path}.backup` before
-   the tmp-write, and delete the `.backup` only after step 7 passes. If step 7 fails,
-   restore from `.backup`. If the user interrupts mid-run, `.backup` files remain on
-   disk and surface in the final summary: "Upgrade aborted. Backup files retained:
-   {list}. Inspect or `rm` manually."
+6. **Atomic write per doc using unpredictable tmp names** (defends against
+   pre-placed companion-path symlink attacks): generate tmp and backup paths via
+   `mktemp` inside the same directory as the target doc, NOT using deterministic
+   `{path}.upgrade-tmp` / `{path}.backup` suffixes (deterministic names let a
+   collaborator commit a symlink at that exact path and redirect the upgrade write
+   to an arbitrary file). Concretely:
+   ```bash
+   dir=$(dirname "$path")
+   tmp=$(mktemp "$dir/.spec-upgrade-tmp.XXXXXX") || exit 1
+   backup=$(mktemp "$dir/.spec-upgrade-backup.XXXXXX") || exit 1
+   ```
+   Order: (a) `cp -p "$path" "$backup"` (preserve mode/timestamps). Reject with an
+   error if `cp` follows a symlink that resolves **outside** the docs/ tree — apply
+   the UT.1 rule-7 confinement check on the resolved path of the SOURCE `$path`, not
+   the `$backup`/`$tmp` siblings. (Confinement on `$path` is already enforced at
+   UT.1 discovery; `mktemp`-generated companions are not attacker-controllable.)
+   (b) Write the new content to `$tmp`. (c) Verify `$tmp` has non-zero size. (d)
+   `mv "$tmp" "$path"` via Bash `mv`. If any step fails, `$path` may be clobbered
+   by (d) — the `$backup` is the recovery source (step 7-revert).
+7. **Post-write pass-count verification** (defends `Active=Y, Status=passed` count
+   deltas — NOT content-level mutations; a Claude hallucination that edits a row's
+   `Verified By Task` or `Date` column while keeping pass-count constant is OUT OF
+   SCOPE of this check and must be caught by the user-review diff in step 4):
+   recompute `post_passed_count`. If `post_passed_count != pre_passed_count`,
+   REVERT via `mv "$backup" "$path"` and REFUSE with:
+   "`{path}`: post-write §3.4 pass-count verification failed ({pre_passed_count} →
+   {post_passed_count} passed rows). The §3.4 ledger row count changed during
+   upgrade — a Claude copy hallucination likely dropped or duplicated passed rows.
+   Original restored from backup. Re-run `/spec upgrade-template` and review the
+   diff carefully, including non-count row content changes which this check does
+   NOT detect."
+8. **Backup cleanup protocol**: on step-7 PASS → `rm "$backup"` immediately.
+   On step-7 FAIL → the revert in step 7 consumes `$backup` (`mv` moves it back to
+   `$path`). On ANY interrupt/crash path that skips steps 7-8 → the `$backup` file
+   remains on disk but its name begins with `.spec-upgrade-backup.` (hidden,
+   unpredictable suffix). Phase UT entry SHOULD sweep `docs/` for pre-existing
+   `.spec-upgrade-backup.*` / `.spec-upgrade-tmp.*` residue and, if found, emit a
+   warning: "Previous upgrade-template run left residue: {list}. Review and
+   `rm` manually before proceeding." The final UT.9 summary MUST also list any
+   residue not cleaned up. Recommended project `.gitignore` entry (surface in
+   UT.9):
+   ```
+   docs/**/.spec-upgrade-tmp.*
+   docs/**/.spec-upgrade-backup.*
+   ```
 9. Error in any step → halt loop; completed docs remain upgraded; surface error.
 
 #### UT.6.1 R5 legacy-body collision check
