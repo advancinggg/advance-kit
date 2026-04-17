@@ -371,6 +371,17 @@ At entry:
    UT.5 rule 3), skip the doc with a per-doc notice: "`{path}`: empty / frontmatter-only —
    skipped (nothing to merge; re-run `/spec` to generate from scratch if needed)". The doc
    is NOT rewritten in this case.
+7. **Path-confinement check** (guard against symlink / path-traversal attacks in
+   collaborative repos): for each target path, resolve to its canonical absolute path
+   (follow symlinks) and verify the resolved path starts with `{repo_root}/docs/`. If
+   resolution escapes the docs tree OR the path itself is a symlink pointing outside
+   `docs/`, REFUSE that file with an error: "`{path}`: symlink or path traversal outside
+   `docs/` — refused; re-inspect your repo (hint: a collaborator may have committed a
+   malicious symlink)". Skip the file but continue with the remaining target set.
+8. **Size guard** (DoS prevention): per-doc byte size limit 2 MiB and line-count limit
+   20 000. Docs exceeding either threshold emit a confirmation AskUserQuestion: "`{path}`
+   is {size}/{lines} — over the 2 MiB / 20 000-line guard. Proceed? (1) Yes, include
+   this doc (2) Skip this doc (3) Abort upgrade-template". Default recommendation: (2).
 
 ### UT.2 Canonical section list (kept in sync with the live templates)
 
@@ -456,8 +467,11 @@ immediately before §1.1 / §2.1 / §3.1.
 - **All three present, correct titles, correct positions** → no-op.
 - **Missing one or more** → insert per canonical list position.
 - **Duplicated** → keep first occurrence of each id, drop the rest.
-- **Out-of-order** (Part 2 appears before Part 1) → re-position each marker so it
-  immediately precedes its canonical first section.
+- **Out-of-order** (Part 2 appears before Part 1) → do NOT silently reposition (structural
+  rewrite without consent is a surprise vector). Emit per-doc AskUserQuestion: "Part
+  markers in `{path}` are out-of-order ({observed sequence}). Choose: (1) Reposition each
+  marker to immediately precede its canonical first section (2) Keep the current order
+  and continue — user intended this structure (3) Skip this doc." Default: (1).
 - **Non-canonical title** (e.g., `## Part 1: Introduction` instead of `## Part 1:
   Requirements`) → per-doc AskUserQuestion: (1) rewrite to canonical title
   (2) keep as-is + annotate with HTML comment (3) treat as Orphan (UT.3.3 flow)
@@ -475,7 +489,14 @@ entirely new), insert the Part marker first, then all Missing §3.x in order.
 
 #### UT.3.3 Batched AskUserQuestion for Orphan / Duplicate / non-canonical Part titles
 
-Per-doc single prompt:
+**Orphan-count cap (DoS-resistance)**: if a single doc has more than 20 Orphan + Duplicate
+sections combined, do NOT enumerate them per-section. Emit a 3-way summary-only prompt:
+"`{path}` has {N} Orphan + {M} Duplicate sections — over the 20-count detail cap. Choose:
+(1) Keep all with a single top-of-doc HTML-comment summary listing counts only — not
+per-section annotation (2) Remove all orphans; keep first of each duplicate (3) Skip
+this doc." Below 20, use the enumerated prompt below.
+
+Per-doc single prompt (≤20 non-canonical sections):
 
 ```
 docs/modules/MODULE-001-foo.md has the following non-canonical sections:
@@ -536,9 +557,12 @@ automatically via this lookup.
 - **Trailing whitespace** on heading lines is tolerated by the regex (lazy title match
   + `\s*$`).
 
-Preserve the original BOM / line-ending style in the output write IF present in the
-original, OR normalize to LF (editor default) — implementation choice documented at
-write time.
+Output-write normalization is **mandatory and deterministic** (not implementation
+choice, to avoid spurious git diffs from line-ending flips): always write LF-only with
+NO BOM. If the input had CRLF or BOM, record a per-doc notice in the UT.9 summary:
+"`{path}`: normalized from CRLF/BOM to LF. Review your editor settings to avoid
+re-introducing." This one-time switch is intentional — preserving idiosyncratic
+line-ending mixes would produce unreadable diffs on every future /dev / /spec run.
 
 The section-heading parser MUST:
 
@@ -568,7 +592,8 @@ The section-heading parser MUST:
 
 ### UT.6 Write protocol
 
-One Write call per doc (full replacement). Pre-write flow:
+One Write call per doc (full replacement), but **atomic at the filesystem level** via
+tmp-file + rename. Pre-write flow:
 
 1. Per-doc dry-run summary (printed):
    ```
@@ -585,8 +610,27 @@ One Write call per doc (full replacement). Pre-write flow:
    doc's diff (3) Abort".
 4. If "review each": show full diff per doc via Bash `git diff --no-index` against
    a temp file; AskUserQuestion per doc.
-5. Write docs one-by-one (atomic per doc). Error → halt loop; completed docs
-   remain upgraded; surface the error.
+5. **Pre-write §3.4 row snapshot** (for the round-trip check in step 7): for each doc,
+   record `pre_passed_count` = number of §3.4 rows matching `Active=Y` AND
+   `Status=passed` — compute BEFORE writing.
+6. **Atomic write per doc**: write to `{path}.upgrade-tmp`, then rename over the
+   original. Order: (a) Write the new content to the tmp file (b) verify the tmp file
+   exists and has non-zero size (c) `mv {path}.upgrade-tmp {path}` via Bash `mv`. If
+   any step fails, the original doc is untouched — no partial-rewrite state.
+7. **Post-write round-trip verification** (defends Claude hallucination during §3.4
+   copy): for each doc, recompute `post_passed_count` = number of §3.4 rows matching
+   `Active=Y` AND `Status=passed`. If `post_passed_count != pre_passed_count`, REVERT
+   via `mv {path}.backup {path}` (see step 6-bis below) and REFUSE with:
+   "`{path}`: post-write §3.4 verification failed ({pre_passed_count} → {post_passed_count}
+   passed rows). The §3.4 ledger was corrupted during upgrade — likely a Claude copy
+   hallucination. Original restored. Re-run `/spec upgrade-template` and review the
+   diff before accepting."
+8. **Backup-before-overwrite**: step 6 should first `cp {path} {path}.backup` before
+   the tmp-write, and delete the `.backup` only after step 7 passes. If step 7 fails,
+   restore from `.backup`. If the user interrupts mid-run, `.backup` files remain on
+   disk and surface in the final summary: "Upgrade aborted. Backup files retained:
+   {list}. Inspect or `rm` manually."
+9. Error in any step → halt loop; completed docs remain upgraded; surface error.
 
 #### UT.6.1 R5 legacy-body collision check
 
@@ -628,6 +672,16 @@ If phase is `"init"` or `"report"` (no active mid-flow state), silently allow.
 
 ### UT.8 §3.4 AC ledger preservation (the Gap 4 core promise)
 
+**Trust boundary — upgrade-template preserves; it does NOT verify.** The §3.4 rows
+present in the existing doc are carried forward verbatim. If a collaborator or
+attacker committed forged `Status=passed` rows via direct edit, upgrade-template will
+preserve them unchanged — `upgrade-template` is not a verifier. Provenance of §3.4
+rows is guaranteed by the /dev SUMMARY commit trailer (`AC: {id}`) + git history +
+/spec Evaluator loops, NOT by upgrade-template. This is intentional: upgrade-template
+is a mechanical merge tool, not an AC authority. Users reviewing a pre-upgrade diff
+should run `git log --all --source -- docs/modules/MODULE-XXX.md` to verify the
+provenance of suspicious `Status=passed` rows.
+
 Because Missing→Insert only applies to §3.4 when §3.4 is actually Missing,
 merge-preserve holds:
 
@@ -651,6 +705,32 @@ rows from §1.5 but cannot recover `Status=passed` history because the source
 was already overwritten. `upgrade-template` preserves existing history and,
 for the Missing case, leaves a clean ledger ready for the next /spec rerun to
 populate accurately.
+
+### UT.8.1 Iron Rule scope & R5 hint-semantics (threat-model clarifications)
+
+**Iron Rule applies to skill-emitted output only — not to user document bodies that
+upgrade-template preserves verbatim.** A pre-existing MODULE doc with an Orphan
+section `### 99.1 Known gaps — legacy` is user content, not skill output. The HTML
+annotation comment that UT.3 emits alongside the preserved body (`<!-- retained by
+/spec upgrade-template: section not in current template vX.Y.Z -->`) IS skill output
+and MUST remain free of Iron-Rule-forbidden phrases. Users who want to eliminate
+Iron-Rule-forbidden prose in their own docs should edit those docs directly —
+upgrade-template does not sanitize user content.
+
+**R5 marker-phrase check (UT.6.1) is a hint, not a gate.** The fixed marker set is
+trivially spoofable (attacker can paste `"Owned state surfaces"` into an unrelated
+§2.12 body; genuine user can reword "Owned" → "Managed" and trigger a false flag).
+The check exists to catch the common case of pre-2.1.0 hand-authored §2.12 that
+clearly never touched the new template — not to be a security boundary. When in
+doubt, users should inspect the dry-run diff (UT.6 step 3/4) rather than rely on R5
+classification.
+
+**Self-reference poisoning (tampered SKILL.md after plugin install) is an accepted
+constraint.** upgrade-template reads the body-lookup source from the installed skill
+file with no hash or signature check. A malicious post-install modification of
+SKILL.md will poison future upgrades — but a malicious SKILL.md is a broader problem
+than upgrade-template (the entire /spec and /dev surface is compromised). Plugin
+integrity is a marketplace-level concern, not a per-subcommand defense.
 
 ### UT.9 Completion summary
 

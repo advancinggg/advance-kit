@@ -85,3 +85,12 @@ the canonical YAML, or other sections of SKILL.md. Prose references must either 
 backtick-wrapping (e.g., `` `### 2.2 Unified Module Document Template` ``) or mention
 the heading inside a fenced code block. Violations create false anchors that silently
 break upgrade-template's body lookup for Missing sections.
+
+**Nested-fence escape invariant for Phase 1.2 / Phase 2.2 template bodies**: the
+outer MODULE/ARCHITECTURE template block is opened with ```` ```markdown ```` and
+closed with ```` ``` ```` on its own line. Inner code samples (TypeScript / SQL /
+Mermaid) inside the outer template MUST be escaped with a leading backslash (written
+as ```` \```typescript ```` / ```` \```sql ```` / ```` \```mermaid ````), otherwise
+the outer fence closes prematurely and the UT.4 body-lookup captures a truncated
+template. When editing template bodies, verify every inner fence carries the
+backslash prefix and the outer fence closes cleanly on the intended line.
