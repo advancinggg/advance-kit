@@ -709,13 +709,15 @@ populate accurately.
 ### UT.8.1 Iron Rule scope & R5 hint-semantics (threat-model clarifications)
 
 **Iron Rule applies to skill-emitted output only — not to user document bodies that
-upgrade-template preserves verbatim.** A pre-existing MODULE doc with an Orphan
-section `### 99.1 Known gaps — legacy` is user content, not skill output. The HTML
-annotation comment that UT.3 emits alongside the preserved body (`<!-- retained by
-/spec upgrade-template: section not in current template vX.Y.Z -->`) IS skill output
-and MUST remain free of Iron-Rule-forbidden phrases. Users who want to eliminate
-Iron-Rule-forbidden prose in their own docs should edit those docs directly —
-upgrade-template does not sanitize user content.
+upgrade-template preserves verbatim.** Suppose a pre-existing MODULE doc has a
+user-authored Orphan section with a heading that would itself trip the Iron Rule
+grep (e.g., a legacy planning note). That is user content, not skill output, and
+upgrade-template preserves it unchanged. The HTML annotation comment that UT.3
+emits alongside the preserved body (`<!-- retained by /spec upgrade-template:
+section not in current template vX.Y.Z -->`) IS skill output and MUST remain free
+of Iron-Rule-forbidden phrases. Users who want to eliminate such prose in their
+own docs should edit those docs directly — upgrade-template does not sanitize user
+content.
 
 **R5 marker-phrase check (UT.6.1) is a hint, not a gate.** The fixed marker set is
 trivially spoofable (attacker can paste `"Owned state surfaces"` into an unrelated
