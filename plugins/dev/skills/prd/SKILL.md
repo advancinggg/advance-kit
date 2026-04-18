@@ -657,11 +657,14 @@ else:
   APPEND "{date} | {term} | created | {driver}" row to ## Change history
 ```
 
-**CJK fuzzy-match note**: CJK synonyms typically differ by more than 2 characters
-(e.g. `lev('用户', '使用者') == 3`), so they do NOT auto-trigger the `<=2` dedup
-prompt and instead route to "CREATE new entry". Linking CJK synonyms is a
-business-term decision that belongs in Phase 5 GATE Option 5 review, not in the
-static fuzzy-match layer.
+**CJK fuzzy-match note**: character-level Levenshtein handles CJK correctly — e.g.
+`lev('用户', '使用者') == 2`, which DOES fall within the `<=2` threshold and
+triggers the AskUserQuestion merge-as-synonym prompt. This is the intended
+behavior: the user decides whether 用户 and 使用者 are synonyms (option 1) or
+distinct concepts (option 2). The `normalize()` step keeps the two keys
+string-distinct (`'用户' != '使用者'` after NFKC + casefold), so they never
+accidentally collapse under the `if normalized in glossary_keys` branch — the
+fuzzy-match prompt always mediates the decision.
 
 **Anti-mutation invariant**: Do NOT overwrite any existing `**Definition**:`
 field — append only to `**Synonyms**:`, `**Related**:`, and `## Change history`.

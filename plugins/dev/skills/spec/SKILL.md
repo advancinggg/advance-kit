@@ -2202,8 +2202,8 @@ Related glossary terms:
 **Generation algorithm** (6 numbered steps — all must be emitted; `/dev` test T30
 asserts each is present by content anchor):
 
-1. For each PRD topic (file in `docs/00-prd/` OR `docs/PRD.md` single-file), extract
-   keywords from the topic name, §3 core flows, and §4 feature names.
+1. Extract keywords from each PRD topic name, §3 core flows, and §4 feature names
+   (a PRD topic is either `docs/PRD.md` single-file or one file under `docs/00-prd/`).
 2. Query `docs/REQUIREMENTS_REGISTRY.md` for REQ-IDs owned by that topic (via the
    `PRD Source` column).
 3. Reverse-map REQ-IDs → primary modules via the `Module(s)` column.
