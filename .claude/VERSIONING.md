@@ -96,6 +96,39 @@ explanation at the enforcement site.
 When rewording any marker phrase in the template body, update UT.6.1 marker set in
 `/spec` SKILL.md Phase UT in the same commit.
 
+## Release checklist (for CONTEXT-MAP / GLOSSARY — 2.4.0+)
+
+When editing the `/spec` Phase 3.3 CONTEXT-MAP generation step, the `/prd` Phase 3.3
+GLOSSARY bootstrap, or the `/spec` Phase 2.6 Glossary append step in
+`plugins/dev/skills/spec|prd/SKILL.md`, the following must stay in sync (otherwise
+/dev's routing and dedup invariants drift):
+
+1. **CONTEXT-MAP regenerates on every `/spec` rerun**: main-flow `/spec` MUST emit
+   `docs/CONTEXT-MAP.md` unconditionally, with the same merge-preserve discipline
+   `/spec` uses for MODULE docs. Stale detection lives on the `/dev` side (python3
+   `os.path.getmtime` over REQUIREMENTS_REGISTRY + modules + PRD + 00-prd + GLOSSARY
+   + ARCHITECTURE + IMPLEMENTATION_ORDER — 7 upstream sources).
+2. **GLOSSARY append-only contract**: entry `**Definition**:` field is immutable
+   outside `/prd` Phase 5 GATE Option 5 'Review glossary entries → Edit
+   definition'. `/spec §2.6` and future `/dev` writers may only append to
+   `**Synonyms**:`, `**Related**:`, and `## Change history`. Enforcement is
+   instruction-level (no PreToolUse hook); `/dev` test T39 + T50 grep both SKILL.md
+   files for the forbidden-pattern phrase and the Option-5 exception clause.
+3. **`normalize()` formula frozen** at the 4 transformations: NFKC + casefold +
+   punct-to-space (`-_./\\,`) + whitespace-collapse. Any change to these four is a
+   MAJOR `dev` plugin bump (existing GLOSSARY files would de-duplicate differently,
+   breaking downstream consumers).
+4. **`lev()` implementation frozen** at the stdlib pure-Python DP reference (no
+   external Levenshtein dependency). Threshold for the fuzzy-match dedup prompt is
+   fixed at `<= 2`.
+5. **SSOT for `normalize()` / `lev()` / Add-term protocol**: canonical code and
+   pseudocode live in `plugins/dev/skills/prd/SKILL.md §3.3` only. `/spec §2.6`
+   cross-references this location by prose path and MUST NOT duplicate the
+   implementation. `/dev` test T46 grep-verifies both `(a)` the cross-reference
+   phrase presence inside the extracted §2.6 body AND `(b)` that §2.6 contains no
+   `def normalize` / `def lev` / `unicodedata.normalize` / `casefold()` /
+   `AskUserQuestion:...New term` signatures.
+
 **Anchor-collision invariant for Phase UT**: the UT.4 body-lookup protocol searches for
 the exact lines `### 1.2 Architecture Document Structure` and `### 2.2 Unified Module
 Document Template` as real headings (outside all code fences). **Do not start any new

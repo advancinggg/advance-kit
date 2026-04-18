@@ -1,6 +1,6 @@
 ---
 name: spec
-version: 3.4.0
+version: 3.5.0
 description: |
   Generate architecture and module specification documents from PRD.
   MECE module decomposition, self-contained specs for AI agent implementation.
@@ -2044,9 +2044,46 @@ After all module documents are generated and individually evaluated, perform fin
 - Interface definitions are consistent between provider and consumer
 - All module responsibilities combined cover the complete PRD
 
+### 2.6 Glossary append step
+
+After each MODULE document is generated, extract technical-concept terms from its
+§2.5 Data Models, §2.12 State Management, and §3.8 Implementation Notes and append
+them to `docs/GLOSSARY.md` under `## Technical concepts`. Follow the canonical
+Add-term protocol documented in `plugins/dev/skills/prd/SKILL.md §3.3` — do NOT
+duplicate the `normalize()` / `lev()` / protocol implementation here (single source
+of truth — verified by T46).
+
+**If `docs/GLOSSARY.md` does not exist** (i.e. `/spec` is running without a prior
+`/prd` bootstrap), create the skeleton below first, then append:
+
+```markdown
+# Glossary
+
+> Created: {ISO date} (/spec skeleton — no prior /prd bootstrap)
+> Last updated: {ISO date}
+
 ---
 
-## Phase 3: Generate Implementation Order
+## Business terms
+
+(none yet — populated by /prd bootstrap when the PRD is (re)generated)
+
+## Technical concepts
+
+## Change history
+
+| Date | Entry | Field | Driver |
+|---|---|---|---|
+```
+
+**Anti-mutation invariant**: Do NOT overwrite any existing `**Definition**:` field —
+append only to `**Synonyms**:`, `**Related**:`, and `## Change history`. The sole
+legitimate mutation path is `/prd` Phase 5 GATE Option 5 'Review glossary entries →
+Edit definition'.
+
+---
+
+## Phase 3: Generate Implementation Order & CONTEXT-MAP
 
 ### 3.1 Topological Sort
 
@@ -2138,6 +2175,75 @@ Implementation requirements:
 - Meet all acceptance criteria
 \```
 ```
+
+### 3.3 CONTEXT-MAP generation
+
+After `docs/IMPLEMENTATION_ORDER.md` is written, generate `docs/CONTEXT-MAP.md` to
+give `/dev` PLAN a routing index: for each PRD topic, list the Required modules,
+Infrastructure (read-only) modules, Related ADRs, and Related glossary terms so
+PLAN can load a narrow scope instead of scanning every MODULE doc.
+
+**Entry format** (one routing entry per PRD scope):
+
+```
+### Scope: {keywords — e.g. "user-authentication / login / signup / password-reset"}
+Primary PRD topics:
+- `docs/00-prd/{topic}.md` (or `docs/PRD.md` for single-file)
+Required modules:
+- `docs/modules/MODULE-NNN-{name}.md`
+Infrastructure modules (read-only):
+- `docs/modules/MODULE-NNN-{name}.md`
+Related ADRs (populated by Phase C):
+- (placeholder — filled when ADR skill ships)
+Related glossary terms:
+- Term1, Term2, ...
+```
+
+**Generation algorithm** (6 numbered steps — all must be emitted; `/dev` test T30
+asserts each is present by content anchor):
+
+1. For each PRD topic (file in `docs/00-prd/` OR `docs/PRD.md` single-file), extract
+   keywords from the topic name, §3 core flows, and §4 feature names.
+2. Query `docs/REQUIREMENTS_REGISTRY.md` for REQ-IDs owned by that topic (via the
+   `PRD Source` column).
+3. Reverse-map REQ-IDs → primary modules via the `Module(s)` column.
+4. Union primary modules' §2.2 upstream deps → infrastructure modules (read-only).
+5. Match ADRs (placeholder until the Phase C ADR skill ships — emit an empty
+   `Related ADRs (populated by Phase C):` block but keep the heading for downstream
+   grep compatibility).
+6. Extract glossary terms (`§3`/`§4` text matched against GLOSSARY keys — see
+   `plugins/dev/skills/prd/SKILL.md §3.3` `glossary_keys` extraction rule).
+
+After per-topic entries, emit one catch-all entry:
+
+```
+### Scope: Cross-cutting / infrastructure
+```
+
+listing every MODULE whose `§1.1 Serves PRD topics` equals the phrase
+`infrastructure, no direct PRD reference`.
+
+**CONTEXT-MAP file header** (written first; human-readable provenance, NOT parsed by
+`/dev`'s staleness check — `/dev` reads mtimes directly via `os.path.getmtime`):
+
+```
+> Last generated: {ISO date}
+> Generated-from:
+>   REQUIREMENTS_REGISTRY.md (mtime N),
+>   modules/*.md (newest M),
+>   PRD.md or 00-prd/*.md (newest P),
+>   GLOSSARY.md (mtime G),
+>   ARCHITECTURE.md (mtime A),
+>   IMPLEMENTATION_ORDER.md (mtime I)
+```
+
+**Excluded from mtime scan**: `docs/.spec-state/`, `docs/.prd-state/`,
+`docs/.dev-state/` (all gitignored and rewritten every workflow run; would
+cause staleness to flap every run).
+
+**Merge-preserve semantics**: on `/spec` rerun, CONTEXT-MAP is regenerated
+unconditionally (same discipline as MODULE docs). Stale detection lives on the
+`/dev` side.
 
 ---
 

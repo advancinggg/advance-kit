@@ -1,6 +1,6 @@
 ---
 name: dev
-version: 3.2.0
+version: 3.3.0
 description: |
   Enforced development workflow: plan → docs → implement → audit → test → summary.
   Cross-model dual audit: Claude subagent (isolated context) + Codex exec (agent exploration).
@@ -516,10 +516,79 @@ Use the Write tool to create `$STATE_DIR/state.json`:
 - Read any affected MODULE docs (especially §3.1 and §3.4 to understand current progress).
 - Read the relevant source code.
 - Read the relevant sections of PRD.md and ARCHITECTURE.md.
+- **CONTEXT-MAP + GLOSSARY load (2.4.0+)**:
+  - If `sdd_mode: true` (from Phase 0 INIT):
+    1. **Staleness check FIRST** (must run before any routing use of
+       `docs/CONTEXT-MAP.md`). Run this cross-platform bash snippet — uses `python3
+       os.path.getmtime` because BSD (macOS) and GNU (Linux) `stat` CLIs differ:
+       ```bash
+       check_context_map_staleness() {
+         [ -f docs/CONTEXT-MAP.md ] || { echo "missing"; return 1; }
+         python3 - <<'PY' 2>/dev/null
+       import os, glob, sys
+
+       def mt(p):
+           try: return int(os.path.getmtime(p))
+           except OSError: return 0
+
+       def newest(paths):
+           return int(max((mt(p) for p in paths), default=0))
+
+       cm  = mt('docs/CONTEXT-MAP.md')
+       reg = mt('docs/REQUIREMENTS_REGISTRY.md')
+       mod = newest(glob.glob('docs/modules/MODULE-*.md'))
+       prd = max(mt('docs/PRD.md'), newest(glob.glob('docs/00-prd/*.md')))
+       glo = mt('docs/GLOSSARY.md')
+       arc = mt('docs/ARCHITECTURE.md')
+       imp = mt('docs/IMPLEMENTATION_ORDER.md')
+
+       upstream = max(reg, mod, prd, glo, arc, imp)
+       sys.exit(0 if cm >= upstream else 2)
+       PY
+         rc=$?
+         case $rc in
+           0) return 0 ;;                    # fresh
+           2) echo "stale"; return 1 ;;      # stale
+           *) echo "check-failed"; return 1 ;;
+         esac
+       }
+       ```
+    2. If **fresh**: read `docs/CONTEXT-MAP.md`, match task-description keywords
+       against `### Scope:` headings → load Required modules + Infrastructure
+       (read-only) modules + Related ADRs for the matched scope.
+    3. If **stale / missing / check-failed**: emit a Warning (routing accelerator
+       unavailable — re-run `/spec` to regenerate). Fall back to legacy full-module
+       scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
+  - Read `docs/GLOSSARY.md` (if present — gated independently of `sdd_mode`, works
+    in lightweight mode too for pure-PRD projects): extract domain terms referenced
+    in task description to disambiguate synonyms (e.g. "用户" vs "会员", "member" vs
+    "user").
+  - If `sdd_mode: false`: skip the CONTEXT-MAP block entirely (no `docs/modules/`
+    means nothing to route); GLOSSARY load still proceeds independently if the file
+    exists.
 
 ### 1.2 Produce a structured plan
 
 The plan must contain:
+- **A `## Context loaded` header block at the top of the plan file** (2.4.0+). This
+  block comes BEFORE the Traceability YAML and records what CONTEXT-MAP routing
+  returned:
+  ```markdown
+  ## Context loaded
+
+  From CONTEXT-MAP scope "{matched scope heading}":
+  - Required modules: [list or "none"]
+  - Infrastructure (read-only): [list or "none"]
+  - Related ADRs: [list or "none"]
+  Glossary terms in scope: [Tenant, User, Member, ...] or "none (GLOSSARY missing)"
+  ```
+  Fallback rendering when CONTEXT-MAP is absent / stale / `sdd_mode: false`:
+  ```markdown
+  ## Context loaded
+
+  (no CONTEXT-MAP — full-module scan / lightweight mode fallback)
+  Glossary terms in scope: [list from direct GLOSSARY scan] or "none (GLOSSARY missing)"
+  ```
 - The list of modules and files that will be affected.
 - The list of docs that will need to be updated (written to `docs_allowlist`, which must
   include every file that will be modified: PRD.md, ARCHITECTURE.md, MODULE-xxx.md, etc.).
