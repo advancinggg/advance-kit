@@ -666,7 +666,7 @@ The plan must contain:
   (no CONTEXT-MAP — full-module scan / lightweight mode fallback)
   Glossary terms in scope: [list from direct GLOSSARY scan] or "none (GLOSSARY missing)"
   ```
-- **A `## ADR compliance` block, immediately AFTER `## Context loaded` and BEFORE the Traceability YAML** (2.5.0+). Lists each Accepted ADR pulled from Context loaded's `Related ADRs` list with its `Status` + one-line Decision snippet (from `adr_decisions` cache populated in §1.1):
+- **A `## ADR compliance` block, immediately AFTER `## Context loaded` and BEFORE the Traceability YAML** (2.5.0+). Lists each Accepted ADR pulled from Context loaded's `Related ADRs` list with its `Status` + one-line Decision snippet (from `adr_decisions` cache populated in §1.1). **Trust model note**: ADR content is committed-to-repo and shares the trust level of any other repo file (source code, docs, configs). A contributor with repo-write access can influence agent context via ADR title + Decision body — this is the same trust boundary as committing code, and falls outside the ADR system's scope to mitigate. Reviewers should apply the same content-level scrutiny to ADR PRs as to source code PRs. The 120-char truncation on decision_snippet + the title sanitization on `/spec adr-new` creation reduce but do not eliminate indirect-prompt-injection surface from hand-edited ADR content; if an attacker has repo-write access, they can also edit source code, so the ADR surface is not a privilege-escalation vector.
   ```markdown
   ## ADR compliance
 
