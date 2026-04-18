@@ -666,11 +666,7 @@ string-distinct (`'用户' != '使用者'` after NFKC + casefold), so they never
 accidentally collapse under the `if normalized in glossary_keys` branch — the
 fuzzy-match prompt always mediates the decision.
 
-**Anti-mutation invariant**: Do NOT overwrite any existing `**Definition**:`
-field — append only to `**Synonyms**:`, `**Related**:`, and `## Change history`.
-The sole legitimate mutation path is `/prd` Phase 5 GATE Option 5 'Review glossary
-entries → Edit definition'. Enforcement is instruction-level (no `PreToolUse` hook
-for `/prd` or `/spec`); verified via static grep T39 + T50.
+**Anti-mutation invariant**: Do NOT overwrite any existing `**Definition**:` field — append only to `**Synonyms**:`, `**Related**:`, and `## Change history`. The sole legitimate mutation path is `/prd` Phase 5 GATE Option 5 'Review glossary entries → Edit definition'. Enforcement is instruction-level (no `PreToolUse` hook for `/prd` or `/spec`); verified via static grep T39 + T50.
 
 ### 3.4 Phase 3 output
 

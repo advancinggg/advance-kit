@@ -2048,8 +2048,7 @@ After all module documents are generated and individually evaluated, perform fin
 
 After each MODULE document is generated, extract technical-concept terms from its
 §2.5 Data Models, §2.12 State Management, and §3.8 Implementation Notes and append
-them to `docs/GLOSSARY.md` under `## Technical concepts`. Follow the canonical
-Add-term protocol documented in `plugins/dev/skills/prd/SKILL.md §3.3` — do NOT
+them to `docs/GLOSSARY.md` under `## Technical concepts`. Follow the canonical Add-term protocol documented in `plugins/dev/skills/prd/SKILL.md §3.3` — do NOT
 duplicate the `normalize()` / `lev()` / protocol implementation here (single source
 of truth — verified by T46).
 
@@ -2077,9 +2076,7 @@ of truth — verified by T46).
 ```
 
 **Anti-mutation invariant**: Do NOT overwrite any existing `**Definition**:` field —
-append only to `**Synonyms**:`, `**Related**:`, and `## Change history`. The sole
-legitimate mutation path is `/prd` Phase 5 GATE Option 5 'Review glossary entries →
-Edit definition'.
+append only to `**Synonyms**:`, `**Related**:`, and `## Change history`. The sole legitimate mutation path is `/prd` Phase 5 GATE Option 5 'Review glossary entries → Edit definition'.
 
 ---
 
