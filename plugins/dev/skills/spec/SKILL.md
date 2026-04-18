@@ -953,7 +953,20 @@ The double-underscore separator `__` for collision suffixes unambiguously distin
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# First verify docs/adr itself is NOT a symlink AND its realpath is under REPO_ROOT.
+# Without this, an attacker-planted `docs/adr -> /etc/` symlink would blessen-by-realpath
+# every file under /etc (ADR_DIR_REAL becomes the escape destination, defeating the guard).
 ADR_DIR_REAL=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$REPO_ROOT/docs/adr")
+REPO_ROOT_REAL=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$REPO_ROOT")
+case "$ADR_DIR_REAL/" in
+  "$REPO_ROOT_REAL/"*) : ;;
+  *) printf '%s\n' "Refusing: docs/adr resolves to $ADR_DIR_REAL (outside repo $REPO_ROOT_REAL) — likely a symlink escape at the docs/adr level itself." >&2; exit 1 ;;
+esac
+# Also verify docs/adr is a real directory, not a symlink at the filesystem level:
+if [ -L "$REPO_ROOT/docs/adr" ]; then
+  printf '%s\n' "Refusing: $REPO_ROOT/docs/adr is a symlink; refusing to treat as ADR directory." >&2
+  exit 1
+fi
 check_path() {
   local f="$1"
   local abs=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$f")
