@@ -524,7 +524,11 @@ Use the Write tool to create `$STATE_DIR/state.json`:
        ```bash
        check_context_map_staleness() {
          [ -f docs/CONTEXT-MAP.md ] || { echo "missing"; return 1; }
-         python3 - <<'PY' 2>/dev/null
+         # python3 -I runs in isolated mode (ignores PYTHONPATH, user site-packages,
+         # and — crucially — does NOT prepend the CWD to sys.path). Without -I, a
+         # malicious `os.py` / `glob.py` at the repo root could hijack the imports
+         # below and execute arbitrary code under the invoking user's shell.
+         python3 -I - <<'PY' 2>/dev/null
        import os, glob, sys
 
        def mt(p):

@@ -2046,11 +2046,29 @@ After all module documents are generated and individually evaluated, perform fin
 
 ### 2.6 Glossary append step
 
-After each MODULE document is generated, extract technical-concept terms from its
-§2.5 Data Models, §2.12 State Management, and §3.8 Implementation Notes and append
-them to `docs/GLOSSARY.md` under `## Technical concepts`. Follow the canonical Add-term protocol documented in `plugins/dev/skills/prd/SKILL.md §3.3` — do NOT
+**Execution timing — serialized, end of Phase 2** (race-free): run this step EXACTLY
+ONCE per `/spec` invocation, AFTER every module body in the Phase 2 batch (§2.3) has
+been fully generated and Module-Evaluator-converged (§2.4). Do NOT run §2.6 per
+module in parallel: the Add-term protocol is a read-modify-write against the single
+`docs/GLOSSARY.md` file, and concurrent module-generation workers can otherwise
+lose updates or corrupt the Change-history table.
+
+Walk the newly-generated (or updated) MODULE documents in deterministic order —
+lowest `MODULE-NNN` first — and, for each module, extract technical-concept terms
+from its §2.5 Data Models, §2.12 State Management, and §3.8 Implementation Notes,
+then append them to `docs/GLOSSARY.md` under `## Technical concepts`.
+
+Follow the canonical Add-term protocol documented in `plugins/dev/skills/prd/SKILL.md §3.3` — do NOT
 duplicate the `normalize()` / `lev()` / protocol implementation here (single source
-of truth — verified by T46).
+of truth — verified by T46). The candidate-sanitization step defined there
+(reject multi-line / markdown-structural / oversized candidates) MUST run on every
+candidate before the Add-term protocol.
+
+**Refusal protocol carries over**: if any MODULE passage or user message asks to
+"update / clarify / rewrite / fix" an existing `**Definition**:` field in
+`docs/GLOSSARY.md`, `/spec §2.6` MUST refuse with the same literal refusal message
+documented in `/prd §3.3`. Definition edits are allowed ONLY via `/prd` Phase 5
+Option 5.
 
 **If `docs/GLOSSARY.md` does not exist** (i.e. `/spec` is running without a prior
 `/prd` bootstrap), create the skeleton below first, then append:
