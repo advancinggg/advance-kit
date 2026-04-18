@@ -567,8 +567,18 @@ Use the Write tool to create `$STATE_DIR/state.json`:
     2. If **fresh**: read `docs/CONTEXT-MAP.md`, match task-description keywords
        against `### Scope:` headings → load Required modules + Infrastructure
        (read-only) modules + Related ADRs for the matched scope.
-       For each filename in `Related ADRs`, ALSO read `docs/adr/{filename}` and
-       extract: (a) `Status` from the `> Status:` frontmatter line; (b)
+       For each filename in `Related ADRs`, **first validate the filename**
+       against the canonical ADR grammar regex
+       `^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])-[a-z0-9][a-z0-9-]*[a-z0-9](__([2-9]|[1-9][0-9]))?\.md$`
+       before joining it with `docs/adr/`. Non-matching entries (path separators
+       `/`, leading `.`, traversal sequences `..`, absolute paths, wildcards)
+       are rejected with a stderr warning `Rejecting malformed Related-ADRs
+       filename "{value}" — must match YYYY-MM-DD-slug[__N].md grammar.` Then
+       apply the **ADR path-confinement realpath check** (same as /spec Phase
+       ADR-NEW preamble — verify `os.path.realpath(docs/adr/{filename})`
+       resolves under the repo's `docs/adr/` directory; reject symlink
+       escapes). Only after both checks pass, read the file and extract:
+       (a) `Status` from the `> Status:` frontmatter line; (b)
        `decision_snippet` built from the `## Decision` body as follows:
        1. Locate the `## Decision` heading; the body runs until the next `## `
           heading at any depth or EOF.
