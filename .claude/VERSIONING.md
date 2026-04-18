@@ -177,9 +177,10 @@ following six rules must hold (otherwise downstream ADR sets silently misbehave)
 
 2. **_INDEX.md auto-maintained** by `/spec adr-new` (row append) + `/spec`
    Phase 1.0 step 7 (full rebuild from disk — scans `docs/adr/*.md`, partitions
-   by Status into Accepted/Superseded tables, overwrites `_INDEX.md`). Header
-   carries `> Auto-maintained by /spec. Do not edit manually.` Hand-edits are
-   recoverable via `/spec` rerun but unsupported.
+   into two tables: **main table** for Status ∈ {Proposed, Accepted, Deprecated}
+   and **Superseded table** for Status starting with `Superseded by`; overwrites
+   `_INDEX.md`). Header carries `> Auto-maintained by /spec. Do not edit manually.`
+   Hand-edits are recoverable via `/spec` rerun but unsupported.
 
 3. **Template lives inline in `/spec` SKILL.md** (`## ADR Template` section).
    Single source of truth; `/spec adr-new` reads it via the UT.4-style

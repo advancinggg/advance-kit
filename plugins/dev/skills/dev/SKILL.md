@@ -594,6 +594,14 @@ Use the Write tool to create `$STATE_DIR/state.json`:
     3. If **stale / missing / check-failed**: emit a Warning (routing accelerator
        unavailable — re-run `/spec` to regenerate). Fall back to legacy full-module
        scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
+       **ADR fallback (2.5.0+)**: when CONTEXT-MAP's Related-ADRs routing is
+       unavailable, also scan `docs/adr/*.md` directly (excluding `_TEMPLATE.md`
+       and `_INDEX.md`), filter to Accepted Status, and treat the full set as the
+       fallback `Related ADRs` list for the `## ADR compliance` block. This is
+       coarser than CONTEXT-MAP routing (no scope narrowing — the plan sees every
+       Accepted ADR) but ensures ADR compliance is NOT silently bypassed during
+       the routing-cache-stale window. Users can tighten by re-running `/spec` to
+       regenerate CONTEXT-MAP.
   - Read `docs/GLOSSARY.md` (if present — gated independently of `sdd_mode`, works
     in lightweight mode too for pure-PRD projects): extract domain terms referenced
     in task description to disambiguate synonyms (e.g. "用户" vs "会员", "member" vs
