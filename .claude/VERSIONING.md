@@ -107,7 +107,8 @@ GLOSSARY bootstrap, or the `/spec` Phase 2.6 Glossary append step in
    `docs/CONTEXT-MAP.md` unconditionally, with the same merge-preserve discipline
    `/spec` uses for MODULE docs. Stale detection lives on the `/dev` side (python3
    `os.path.getmtime` over REQUIREMENTS_REGISTRY + modules + PRD + 00-prd + GLOSSARY
-   + ARCHITECTURE + IMPLEMENTATION_ORDER — 7 upstream sources).
+   + ARCHITECTURE + IMPLEMENTATION_ORDER + `docs/adr/*.md` (excluding
+   `_TEMPLATE.md` and `_INDEX.md`) — **8 upstream sources** as of 2.5.0).
 2. **GLOSSARY append-only contract**: entry `**Definition**:` field is immutable
    outside `/prd` Phase 5 GATE Option 5 'Review glossary entries → Edit
    definition'. `/spec §2.6` and future `/dev` writers may only append to
@@ -138,6 +139,16 @@ backtick-wrapping (e.g., `` `### 2.2 Unified Module Document Template` ``) or me
 the heading inside a fenced code block. Violations create false anchors that silently
 break upgrade-template's body lookup for Missing sections.
 
+**ADR-NEW anchor invariant (2.5.0+)**: `/spec adr-new` uses a UT.4-style literal-line
++ fence-tracking protocol to extract the ADR template body. The anchor is the exact
+line `## ADR Template` (depth-2, no numeric id — distinct from UT.4's depth-3 numeric
+anchors `### 1.2 Architecture Document Structure` / `### 2.2 Unified Module Document
+Template`). **Do not start any new line with `## ADR Template` outside a code fence**
+anywhere in SKILL.md. Prose references must backtick-wrap (e.g., `` `## ADR Template` ``)
+or live inside a fenced code block. Depth-1 (`# ADR Template`) and depth-3 (`### ADR
+Template`) variants are NOT equivalent and must not be used as alternative spellings —
+the depth-2 form is the single source of truth.
+
 **Nested-fence escape invariant for Phase 1.2 / Phase 2.2 template bodies**: the
 outer MODULE/ARCHITECTURE template block is opened with ```` ```markdown ```` and
 closed with ```` ``` ```` on its own line. Inner code samples (TypeScript / SQL /
@@ -146,3 +157,67 @@ as ```` \```typescript ```` / ```` \```sql ```` / ```` \```mermaid ````), otherw
 the outer fence closes prematurely and the UT.4 body-lookup captures a truncated
 template. When editing template bodies, verify every inner fence carries the
 backslash prefix and the outer fence closes cleanly on the intended line.
+
+## Release checklist (for ADR conventions — 2.5.0+)
+
+When editing the `/spec` Phase 1.0 ADR scan, the `## ADR Template` inline template,
+or the `## Phase ADR-NEW` subcommand in `plugins/dev/skills/spec/SKILL.md`, the
+following six rules must hold (otherwise downstream ADR sets silently misbehave):
+
+1. **ADR identity scheme frozen**: filenames are `YYYY-MM-DD-{slug}.md` (slug: 1..8
+   kebab-case words, total length ≥ 2 chars, `[a-z0-9]` first and last char,
+   hyphens in middle only) or `YYYY-MM-DD-{slug}__N.md` where N ∈ 2..99 is a
+   same-day collision suffix (double-underscore separator). No `ADR-NNN` numeric
+   ID allocator. Heading is just `# {Title}`. Cross-refs by filename only.
+   Supersede via `Status: Superseded by {filename}` + `Related > Supersedes:
+   {filename}`. Same-day collisions resolved with `__2 / __3 / ... / __99`
+   suffixes (the double-underscore separator is frozen to disambiguate from
+   semantic slugs ending in digits). Changing this scheme (separator char,
+   suffix range, slug grammar) is a MAJOR `dev` bump.
+
+2. **_INDEX.md auto-maintained** by `/spec adr-new` (row append) + `/spec`
+   Phase 1.0 step 7 (full rebuild from disk — scans `docs/adr/*.md`, partitions
+   by Status into Accepted/Superseded tables, overwrites `_INDEX.md`). Header
+   carries `> Auto-maintained by /spec. Do not edit manually.` Hand-edits are
+   recoverable via `/spec` rerun but unsupported.
+
+3. **Template lives inline in `/spec` SKILL.md** (`## ADR Template` section).
+   Single source of truth; `/spec adr-new` reads it via the UT.4-style
+   literal-line + fence-tracking protocol (depth-2 variant). Do NOT add
+   `docs/adr/_TEMPLATE.md` to the advance-kit repo root (that path belongs to
+   the downstream application project and is gitignored by default).
+
+4. **Related section fixed-label schema**: ADR Template's `## Related` block
+   uses exactly the 6 bullets: `PRD topic:`, `REQ-IDs:`, `Modules affected:`,
+   `Contracts affected:`, `Supersedes:`, `Complementary:`. Each value is
+   single-line comma-separated (or `(none)`). `Modules affected:` uses bare
+   `MODULE-NNN` IDs (parser rejects any other format). Phase 1.0 parser relies
+   on these exact labels. Missing-label policy: parser treats any missing
+   bullet's value as `(none)` (fail-soft). Adding a 7th label OR renaming any
+   existing label is a MAJOR `dev` bump. `Complementary:` is populated by
+   `/spec` Phase 1.0 conflict-resolution Option C only.
+
+5. **Conflict detection keyword table and decision-marker proximity rule**: the
+   set is 22 opposing pairs (see `/spec` SKILL.md Phase 1.0 step 4 for the
+   canonical list — that list is the single source of truth for count +
+   content; this checklist references it by count, not by redeclaring).
+   Removing or renaming any existing pair is a MAJOR bump (existing downstream
+   ADR sets would silently re-classify). Adding a new pair is MINOR. The
+   decision-marker proximity rule (100-char window around the keyword
+   containing one of 32 decision-marker tokens) is **frozen** — tightening or
+   relaxing the marker list is a MAJOR bump because existing Accepted ADRs
+   would re-fire or stop firing conflicts. Ambiguous English homographs
+   (REST-API, ACID-transactions, BASE-semantics, message-queue, message-topic,
+   push-based, pull-based, strong-consistency, eventual-consistency,
+   at-most-once, at-least-once, exactly-once, optimistic-locking,
+   pessimistic-locking) use suffixed forms deliberately; this is also part of
+   the frozen contract.
+
+6. **Supersedes chain exemption frozen**: if ADR-A carries `Status: Superseded
+   by B` OR `Related > Supersedes: B`, the pair (A, B) is NEVER flagged by
+   conflict detection, regardless of keyword overlap. Symmetrically for the
+   Complementary exemption (ADR-A `Related > Complementary:` bullet contains
+   B). The exemption is direct-link only — transitivity (A supersedes B, B
+   supersedes C → exempt (A, C)) is NOT enforced (multi-hop chains are
+   expected to be rare, and re-running Phase 1.0 after a supersede re-scans
+   with the updated Status).

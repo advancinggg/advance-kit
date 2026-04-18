@@ -1,6 +1,6 @@
 ---
 name: spec
-version: 3.5.0
+version: 3.6.0
 description: |
   Generate architecture and module specification documents from PRD.
   MECE module decomposition, self-contained specs for AI agent implementation.
@@ -9,11 +9,15 @@ description: |
   MODULE template (2.3.0+): §1.1 includes "Serves PRD topics" reverse mapping;
   §2.13 Operations (runbook) and §2.14 Observability (log/metric/trace schema) capture
   operational + observability contracts.
-  Sub-commands: resume | abort | status | upgrade-template.
+  2.5.0+ ships the ADR (Architecture Decision Records) workflow: `/spec adr-new "<title>"`
+  creates date-named decision files under `docs/adr/` from an inline template; Phase 1
+  scans Accepted ADRs and runs pairwise conflict detection (22 opposing-keyword pairs +
+  decision-marker proximity); CONTEXT-MAP reflects the matched ADRs per scope.
+  Sub-commands: resume | abort | status | upgrade-template | adr-new.
   Usage: /spec [path/to/PRD.md or path/to/prd-directory/]
   Trigger when user asks to "generate specs", "generate architecture", "decompose modules",
   "generate module docs", "spec", or "specification driven development".
-argument-hint: "[PRD path] or resume|abort|status|upgrade-template"
+argument-hint: "[PRD path] or resume|abort|status|upgrade-template|adr-new"
 allowed-tools:
   - Bash
   - Read
@@ -83,6 +87,7 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 - `abort` → delete `docs/.spec-state/`, output "workflow aborted", exit
 - `status` → read and display `docs/.spec-state/progress.json` summary, exit
 - `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow).
+- `adr-new` → jump to **Phase ADR-NEW** (standalone operation; skips Phase 0.1 dependency check — adr-new only needs `jq` for the active-workflow gate's JSON phase read, which the main `/spec` flow already verifies when it runs; no progress.json touched). Requires at least one `$ARGUMENTS` word after `adr-new` as the ADR title; missing title → print `/spec adr-new "<title>" — no title provided.` and exit.
 - anything else → treat as PRD path, proceed to 0.1
 
 ### 0.1 Dependency Check
@@ -868,6 +873,158 @@ main PRD workflow.
 
 ---
 
+## ADR Template
+
+**This section is the inline source of truth for `/spec adr-new`.** Phase ADR-NEW reads this file with a UT.4-style literal-line + fence-tracking protocol (depth-2 variant): scan for the exact line `## ADR Template` outside all code fences, then capture the next ```markdown fenced block as the template body.
+
+```markdown
+# {Title}
+
+> Date: {YYYY-MM-DD}
+> Status: Proposed
+> Deciders: {names / roles}
+
+## Context
+
+(decision background — what problem are we solving? what constraints apply?)
+
+## Options considered
+
+### Option 1: {name}
+
+- Pros: ...
+- Cons: ...
+
+### Option 2: {name}
+
+- Pros: ...
+- Cons: ...
+
+## Decision
+
+(chosen option + one-paragraph summary of what this means in practice)
+
+## Rationale
+
+(why this option beats the alternatives — which Context constraints dominate)
+
+## Consequences
+
+- ✅ {positive outcome}
+- ⚠️ {trade-off / risk}
+- 📌 {new constraint on future work}
+
+## Related
+
+- PRD topic: {topic or "(none)"}
+- REQ-IDs: {comma-separated list or "(none)"}
+- Modules affected: {comma-separated `MODULE-NNN` bare IDs or "(none)"}
+- Contracts affected: {comma-separated list or "(none)"}
+- Supersedes: {filename or "(none)"}
+- Complementary: {comma-separated filenames or "(none)"}
+```
+
+Fixed-label Related section guarantees unambiguous parser behavior: Phase 1.0 parses each bullet by exact label prefix. The 6 labels are a closed set — no 7th label without a MAJOR `dev` plugin bump (see VERSIONING rule 4). Missing-label policy: parser treats any missing bullet's value as `(none)` (fail-soft, not error). `Complementary:` is populated by `/spec` Phase 1.0 Option C only; users normally leave it `(none)`.
+
+---
+
+## Phase ADR-NEW: `/spec adr-new "<title>"` subcommand
+
+Standalone subcommand, invoked via the `§0.0` dispatch branch. Does NOT touch `docs/.spec-state/progress.json`. All side-effects (mkdir, file create, `_INDEX.md` append) are deferred until after the active-workflow gate and cross-day collision check pass.
+
+**Canonical filename grammar (2.5.0+, frozen by VERSIONING rule 1):**
+
+```
+filename  ::= date '-' slug ('__' suffix)? '.md'
+date      ::= YYYY '-' MM '-' DD (ISO 8601)
+slug      ::= 1..8 kebab-case words; total length ≥ 2 chars;
+              [a-z0-9] first char, [a-z0-9-] interior chars,
+              [a-z0-9] last char (single-char slugs rejected at creation)
+suffix    ::= 2-99 integer (collision suffix; NEVER 1, NEVER ≥100)
+```
+
+The double-underscore separator `__` for collision suffixes unambiguously distinguishes them from semantic slugs ending in digits (e.g., `use-http-2` is a slug; `foo__2` is slug `foo` with collision suffix N=2). Slugs never contain `__` — only single hyphens between alphanumeric words.
+
+**Execution (7 steps):**
+
+1. Parse `$ARGUMENTS` → extract title. Missing title → print usage `/spec adr-new "<title>" — no title provided.` and exit.
+
+2. Normalize title → `slug`:
+   - lowercase; replace any non `[a-z0-9]+` run with `-`; strip leading/trailing `-`; collapse runs of `-`.
+   - Word count: 1..8 kebab-case words (single-word titles like "authentication" are valid). If >8 words after normalization, keep the first 8.
+   - Total slug length must be ≥ 2 chars. If the normalized slug is a single character (e.g., title "X" → slug "x"), print an error `/spec adr-new: slug "{slug}" is too short (minimum 2 characters). Pick a more descriptive title.` and exit.
+
+3. **Cross-day base-slug collision check (runs BEFORE any side-effect)**. Scan `docs/adr/*.md` (if dir exists) and detect filename collisions using the canonical filter regex + collision-suffix test:
+   ```bash
+   # Slug must already be shell-safe kebab-case from step 2.
+   # Filter regex: ISO YYYY-MM-DD + slug grammar (≥2 chars) + optional __N (N: 2..99).
+   filter_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])-[a-z0-9][a-z0-9-]*[a-z0-9](__([2-9]|[1-9][0-9]))?$'
+   collision_re="^${slug}__([2-9]|[1-9][0-9])\$"
+   found=""
+   for f in docs/adr/*.md; do
+     [ -f "$f" ] || continue
+     bn=$(basename "$f" .md)
+     printf '%s\n' "$bn" | grep -Eq "$filter_re" || continue
+     rest="${bn:11}"
+     # Match canonical slug (no suffix) OR slug + __N collision suffix
+     if [ "$rest" = "$slug" ] || printf '%s\n' "$rest" | grep -Eq "$collision_re"; then
+       found="$found $f"
+     fi
+   done
+   ```
+
+   **Filter regex coverage**:
+   - Accepts: `2026-04-18-use-http-2.md` (semantic slug ending in digit), `2026-04-18-foo__2.md` (collision N=2), `2026-04-18-foo__99.md` (N=99), `2026-04-18-use-oauth.md`.
+   - Rejects: `_TEMPLATE.md`, `_INDEX.md`, files without date prefix, malformed dates, slugs with leading/trailing hyphen, single-char slugs, `foo__1.md`, `foo__100.md`, `foo_2.md` (single underscore).
+   - Word-count / doubled-hyphen enforcement is at creation (step 2), not in the filter regex: hand-edited legacy files that violate the ≤8-word convention are still matched by the filter for collision-check purposes (harmless).
+
+   **Disambiguation examples** (slug-match under the `__N` separator):
+   - New slug `use-http-2` vs existing `2026-03-15-use-http-2.md`: canonical match (rest == slug). Correct.
+   - New slug `use-http-2` vs existing `2026-03-15-use-http-2__3.md`: collision-suffix test matches N=3. Correct.
+   - New slug `foo` vs existing `2026-03-15-foo-123.md`: neither match (rest `foo-123` ≠ `foo`; `foo__[2-9]|[1-9][0-9]$` does NOT match `foo-123`). **No collision reported** — correct, since `foo-123` is a semantically distinct slug.
+   - New slug `foo` vs existing `2026-03-15-foo__5.md`: collision-suffix matches N=5. Correct.
+
+   If any file matches → AskUserQuestion: "An existing ADR uses base slug `{slug}`: {list}. Options: (A) Create a new same-day variant (filename will be auto-suffixed with `__N` if needed); (B) Abort — I'll edit the existing ADR instead (filename printed)." Option A → continue to step 4; Option B → exit with first-match path printed. **Nothing is written to disk at this step.**
+
+4. **Active-workflow gate** (UT.7-aligned). Define:
+   - `block-prompt set = {architecture, modules, implementation_order}` — phases that trigger the AskUserQuestion prompt below.
+   - `safe-proceed set = {init, report, file-absent}` — phases (or missing progress.json) that proceed without prompting.
+
+   Read `docs/.spec-state/progress.json`. If the file exists AND `.phase ∈ block-prompt set` → AskUserQuestion "A /spec main workflow is currently in phase {phase}. /spec adr-new is standalone (doesn't modify progress.json) but writes into `docs/adr/` while main /spec is regenerating module docs — this can race. Options: (A) Proceed anyway; (B) Abort and rerun after the main workflow completes." Otherwise (safe-proceed set or file absent) → proceed without prompting. **Nothing is written to disk at this step.**
+
+5. Compute `filename = docs/adr/$(date +%Y-%m-%d)-{slug}.md`. Same-day collision: if the target file exists, try `{date}-{slug}__2.md`, `__3`, ..., up to `__99` (double-underscore separator per the canonical grammar). Error out on overflow with "99 same-day same-slug variants already exist — please pick a more specific title". **Nothing is written to disk at this step** (only the winning filename is decided).
+
+6. Resolve SKILL.md path and read ADR Template body:
+   - **Tier 1 (preferred)**: `$CLAUDE_PLUGIN_ROOT/skills/spec/SKILL.md` (set by the plugin runtime). Before use, run the same UT.4-style fence-aware scan (below) to verify the file contains the exact line `## ADR Template` **outside all code fences** AND that the next ```markdown fence is locatable after the anchor. A simple `grep -q` is insufficient because SKILL.md may cite `## ADR Template` as a prose example inside a fenced code block. If the fence-aware scan fails (env var points at a stale pre-2.5.0 plugin install still in cache), fall through to Tier 2.
+   - **Tier 2 (fallback)**: semver-filtered, semver-sorted cache lookup — `ls ~/.claude/plugins/cache/advance-kit/dev/ 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1` first filters for strict semver-shaped directory names, then sorts by version. Read `~/.claude/plugins/cache/advance-kit/dev/{version}/skills/spec/SKILL.md`. If the filtered list is empty → abort with error: "Could not locate spec SKILL.md (tried `$CLAUDE_PLUGIN_ROOT` and `~/.claude/plugins/cache/advance-kit/dev/{semver}/skills/spec/SKILL.md`). Ensure the advance-kit dev plugin is installed, or set $CLAUDE_PLUGIN_ROOT manually."
+   - **UT.4-style protocol (literal-line anchor + fence-tracking, depth-2 variant)**: scan the file line-by-line. Track code fences using UT.5 rule 1 (fence open = line at column 0 with 3+ consecutive backticks/tildes; fence close = line with only the same char of length ≥ opener). Find the FIRST line that EQUALS `## ADR Template` (literal string match, outside all fences). From there, advance to the first line that EQUALS ` ```markdown ` (column-0 opener). Capture all subsequent lines until the matching close fence ` ``` `. The captured body is the template source.
+   - Substitute `{Title}` with the raw title argument; substitute `{YYYY-MM-DD}` in the `> Date:` line with today's ISO date (`date +%Y-%m-%d`). Leave all other placeholders as editable text.
+
+7. **All side-effects happen here** (after steps 3 + 4 have passed):
+   - `mkdir -p docs/adr/`
+   - Write template body to the filename computed in step 5.
+   - Append a row to `docs/adr/_INDEX.md` (create with the canonical 2-table skeleton if missing):
+     ```
+     # ADR Index
+
+     > Auto-maintained by /spec. Do not edit manually.
+     > Last updated: {ISO date}
+
+     | Filename | Date | Title | Status | Modules affected |
+     |----------|------|-------|--------|------------------|
+     | YYYY-MM-DD-{slug}.md | YYYY-MM-DD | {Title} | Proposed | (none) |
+
+     ## Superseded
+
+     | Filename | Superseded by | Date |
+     |----------|---------------|------|
+     ```
+   - Console: `Created: docs/adr/YYYY-MM-DD-{slug}.md (Status: Proposed). Edit Context/Options/Decision/Rationale/Consequences/Related, change Status to Accepted, and rerun /spec to pick it up in ARCHITECTURE §8.`
+
+Phase ADR-NEW exits here — it does not create `progress.json` and does not enter the main PRD workflow.
+
+---
+
 ## Dual-Evaluator Sync Protocol (Fix #31 v3.3 — applies to all evaluator loops: Phase 1.3 Architecture, Phase 2.4 Module)
 
 The following 5 hard constraints are **shared** by every evaluator loop in /spec. Violating any one is treated as a process violation and the main agent must stop and report.
@@ -913,6 +1070,67 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
 ---
 
 ## Phase 1: Generate ARCHITECTURE.md
+
+### 1.0 Read ADRs and conflict detection
+
+(2.5.0+; skill-narrative step, NOT part of the canonical ARCHITECTURE.md template in §1.2. The canonical template uses `## 1. Architecture Overview` through `## 11. Threat Model`, which is unaffected by this preflight step.)
+
+Body (7 steps):
+
+1. Scan `docs/adr/*.md`, excluding `_TEMPLATE.md` and `_INDEX.md`. Missing `docs/adr/` directory → empty set, skip remaining steps (no conflicts to detect, no pre-population of §8 Key Decision Records).
+
+2. Parse each ADR file by exact label:
+   - `Status` from the frontmatter line matching `^> Status: (.+)$` (take everything after `Status: ` up to EOL, trim).
+   - `## Decision` body = text between `^## Decision$` and the next `^## ` heading.
+   - `## Related` section, then extract bullet values by exact label:
+     - `Modules affected:` → canonical value format is **bare module IDs in `MODULE-NNN` form, comma-separated** (e.g., `MODULE-001, MODULE-003, MODULE-012`). Parser: split on `,`, trim each token, filter to tokens matching `^MODULE-[0-9]+$`. Non-conformant tokens (e.g., `authentication-service`, `/docs/modules/MODULE-001-auth.md`) are IGNORED by the parser and do not participate in set intersection. Empty / `(none)` / blank → empty set.
+     - `Supersedes:` → single filename in the canonical `YYYY-MM-DD-{slug}[__N].md` form (matched against the Phase ADR-NEW grammar regex). Empty / `(none)` / blank → none.
+     - `Complementary:` → comma-separated list of filenames in the canonical form (parser same as Supersedes, but splits on `,`).
+
+3. Accepted set = filter where `Status` starts with `Accepted` (case-sensitive; `Accepted`, `Accepted — 2026-04-18`, etc. all match; `Proposed`, `Deprecated`, `Superseded by ...` do not).
+
+4. Pairwise conflict detection over Accepted set:
+   - Predefined opposing-keyword table (case-insensitive, word-boundary match — whole-word only; ambiguous English homographs use suffixed forms like `-based`, `REST-API`, `message-queue` deliberately to avoid prose false positives). **22 opposing pairs**:
+     - monolith ↔ microservices
+     - monolith ↔ modular-monolith
+     - sync ↔ async
+     - sync ↔ event-driven
+     - SQL ↔ NoSQL
+     - REST-API ↔ GraphQL
+     - REST-API ↔ gRPC
+     - REST-API ↔ SOAP
+     - GraphQL ↔ gRPC
+     - polling ↔ streaming
+     - push-based ↔ pull-based
+     - relational ↔ document
+     - strong-consistency ↔ eventual-consistency
+     - stateless ↔ stateful
+     - at-most-once ↔ at-least-once
+     - at-least-once ↔ exactly-once
+     - ACID-transactions ↔ BASE-semantics
+     - message-queue ↔ message-topic
+     - optimistic-locking ↔ pessimistic-locking
+     - centralized ↔ distributed
+     - shared-db ↔ db-per-tenant
+     - shared-schema ↔ schema-per-tenant
+   - Two ADRs X and Y conflict iff ALL THREE conditions hold:
+     - (a) `Modules affected` sets intersect (at least one shared module, case-sensitive exact match).
+     - (b) For SOME row `{L ↔ R}` in the table, ADR-X's `## Decision` body contains keyword L (or R) AND ADR-Y's `## Decision` body contains the OPPOSING keyword R (or L) — i.e. the pair must span both ADRs, not just appear in one.
+     - (c) **Decision-marker proximity**: each matched keyword appears within 100 characters (raw char count in the Decision body) of at least one of these decision-marker tokens: `adopt`, `adopted`, `adopting`, `chosen`, `choose`, `chose`, `choosing`, `decision`, `decide`, `decided`, `selected`, `select`, `opted`, `opt for`, `use`, `using`, `going with`, `went with`, `settle on`, `settled on`, `land on`, `landed on`, `pick`, `picked`, `prefer`, `preferred`, `standardize on`, `committed to`, `default to`, `mandate`, `will employ`, `shall use` (case-insensitive, 32 markers total). This eliminates prose-incidental keyword matches.
+   - **Supersede / Complementary chain exemption**: the pair (X, Y) is excluded from conflict detection iff EITHER of the following holds:
+     - Supersede link (either direction): ADR-X's `Status: Superseded by Y` OR ADR-X's `Related > Supersedes: Y` — symmetric for Y→X.
+     - Complementary link: ADR-X's `Related > Complementary:` bullet lists Y (or symmetric Y→X).
+   The Complementary exemption prevents Phase 1.0 from re-flagging the same pair on every subsequent `/spec` run after the user chose Option C.
+
+5. On any conflict → AskUserQuestion with 4 options. Directionality note: when ADR-A is superseded by ADR-B, A's `Status:` line carries `Superseded by {B-filename}` (passive), and B's `Related > Supersedes:` bullet carries `{A-filename}` (active — what B replaces). The `Supersedes:` field on an ADR always lists what THAT ADR replaces, never what replaces it.
+   - (A) ADR-A is superseded by ADR-B: update ADR-A's `Status:` to `Superseded by {B-filename}`, append `{A-filename}` to ADR-B's `Related > Supersedes:` bullet, and move ADR-A's `_INDEX.md` row from the Accepted table into the Superseded table (with "Superseded by" column filled).
+   - (B) ADR-B is superseded by ADR-A (symmetric swap of A and B in Option A).
+   - (C) Mark both as Complementary — append `{B-filename}` to ADR-A's `Related > Complementary:` bullet value (comma-separated if already non-empty), and `{A-filename}` to ADR-B's `Complementary:` bullet.
+   - (D) Abort /spec and hand-resolve.
+
+6. Load Accepted ADR filenames + titles into in-memory state for Phase 1.2: pre-populate `## 8. Key Decision Records` with one bullet per Accepted ADR: `- {filename}: {title} (Status: Accepted)`.
+
+7. **Rebuild `docs/adr/_INDEX.md` from current disk state** (runs after conflict-resolution Options A/B/C from step 5 complete). Scan `docs/adr/*.md`, apply the Phase ADR-NEW filter regex, and partition each ADR by its `Status:` line: Accepted/Proposed/Deprecated go into the main table; `Superseded by X` entries go into the Superseded table with "Superseded by" column = X filename. The rebuild overwrites `_INDEX.md` entirely (the file header's `Last updated:` field reflects the current ISO date). `/spec adr-new` row-append still works for newly created ADRs (fast path), but Phase 1.0 is the authoritative rebuild source.
 
 ### 1.1 Module Decomposition (MECE Principle)
 
@@ -1051,6 +1269,8 @@ Contract ID format: `CONTRACT-{NNN}` (three-digit, zero-padded)
 | ... | ... | ... |
 
 ## 8. Key Decision Records
+
+**2.5.0+**: list Accepted ADRs first as a reference set (one bullet per Accepted ADR: `- {filename}: {title} (Status: Accepted)` — `/spec` Phase 1.0 pre-populates this list every run). Free-form `### Decision N: ...` prose decisions follow after the ADR bullets for decisions that haven't been formalized as standalone ADR files yet.
 
 ### Decision 1: {Decision Title}
 - **Problem**: {problem faced}
@@ -2208,8 +2428,10 @@ Required modules:
 - `docs/modules/MODULE-NNN-{name}.md`
 Infrastructure modules (read-only):
 - `docs/modules/MODULE-NNN-{name}.md`
-Related ADRs (populated by Phase C):
-- (placeholder — filled when ADR skill ships)
+Related ADRs:
+- {filename1}
+- {filename2}
+(or `- (none)` when no ADR matches this scope)
 Related glossary terms:
 - Term1, Term2, ...
 ```
@@ -2223,9 +2445,14 @@ asserts each is present by content anchor):
    `PRD Source` column).
 3. Reverse-map REQ-IDs → primary modules via the `Module(s)` column.
 4. Union primary modules' §2.2 upstream deps → infrastructure modules (read-only).
-5. Match ADRs (placeholder until the Phase C ADR skill ships — emit an empty
-   `Related ADRs (populated by Phase C):` block but keep the heading for downstream
-   grep compatibility).
+5. Match ADRs: for each scope entry, collect Accepted ADRs from `docs/adr/` whose
+   `## Related > PRD topic:` bullet contains the scope's Primary PRD topic filename,
+   OR whose `Modules affected:` bare-ID set intersects the scope's Required-modules
+   bare-ID set. Normalize scope's Required modules from path form
+   `docs/modules/MODULE-NNN-{name}.md` to bare `MODULE-NNN` via regex capture before
+   intersecting with ADR's bare-ID list (parsed per Phase 1.0 step 2). Emit matched
+   filenames under `Related ADRs:`. When no ADR matches, emit the literal line
+   `- (none)` and keep the `Related ADRs:` heading for grep compatibility.
 6. Extract glossary terms (`§3`/`§4` text matched against GLOSSARY keys — see
    `plugins/dev/skills/prd/SKILL.md §3.3` `glossary_keys` extraction rule).
 
@@ -2249,7 +2476,8 @@ listing every MODULE whose `§1.1 Serves PRD topics` equals the phrase
 >   PRD.md or 00-prd/*.md (newest P),
 >   GLOSSARY.md (mtime G),
 >   ARCHITECTURE.md (mtime A),
->   IMPLEMENTATION_ORDER.md (mtime I)
+>   IMPLEMENTATION_ORDER.md (mtime I),
+>   docs/adr/*.md (newest D, excluding _TEMPLATE.md and _INDEX.md)
 ```
 
 **Excluded from mtime scan**: `docs/.spec-state/`, `docs/.prd-state/`,

@@ -545,8 +545,10 @@ Use the Write tool to create `$STATE_DIR/state.json`:
        glo = mt('docs/GLOSSARY.md')
        arc = mt('docs/ARCHITECTURE.md')
        imp = mt('docs/IMPLEMENTATION_ORDER.md')
+       adr = newest([p for p in glob.glob('docs/adr/*.md')
+                     if os.path.basename(p) not in ('_TEMPLATE.md', '_INDEX.md')])
 
-       upstream = max(reg, mod, prd, glo, arc, imp)
+       upstream = max(reg, mod, prd, glo, arc, imp, adr)
        sys.exit(0 if cm >= upstream else 2)
        PY
          rc=$?
@@ -560,6 +562,35 @@ Use the Write tool to create `$STATE_DIR/state.json`:
     2. If **fresh**: read `docs/CONTEXT-MAP.md`, match task-description keywords
        against `### Scope:` headings → load Required modules + Infrastructure
        (read-only) modules + Related ADRs for the matched scope.
+       For each filename in `Related ADRs`, ALSO read `docs/adr/{filename}` and
+       extract: (a) `Status` from the `> Status:` frontmatter line; (b)
+       `decision_snippet` built from the `## Decision` body as follows:
+       1. Locate the `## Decision` heading; the body runs until the next `## `
+          heading at any depth or EOF.
+       2. Skip leading blank lines AND any heading lines starting with `### `,
+          `#### `, `##### `, or `###### ` (any sub-heading below `## Decision`).
+          Only real prose / bullet content counts as first-paragraph candidates.
+       3. **Code-fence skip**: if the next non-blank line starts with ` ``` ` OR
+          ` ~~~ ` (fence open, either backtick or tilde style per CommonMark),
+          consume until the matching close fence (same char and length ≥ opener)
+          and continue past it — code blocks are not eligible snippet content.
+          Repeat once more if another fence follows; otherwise proceed.
+       4. Read content lines until the first blank line (paragraph boundary) OR
+          until the first `## ` heading (block boundary).
+       5. If the collected lines start with `- ` bullets, flatten by joining each
+          bullet's content with `; ` separator. Otherwise keep as-is.
+       6. Replace any interior newline with a single space; collapse multiple
+          spaces into one.
+       7. **Truncate at 120 characters**; append `…` if truncated.
+       8. **Empty-snippet fallback**: if the collected content is empty (e.g.,
+          `## Decision` has no body, or only sub-headings + fences with no
+          prose), use the literal string `(no decision body — empty ADR)`.
+       Cache as `adr_decisions[{filename}] = {status, decision_snippet}` for the
+       plan emission in §1.2. If the file is missing (stale CONTEXT-MAP), use
+       `decision_snippet = "(not found — rerun /spec to refresh)"`. Total
+       context growth per task: bounded by `len(Related ADRs) × 121 chars` —
+       worst case ≈1.2 kB of added plan prose for the default 5-10 ADRs per
+       scope.
     3. If **stale / missing / check-failed**: emit a Warning (routing accelerator
        unavailable — re-run `/spec` to regenerate). Fall back to legacy full-module
        scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
@@ -592,6 +623,22 @@ The plan must contain:
 
   (no CONTEXT-MAP — full-module scan / lightweight mode fallback)
   Glossary terms in scope: [list from direct GLOSSARY scan] or "none (GLOSSARY missing)"
+  ```
+- **A `## ADR compliance` block, immediately AFTER `## Context loaded` and BEFORE the Traceability YAML** (2.5.0+). Lists each Accepted ADR pulled from Context loaded's `Related ADRs` list with its `Status` + one-line Decision snippet (from `adr_decisions` cache populated in §1.1):
+  ```markdown
+  ## ADR compliance
+
+  This task touches the following Accepted ADRs:
+  - `2026-03-15-use-supabase-rls.md` — Accepted. Decision: enforce row-level security on all user-owned tables via Supabase RLS policies. Task must stay compliant; any divergence requires a new ADR (run `/spec adr-new` first).
+  - `2026-04-02-magic-link-vs-oauth.md` — Accepted. Decision: magic-link primary, OAuth secondary for non-enterprise tenants.
+
+  Compliance check: this task is consistent with the above ADRs (or note divergences explicitly; if any divergence requires rewriting an ADR, abort /dev and run `/spec adr-new` per the DOCS §2.1.1 flow).
+  ```
+  Fallback when Context loaded's `Related ADRs` is `(none)` OR CONTEXT-MAP is missing/stale:
+  ```markdown
+  ## ADR compliance
+
+  (no relevant ADRs — standard task)
   ```
 - The list of modules and files that will be affected.
 - The list of docs that will need to be updated (written to `docs_allowlist`, which must
@@ -912,6 +959,36 @@ Update the docs in `docs_allowlist` as required:
 
 If a new module is needed, create it in full from the `/spec` three-part template
 (Part 1 / Part 2 / Part 3) (update the allowlist first).
+
+### 2.1.1 ADR check (2.5.0+, abort+restart pattern)
+
+During DOCS phase, if the agent identifies that the task introduces a NEW architectural decision not covered by any existing Accepted ADR (e.g., choosing a new storage backend, auth flow, transport protocol, or any change that would warrant a Decision record in ARCHITECTURE.md §8), the agent MUST pause before writing docs and use AskUserQuestion:
+
+```
+This task contains a new architectural decision: {brief description}.
+
+Options:
+ (A) ADR-worthy — I'll stop here. You then run, in order:
+       /dev abort
+       /spec adr-new "{suggested title}"
+       /dev {original task description}
+     (I will print the 3 commands for copy-paste and exit. Your next /dev
+      invocation will automatically detect the stale state.json at Phase 0 INIT
+      and prompt you for resume/abort/cancel — so even if you skip the explicit
+      /dev abort step, the workflow recovers cleanly.)
+ (B) Skip ADR — this is an implementation-level detail, not a cross-cutting architecture decision.
+ (C) Already covered — Accepted ADR {filename} governs this; I'll note it in the DOCS reasoning.
+```
+
+- **Option A**: the agent prints the 3 exact commands and STOPS taking action this session. The agent does NOT self-invoke `/dev abort` — that operation requires deleting `.dev-state/state.json`, but DOCS phase's `check-phase.sh` locks `rm` / `Write` against state.json to an allowed-but-narrow path, and self-invocation of a slash command from inside its own active run is not a supported pattern. **Recovery paths (both sanctioned)**:
+  - **Recommended path**: user copies the 3 commands in order — `/dev abort` → `/spec adr-new "..."` → `/dev {task}`. First command cleanly deletes state.json.
+  - **Skip-abort path**: user skips the explicit `/dev abort` step and runs only `/spec adr-new "..."` + `/dev {task}`. Phase 0 INIT's `ACTIVE_WORKFLOW: YES` branch (§0.1) detects the stale state.json from the paused task and issues an AskUserQuestion `resume / abort and restart / cancel`. User chooses "abort and restart" → fresh state.json. Built-in safety net, not a second-class recovery path.
+
+  Both paths terminate in a fresh `/dev` run that sees the new ADR via Phase 1 PLAN's CONTEXT-MAP load (CONTEXT-MAP is re-derived from mtime including `docs/adr/*.md` per the §1.1 staleness check). No race conditions, no self-invocation.
+- **Option B**: continue DOCS normally; no state change.
+- **Option C**: no write action. The referenced ADR was already loaded by Phase 1 PLAN (via CONTEXT-MAP routing → `adr_decisions` cache → `## ADR compliance` block in the plan file written during PLAN phase). The agent acknowledges the ADR's coverage in DOCS reasoning prose (printable to stdout, no plan-file edit — DOCS phase's hook forbids writes to `~/.claude/plans/*.md` since those are PLAN-phase artifacts) and continues DOCS normally. If during PLAN the ADR wasn't in scope, the user should take Option A instead and restart with a fresh PLAN that picks up the ADR.
+
+**Why abort+restart, not in-place pause?** Adding a `docs-paused-for-adr` phase enum to `state.json` would need a matching branch in `check-phase.sh` (the PreToolUse hook), expanding a hook surface that's currently narrow and well-tested. The abort+restart pattern preserves the existing `/dev` phase state machine (plan → docs → implement → audit → test → summary, with adversarial running as a subphase of test per §5.2) and keeps `check-phase.sh` untouched. The existing INIT `ACTIVE_WORKFLOW: YES` recovery path supplies the user-facing UX — we don't invent a new one.
 
 ### 2.2 User gate
 

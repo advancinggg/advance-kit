@@ -127,7 +127,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.4.0` | 稳定版——AC 驱动的进度公式；/dev ↔ /spec 章节编号对齐。内含 **`/prd` skill**：迭代式 PRD 生成，one-question-per-turn 对话 + 4 维度独立 evaluator 收敛（借鉴 Jesse Obra brainstorming 模式）。MODULE 模板包含 §1.1 "Serves PRD topics" 反向映射、§2.13 Operations 运维手册、§2.14 Observability 可观测性契约。**2.4.0 新增** `docs/CONTEXT-MAP.md` 路由（由 /spec Phase 3.3 自动生成）与 `docs/GLOSSARY.md` 术语解析（/prd Phase 3.3 bootstrap、/spec Phase 2.6 追加技术概念）；/dev PLAN 按匹配 scope 精准加载上下文，并用跨平台 python3 做 staleness 检查。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。 |
+| `dev` | `2.5.0` | 稳定版——AC 驱动的进度公式；/dev ↔ /spec 章节编号对齐。内含 **`/prd` skill**：迭代式 PRD 生成，one-question-per-turn 对话 + 4 维度独立 evaluator 收敛（借鉴 Jesse Obra brainstorming 模式）。MODULE 模板包含 §1.1 "Serves PRD topics" 反向映射、§2.13 Operations 运维手册、§2.14 Observability 可观测性契约。**2.4.0 新增** `docs/CONTEXT-MAP.md` 路由（由 /spec Phase 3.3 自动生成）与 `docs/GLOSSARY.md` 术语解析（/prd Phase 3.3 bootstrap、/spec Phase 2.6 追加技术概念）；/dev PLAN 按匹配 scope 精准加载上下文，并用跨平台 python3 做 staleness 检查。**2.5.0 新增** ADR（架构决策记录）系统：`/spec adr-new` 基于内嵌模板在 `docs/adr/` 生成按日期命名的决策文件，自动维护 `_INDEX.md`，Phase 1 对已接受 ADR 两两检测语义冲突（22 对对立关键词 + 决策标记邻近规则），/dev PLAN/DOCS 环节串联 ADR compliance。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 
