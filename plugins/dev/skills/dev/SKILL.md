@@ -601,23 +601,41 @@ Use the Write tool to create `$STATE_DIR/state.json`:
        scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
        **ADR fallback (2.5.0+)**: when CONTEXT-MAP's Related-ADRs routing is
        unavailable, also scan `docs/adr/*.md` directly (excluding `_TEMPLATE.md`
-       and `_INDEX.md`), filter to Accepted Status, and treat the result as the
-       fallback `Related ADRs` list for the `## ADR compliance` block. **Cap at
-       20 entries**: if the Accepted set exceeds 20 ADRs, sort by mtime
-       descending and take the 20 most recent; emit a WARNING `Fallback ADR
-       scan truncated to 20 most recent Accepted ADRs (full set: N); rerun
-       /spec to regenerate CONTEXT-MAP for scoped routing.` This prevents
-       context-flood DoS when a project accumulates hundreds of ADRs. Apply
-       the SAME adr_decisions cache-building protocol as step 2 above (read
-       each ADR's `## Decision` body, build decision_snippet per the 8-step
-       extraction — skip leading blank lines and sub-headings, skip code fences,
-       flatten bullets, 120-char truncate, empty fallback). The resulting
-       `adr_decisions[{filename}] = {status, decision_snippet}` cache is used by
-       §1.2's ## ADR compliance block emission identically to the fresh-path
-       case. This is coarser than CONTEXT-MAP routing (no scope narrowing — the
-       plan sees every Accepted ADR, capped at 20) but ensures ADR compliance is
-       NOT silently bypassed during the routing-cache-stale window. Users can
-       tighten by re-running `/spec` to regenerate CONTEXT-MAP.
+       and `_INDEX.md`), filter to Accepted Status (exact-enum match per the
+       `/spec` Phase 1.0 step 3 rule), and treat the result as the fallback
+       `Related ADRs` list for the `## ADR compliance` block. **Cap at 20
+       entries with deterministic selection**: if the Accepted set exceeds 20
+       ADRs, sort **alphabetically by filename (which sorts by date prefix as
+       secondary, since filenames start with ISO date)** and take the first 20.
+       Do NOT sort by mtime — that's susceptible to a "touch-to-shadow" attack
+       where someone re-timestamps 20 benign ADRs to push a security-relevant
+       older ADR out of the window. The deterministic filename sort produces
+       the oldest 20 ADRs alphabetically (earliest dates first), so newer ADRs
+       are the ones at risk of being hidden — but the warning below lists them
+       explicitly. Emit a WARNING `Fallback ADR scan truncated to 20 Accepted
+       ADRs (full set size: N). Showing: [filename1, ..., filename20]. Hidden:
+       [filename21, ..., filenameN]. Rerun /spec to regenerate CONTEXT-MAP for
+       scoped routing.` — the explicit list of hidden filenames prevents silent
+       shadowing. Apply the SAME adr_decisions cache-building protocol as step
+       2 above (read each ADR's `## Decision` body, build decision_snippet per
+       the 8-step extraction — skip leading blank lines and sub-headings, skip
+       code fences, flatten bullets, 120-char truncate, empty fallback). The
+       resulting `adr_decisions[{filename}] = {status, decision_snippet}` cache
+       is used by §1.2's ## ADR compliance block emission identically to the
+       fresh-path case. Users can tighten by re-running `/spec` to regenerate
+       CONTEXT-MAP.
+
+       **Proposed-ADR visibility warning**: Accepted filter EXCLUDES Proposed
+       ADRs from the compliance block by design (only ratified decisions are
+       normative). But Proposed ADRs recently authored via `/spec adr-new`
+       indicate a decision in flight — silently ignoring them may cause /dev
+       to implement code that the user is about to formally decide against.
+       Detection: if ANY `docs/adr/*.md` file with `Status: Proposed` has
+       mtime newer than `start_commit`'s time (task start), emit a WARNING
+       `Pending Proposed ADRs detected (not yet Accepted, excluded from
+       compliance block): [filename list]. Review before continuing: the
+       pending decision may affect this task's approach.` This is advisory;
+       the user chooses whether to abort-and-ratify before continuing.
   - Read `docs/GLOSSARY.md` (if present — gated independently of `sdd_mode`, works
     in lightweight mode too for pure-PRD projects): extract domain terms referenced
     in task description to disambiguate synonyms (e.g. "用户" vs "会员", "member" vs
@@ -1013,7 +1031,7 @@ Options:
 - **Option B**: continue DOCS normally; no state change.
 - **Option C**: no write action. The referenced ADR was already loaded by Phase 1 PLAN (via CONTEXT-MAP routing → `adr_decisions` cache → `## ADR compliance` block in the plan file written during PLAN phase). The agent acknowledges the ADR's coverage in DOCS reasoning prose (printable to stdout, no plan-file edit — DOCS phase's hook forbids writes to `~/.claude/plans/*.md` since those are PLAN-phase artifacts) and continues DOCS normally. If during PLAN the ADR wasn't in scope, the user should take Option A instead and restart with a fresh PLAN that picks up the ADR.
 
-**docs/adr/ allowlist convention (2.5.0+)**: when the plan's `## ADR compliance` block is non-empty (either fresh or fallback path), the Plan phase (§1.2) automatically appends `docs/adr/*.md` to `docs_allowlist` as a read-only-needed set — this gives the DOCS-phase hook a path to WRITE to individual ADR files if the task requires a minor ADR correction (e.g., updating a `Modules affected:` bullet after a module rename). The agent SHOULD use this sparingly; substantial ADR changes (Decision text, Status flip) still go through Option A's abort+restart flow so /spec Phase 1.0 can rebuild `_INDEX.md` and re-run conflict detection.
+**docs/adr/ editability during DOCS (2.5.0+ — deliberately excluded)**: ADR files are NOT writable during /dev DOCS phase. The `check-phase.sh` hook uses exact-realpath matching, not glob expansion, so even if PLAN added `docs/adr/*.md` to `docs_allowlist` the hook would not authorize any real ADR file. Additionally, routing ADR edits through DOCS would bypass /spec Phase 1.0's conflict detection and `_INDEX.md` rebuild — a design exclusion, not an oversight. ANY ADR correction (typo fix, `Modules affected:` change, Status flip) must go through Option A's abort+restart flow: `/dev abort` → `/spec adr-new "..."` (for net-new ADRs) or manual editor + `/spec` rerun (for existing-ADR fixes) → `/dev {task}`. This keeps the ADR lifecycle under /spec's sole control.
 
 **Why abort+restart, not in-place pause?** Adding a `docs-paused-for-adr` phase enum to `state.json` would need a matching branch in `check-phase.sh` (the PreToolUse hook), expanding a hook surface that's currently narrow and well-tested. The abort+restart pattern preserves the existing `/dev` phase state machine (plan → docs → implement → audit → test → summary, with adversarial running as a subphase of test per §5.2) and keeps `check-phase.sh` untouched. The existing INIT `ACTIVE_WORKFLOW: YES` recovery path supplies the user-facing UX — we don't invent a new one.
 
