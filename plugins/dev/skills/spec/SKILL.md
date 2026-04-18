@@ -949,20 +949,22 @@ The double-underscore separator `__` for collision suffixes unambiguously distin
 
 **Preamble — concurrency lock (acquired BEFORE step 1, released on any exit path)**: first `mkdir -p docs/adr/` (the parent must exist to host the lock), then `mkdir docs/adr/.adr-new.lock.d 2>/dev/null` (portable atomic lock — returns non-zero if the directory already exists). If lock acquisition fails, check the lockfile's mtime: if older than **600 seconds** (10 min — accommodates interactive AskUserQuestion waits in the collision-scan and active-workflow-gate branches, which can legitimately block a session for minutes) → warn `Stale lock detected (age >600s); auto-removing.`, `rmdir` it, and retry `mkdir` ONCE. If the retry also fails OR the lockfile is fresh (<600s) → print `Another /spec adr-new is currently active (lockfile docs/adr/.adr-new.lock.d); retry in a moment. If the process is definitely dead, remove the lockfile manually.` and exit 1. On success, install `trap 'rmdir docs/adr/.adr-new.lock.d' EXIT` so any exit path (normal, error, SIGINT) releases the lock. **Race-free stale recovery**: to avoid the double-rmdir race where two callers both see stale + both rmdir + the winner's fresh mkdir gets rmdir'd by the loser, use a secondary sentinel — after the rmdir-on-stale step, do `mkdir docs/adr/.adr-new.lock.d || exit 1` (fail on ANY race loss), THEN verify by `test -d docs/adr/.adr-new.lock.d` after a short jitter sleep. If the test fails, abort. This serializes the entire collision-scan + filename-decision + write critical section.
 
-**ADR path-confinement check (2.5.0+ adversarial-hardening)**: all ADR file reads/writes under `docs/adr/` must verify the resolved real path is still under `docs/adr/` (reject symlinks that escape). Implementation:
+**ADR path-confinement check (2.5.0+ adversarial-hardening)**: all ADR file reads/writes under `docs/adr/` must verify the resolved real path is still under `docs/adr/` (reject symlinks that escape). Implementation uses **`python3 -I`** (isolated mode — ignores `PYTHONPATH` and does NOT prepend CWD to `sys.path`, preventing attacker-planted `os.py` in the repo from hijacking `import os`) AND passes paths via `sys.argv` (NOT shell interpolation, so repo paths containing `'` cannot break out of the Python string):
+
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-ADR_DIR_REAL=$(python3 -c "import os; print(os.path.realpath('$REPO_ROOT/docs/adr'))")
+ADR_DIR_REAL=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$REPO_ROOT/docs/adr")
 check_path() {
   local f="$1"
-  local abs=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$f")
+  local abs=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$f")
   case "$abs" in
     "$ADR_DIR_REAL/"*) return 0 ;;
-    *) echo "Refusing to access $f — symlink escape: resolves to $abs (outside $ADR_DIR_REAL)" >&2; return 1 ;;
+    *) printf '%s\n' "Refusing to access $f — symlink escape: resolves to $abs (outside $ADR_DIR_REAL)" >&2; return 1 ;;
   esac
 }
 ```
-This applies to: Phase 1.0 step 2 parser (read), Phase 1.0 step 5 ADR mutations (write), Phase 1.0 step 7 `_INDEX.md` rebuild (read-all + overwrite), Phase ADR-NEW step 7 template write + `_INDEX.md` append, and `/dev` §1.1 ADR loads (both fresh-path from CONTEXT-MAP and fallback direct scan). Downstream, adds negligible latency (one realpath per file) and blocks the symlink-to-arbitrary-file tampering vector.
+
+This applies to: Phase 1.0 step 2 parser (read), Phase 1.0 step 5 ADR mutations (write), Phase 1.0 step 7 `_INDEX.md` rebuild (read-all + overwrite), Phase ADR-NEW step 7 template write + `_INDEX.md` append, and `/dev` §1.1 ADR loads (both fresh-path from CONTEXT-MAP and fallback direct scan). Downstream, adds negligible latency (one realpath per file) and blocks the symlink-to-arbitrary-file tampering vector. The `-I` flag matches the defense already used in `/dev` §1.1's `check_context_map_staleness` snippet.
 
 1. Parse `$ARGUMENTS` → extract title. Missing title → print usage `/spec adr-new "<title>" — no title provided.` and exit.
 

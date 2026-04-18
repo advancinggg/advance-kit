@@ -611,9 +611,13 @@ Use the Write tool to create `$STATE_DIR/state.json`:
        scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
        **ADR fallback (2.5.0+)**: when CONTEXT-MAP's Related-ADRs routing is
        unavailable, also scan `docs/adr/*.md` directly (excluding `_TEMPLATE.md`
-       and `_INDEX.md`), filter to Accepted Status (exact-enum match per the
-       `/spec` Phase 1.0 step 3 rule), and treat the result as the fallback
-       `Related ADRs` list for the `## ADR compliance` block. **Cap at 20
+       and `_INDEX.md`). **Apply the same filename-grammar validation + realpath
+       path-confinement check as the fresh-path branch** (reject symlinks that
+       escape `docs/adr/`; reject filenames that don't match the canonical
+       `YYYY-MM-DD-slug[__N].md` grammar), then filter to Accepted Status
+       (exact-enum match per the `/spec` Phase 1.0 step 3 rule), and treat the
+       result as the fallback `Related ADRs` list for the `## ADR compliance`
+       block. **Cap at 20
        entries with deterministic selection**: if the Accepted set exceeds 20
        ADRs, sort **alphabetically by filename (which sorts by date prefix as
        secondary, since filenames start with ISO date)** and take the first 20.
