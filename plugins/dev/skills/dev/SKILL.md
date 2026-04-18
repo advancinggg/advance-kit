@@ -549,7 +549,12 @@ Use the Write tool to create `$STATE_DIR/state.json`:
                      if os.path.basename(p) not in ('_TEMPLATE.md', '_INDEX.md')])
 
        upstream = max(reg, mod, prd, glo, arc, imp, adr)
-       sys.exit(0 if cm >= upstream else 2)
+       # Strict >: same-second edit on whole-second-mtime filesystems (macOS HFS+
+       # or older NFS mounts) is treated as STALE so same-second ADR adds force a
+       # CONTEXT-MAP regeneration. Users wanting looser semantics can touch
+       # CONTEXT-MAP.md afterwards, but that's an explicit acknowledgement, not
+       # an accident.
+       sys.exit(0 if cm > upstream else 2)
        PY
          rc=$?
          case $rc in
@@ -596,18 +601,23 @@ Use the Write tool to create `$STATE_DIR/state.json`:
        scan: load every `docs/modules/MODULE-*.md`. Warning is NEVER a blocker.
        **ADR fallback (2.5.0+)**: when CONTEXT-MAP's Related-ADRs routing is
        unavailable, also scan `docs/adr/*.md` directly (excluding `_TEMPLATE.md`
-       and `_INDEX.md`), filter to Accepted Status, and treat the full set as the
-       fallback `Related ADRs` list for the `## ADR compliance` block. **Apply
-       the SAME adr_decisions cache-building protocol as step 2 above** (read
+       and `_INDEX.md`), filter to Accepted Status, and treat the result as the
+       fallback `Related ADRs` list for the `## ADR compliance` block. **Cap at
+       20 entries**: if the Accepted set exceeds 20 ADRs, sort by mtime
+       descending and take the 20 most recent; emit a WARNING `Fallback ADR
+       scan truncated to 20 most recent Accepted ADRs (full set: N); rerun
+       /spec to regenerate CONTEXT-MAP for scoped routing.` This prevents
+       context-flood DoS when a project accumulates hundreds of ADRs. Apply
+       the SAME adr_decisions cache-building protocol as step 2 above (read
        each ADR's `## Decision` body, build decision_snippet per the 8-step
        extraction — skip leading blank lines and sub-headings, skip code fences,
        flatten bullets, 120-char truncate, empty fallback). The resulting
        `adr_decisions[{filename}] = {status, decision_snippet}` cache is used by
        §1.2's ## ADR compliance block emission identically to the fresh-path
        case. This is coarser than CONTEXT-MAP routing (no scope narrowing — the
-       plan sees every Accepted ADR) but ensures ADR compliance is NOT silently
-       bypassed during the routing-cache-stale window. Users can tighten by
-       re-running `/spec` to regenerate CONTEXT-MAP.
+       plan sees every Accepted ADR, capped at 20) but ensures ADR compliance is
+       NOT silently bypassed during the routing-cache-stale window. Users can
+       tighten by re-running `/spec` to regenerate CONTEXT-MAP.
   - Read `docs/GLOSSARY.md` (if present — gated independently of `sdd_mode`, works
     in lightweight mode too for pure-PRD projects): extract domain terms referenced
     in task description to disambiguate synonyms (e.g. "用户" vs "会员", "member" vs
@@ -1002,6 +1012,8 @@ Options:
   Both paths terminate in a fresh `/dev` run that sees the new ADR via Phase 1 PLAN's CONTEXT-MAP load (CONTEXT-MAP is re-derived from mtime including `docs/adr/*.md` per the §1.1 staleness check). No race conditions, no self-invocation.
 - **Option B**: continue DOCS normally; no state change.
 - **Option C**: no write action. The referenced ADR was already loaded by Phase 1 PLAN (via CONTEXT-MAP routing → `adr_decisions` cache → `## ADR compliance` block in the plan file written during PLAN phase). The agent acknowledges the ADR's coverage in DOCS reasoning prose (printable to stdout, no plan-file edit — DOCS phase's hook forbids writes to `~/.claude/plans/*.md` since those are PLAN-phase artifacts) and continues DOCS normally. If during PLAN the ADR wasn't in scope, the user should take Option A instead and restart with a fresh PLAN that picks up the ADR.
+
+**docs/adr/ allowlist convention (2.5.0+)**: when the plan's `## ADR compliance` block is non-empty (either fresh or fallback path), the Plan phase (§1.2) automatically appends `docs/adr/*.md` to `docs_allowlist` as a read-only-needed set — this gives the DOCS-phase hook a path to WRITE to individual ADR files if the task requires a minor ADR correction (e.g., updating a `Modules affected:` bullet after a module rename). The agent SHOULD use this sparingly; substantial ADR changes (Decision text, Status flip) still go through Option A's abort+restart flow so /spec Phase 1.0 can rebuild `_INDEX.md` and re-run conflict detection.
 
 **Why abort+restart, not in-place pause?** Adding a `docs-paused-for-adr` phase enum to `state.json` would need a matching branch in `check-phase.sh` (the PreToolUse hook), expanding a hook surface that's currently narrow and well-tested. The abort+restart pattern preserves the existing `/dev` phase state machine (plan → docs → implement → audit → test → summary, with adversarial running as a subphase of test per §5.2) and keeps `check-phase.sh` untouched. The existing INIT `ACTIVE_WORKFLOW: YES` recovery path supplies the user-facing UX — we don't invent a new one.
 
