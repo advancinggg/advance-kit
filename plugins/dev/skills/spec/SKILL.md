@@ -920,7 +920,7 @@ main PRD workflow.
 - REQ-IDs: {comma-separated list or "(none)"}
 - Modules affected: {comma-separated `MODULE-NNN` bare IDs or "(none)"}
 - Contracts affected: {comma-separated list or "(none)"}
-- Supersedes: {filename or "(none)"}
+- Supersedes: {comma-separated filenames or "(none)"}
 - Complementary: {comma-separated filenames or "(none)"}
 ```
 
@@ -996,7 +996,7 @@ The double-underscore separator `__` for collision suffixes unambiguously distin
 
 6. Resolve SKILL.md path and read ADR Template body:
    - **Tier 1 (preferred)**: `$CLAUDE_PLUGIN_ROOT/skills/spec/SKILL.md` (set by the plugin runtime). Before use, run the same UT.4-style fence-aware scan (below) to verify the file contains the exact line `## ADR Template` **outside all code fences** AND that the next ```markdown fence is locatable after the anchor. A simple `grep -q` is insufficient because SKILL.md may cite `## ADR Template` as a prose example inside a fenced code block. If the fence-aware scan fails (env var points at a stale pre-2.5.0 plugin install still in cache), fall through to Tier 2.
-   - **Tier 2 (fallback)**: semver-filtered, semver-sorted cache lookup — `ls ~/.claude/plugins/cache/advance-kit/dev/ 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1` first filters for strict semver-shaped directory names, then sorts by version. Read `~/.claude/plugins/cache/advance-kit/dev/{version}/skills/spec/SKILL.md`. Re-run the fence-aware scan on this candidate; if `## ADR Template` is absent (e.g., cache only holds pre-2.5.0 versions), Tier-2 also fails and falls to Tier-3.
+   - **Tier 2 (fallback)**: semver-filtered, semver-sorted cache lookup — `ls ~/.claude/plugins/cache/advance-kit/dev/ 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1` first filters for strict semver-shaped directory names, then sorts by version. If the filtered list is empty (cache directory missing or no semver-shaped subdirs) → proceed immediately to Tier-3 (do NOT attempt a Read on an empty version path). Otherwise Read `~/.claude/plugins/cache/advance-kit/dev/{version}/skills/spec/SKILL.md` and re-run the fence-aware scan on this candidate; if `## ADR Template` is absent (e.g., cache only holds pre-2.5.0 versions), Tier-2 fails and falls to Tier-3.
    - **Tier 3 (final abort)**: print `/spec adr-new: Could not locate a spec SKILL.md with a 2.5.0+ '## ADR Template' section. The advance-kit dev plugin may be installed but its cache hasn't been populated for the running version — restart Claude Code (re-populates the plugin cache on next invocation), or set $CLAUDE_PLUGIN_ROOT manually to your dev plugin directory.` and exit 1.
    - **UT.4-style protocol (literal-line anchor + fence-tracking, depth-2 variant)**: scan the file line-by-line. Track code fences using UT.5 rule 1 (fence open = line at column 0 with 3+ consecutive backticks/tildes; fence close = line with only the same char of length ≥ opener). Find the FIRST line that EQUALS `## ADR Template` (literal string match, outside all fences). From there, advance to the first line that EQUALS ` ```markdown ` (column-0 opener). Capture all subsequent lines until the matching close fence ` ``` `. The captured body is the template source.
    - Sanitize the title for Markdown safety: strip pipe chars `|` (corrupt `_INDEX.md` table rows), newlines `\n\r` (corrupt Markdown paragraphs), backtick runs `` `+ ``, and leading/trailing whitespace. If the resulting sanitized title is empty → error "Title contains only unsafe characters; pick a different title" and exit. Substitute `{Title}` with the sanitized title; substitute `{YYYY-MM-DD}` in the `> Date:` line with today's ISO date (`date +%Y-%m-%d`). Leave all other placeholders as editable text.
@@ -1087,8 +1087,8 @@ Body (7 steps):
    - `## Related` section, then extract bullet values by exact label:
      - `PRD topic:` → single value (expected to match a PRD filename like `docs/00-prd/{topic}.md` OR a bare topic slug like `user-authentication`; CONTEXT-MAP step 5 matches by substring containment in EITHER direction to tolerate both conventions). Empty / `(none)` / blank → none.
      - `Modules affected:` → canonical value format is **bare module IDs in `MODULE-NNN` form, comma-separated** (e.g., `MODULE-001, MODULE-003, MODULE-012`). Parser: split on `,`, trim each token, filter to tokens matching `^MODULE-[0-9]+$`. Non-conformant tokens (e.g., `authentication-service`, `/docs/modules/MODULE-001-auth.md`) are skipped with a stderr warning `ADR {filename} Modules affected: skipped non-conformant token "{token}" (expected MODULE-NNN bare ID)` so the user can fix. Empty / `(none)` / blank → empty set.
-     - `Supersedes:` → single filename in the canonical `YYYY-MM-DD-{slug}[__N].md` form (matched against the Phase ADR-NEW grammar regex). Empty / `(none)` / blank → none.
-     - `Complementary:` → comma-separated list of filenames in the canonical form (parser same as Supersedes, but splits on `,`).
+     - `Supersedes:` → **comma-separated list** of filenames in the canonical `YYYY-MM-DD-{slug}[__N].md` form (one or many — updated 2.5.0+ audit-fix round 2 to support multi-append by Phase 1.0 Option A across sessions; an ADR that supersedes multiple prior ADRs accumulates them here over time). Parser: split on `,`, trim, validate each token against the Phase ADR-NEW grammar regex; non-conformant tokens emit a stderr warning and are skipped. Empty / `(none)` / blank → empty list.
+     - `Complementary:` → comma-separated list of filenames in the canonical form (parser identical to `Supersedes:` above).
 
 3. Accepted set = filter where `Status` starts with `Accepted` (case-sensitive; `Accepted`, `Accepted — 2026-04-18`, etc. all match; `Proposed`, `Deprecated`, `Superseded by ...` do not).
 
@@ -2454,13 +2454,18 @@ asserts each is present by content anchor):
 3. Reverse-map REQ-IDs → primary modules via the `Module(s)` column.
 4. Union primary modules' §2.2 upstream deps → infrastructure modules (read-only).
 5. Match ADRs: for each scope entry, collect Accepted ADRs from `docs/adr/` whose
-   `## Related > PRD topic:` bullet contains the scope's Primary PRD topic filename,
-   OR whose `Modules affected:` bare-ID set intersects the scope's Required-modules
-   bare-ID set. Normalize scope's Required modules from path form
-   `docs/modules/MODULE-NNN-{name}.md` to bare `MODULE-NNN` via regex capture before
-   intersecting with ADR's bare-ID list (parsed per Phase 1.0 step 2). Emit matched
-   filenames under `Related ADRs:`. When no ADR matches, emit the literal line
-   `- (none)` and keep the `Related ADRs:` heading for grep compatibility.
+   `## Related > PRD topic:` value matches the scope's Primary PRD topic by
+   **substring containment in EITHER direction** (ADR value contains scope topic
+   OR scope topic contains ADR value), after normalizing both sides (strip the
+   `docs/00-prd/` directory prefix and `.md` suffix before comparison). This
+   tolerates both filename form (`docs/00-prd/user-auth.md`) and bare-slug form
+   (`user-auth`) on either side. OR the ADR matches when its `Modules affected:`
+   bare-ID set intersects the scope's Required-modules bare-ID set. Normalize
+   scope's Required modules from path form `docs/modules/MODULE-NNN-{name}.md`
+   to bare `MODULE-NNN` via regex capture before intersecting with ADR's bare-ID
+   list (parsed per Phase 1.0 step 2). Emit matched filenames under
+   `Related ADRs:`. When no ADR matches, emit the literal line `- (none)` and
+   keep the `Related ADRs:` heading for grep compatibility.
 6. Extract glossary terms (`§3`/`§4` text matched against GLOSSARY keys — see
    `plugins/dev/skills/prd/SKILL.md §3.3` `glossary_keys` extraction rule).
 

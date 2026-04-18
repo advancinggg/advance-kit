@@ -642,12 +642,13 @@ The plan must contain:
 
   Compliance check: this task is consistent with the above ADRs (or note divergences explicitly; if any divergence requires rewriting an ADR, abort /dev and run `/spec adr-new` per the DOCS §2.1.1 flow).
   ```
-  Fallback when Context loaded's `Related ADRs` is `(none)` OR CONTEXT-MAP is missing/stale:
+  Fallback when Context loaded's `Related ADRs` resolves to an empty set after BOTH the fresh-path route AND the stale/missing-path direct `docs/adr/*.md` scan (i.e., no Accepted ADRs exist in the project at all, OR the scope genuinely doesn't match any ADR):
   ```markdown
   ## ADR compliance
 
   (no relevant ADRs — standard task)
   ```
+  Note: when CONTEXT-MAP is stale/missing but `docs/adr/*.md` contains Accepted ADRs, §1.1's ADR fallback kicks in and the list is non-empty — use the standard populated-block form, NOT this fallback.
 - The list of modules and files that will be affected.
 - The list of docs that will need to be updated (written to `docs_allowlist`, which must
   include every file that will be modified: PRD.md, ARCHITECTURE.md, MODULE-xxx.md, etc.).
