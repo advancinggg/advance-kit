@@ -549,20 +549,40 @@ is missing; the `{driver}` token records which writer created the file):
 
 ## Business terms
 
-### {Term display form}
-**Definition**: {prose}
-**Synonyms**: {list or "none"}
-**Related**: {other glossary keys}
-**Source**: {driver ref, e.g. /prd brainstorm Q-3}
+(none yet — entries appear below as H3 blocks using the form:
+ `### {Term}` + `**Definition**: ...` + `**Synonyms**: ...` + `**Related**: ...`
+ + `**Source**: ...`. When bootstrapped with real terms, REPLACE this placeholder
+ sentence with one H3 block per term.)
 
 ## Technical concepts
+
+(Populated by `/spec §2.6` MODULE-generation append step.)
 
 ## Change history
 
 | Date | Entry | Field | Driver |
 |---|---|---|---|
-| {date} | {term} | created | {driver} |
 ```
+
+**Entry schema** (deterministic — both `/prd` bootstrap and `/spec §2.6` MUST write
+entries in exactly this form):
+
+```
+### {display form}
+**Definition**: {single-paragraph prose; NO line breaks inside the paragraph}
+**Synonyms**: {comma-separated list, or the literal word "none"}
+**Related**: {comma-separated list of other entry display forms, or "none"}
+**Source**: {driver ref — e.g. "/prd brainstorm Q-3" or "/spec MODULE-005 §2.5"}
+```
+
+**Synonyms serialization**: parse `**Synonyms**:` as a comma-separated string. The
+special token `none` means the list is empty. Add-term's `entry.synonyms` list is
+the result of `[s.strip() for s in value.split(',')] if value != 'none' else []`.
+
+**Change history location**: there is exactly ONE global `## Change history` table
+at the bottom of `docs/GLOSSARY.md` (no per-entry ledger). All protocol writes —
+created / synonym added / Option-5 Edit definition / Option-5 Remove — append a new
+row to this single table.
 
 **`glossary_keys` extraction rule** (both `/prd` and `/spec` MUST apply the same
 rule):
@@ -711,7 +731,9 @@ Review this PRD from 4 dimensions in a single pass. Report findings under each
 dimension, sorted by severity (Critical / Warning / Info).
 
 PRD file: {prd_path}
-GLOSSARY file: {glossary_path}
+GLOSSARY file: {glossary_path}   # substitute "docs/GLOSSARY.md" if it exists; otherwise
+                                 # substitute "(not present)" — Dimension 4 glossary-health
+                                 # check is gated on file presence.
 
 Dimension 1 — User (end-user / operator perspective):
 - Are user flows coherent end-to-end? Are edge cases named (empty state, error,
@@ -775,6 +797,9 @@ repeat:
     — same assistant response, side by side
     — Claude: Agent tool, subagent_type: claude-auditor
     — Codex: Bash tool, codex exec, timeout: 600000
+    — Evaluator prompt placeholder substitution (1.1.0+):
+        {prd_path}      → actual PRD.md path
+        {glossary_path} → "docs/GLOSSARY.md" if [ -f docs/GLOSSARY.md ]; else "(not present)"
     — Degraded: if codex_available=false, skip Codex, mark round as "single-evaluator"
 
   STEP 2: Barrier assertion (Rule 2)
@@ -830,7 +855,8 @@ When `codex_available == false` (by Rule 3 or initial detection):
 
 ## Phase 5: GATE — final user confirmation
 
-Display completed PRD + convergence summary, then AskUserQuestion with 4 options.
+Display completed PRD + convergence summary, then AskUserQuestion with 5 options
+(Option 5 added in 1.1.0 for glossary review).
 
 ### 5.1 Presentation
 
@@ -868,10 +894,12 @@ PRD sections (v1):
 **Option 5**: per-entry AskUserQuestion loop over every entry in `docs/GLOSSARY.md`.
 Choices per entry: `Approve / Edit definition / Remove / Skip`. This is the ONLY
 legitimate path through which an existing `**Definition**:` field may be mutated
-(see anti-mutation invariant in §3.3). `Edit definition` writes a new row to the
-entry's `## Change history` ledger; `Remove` deletes the entry and records a
-`removed` row. All other paths (`/spec §2.6`, future `/dev`) may only append to
-`**Synonyms**:` / `**Related**:` / `## Change history`.
+(see anti-mutation invariant in §3.3). `Edit definition` rewrites the entry's
+`**Definition**:` field and appends one row `{date} | {term} | definition edited |
+/prd option-5` to the global `## Change history` table. `Remove` deletes the entry
+H3 block and appends `{date} | {term} | removed | /prd option-5`. All other
+writers (`/spec §2.6`, future `/dev`) may append to `**Synonyms**:` /
+`**Related**:` / global `## Change history` only.
 
 **Option 1**: proceed to Phase 6 HANDOFF.
 
