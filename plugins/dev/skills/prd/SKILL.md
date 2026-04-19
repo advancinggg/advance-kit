@@ -1,11 +1,16 @@
 ---
 name: prd
-version: 1.1.0
+version: 1.2.0
 description: |
   Iterative PRD (Product Requirements Document) generation via guided dialogue.
   Captures user intent → structured L1 spec delivered as docs/PRD.md.
   Adapted from Jesse Obra's brainstorming skill (obra/superpowers) + advance-kit's
   dual-model evaluator architecture.
+  1.2.0 adds architecture-leakage detection in Phase 4 Dimension 4 (flags module IDs,
+  code schemas, trait signatures, API route tables, DB DDL, cross-module diagrams,
+  directory layouts as Critical), plus optional §1.1 Design principles and §7.1
+  Milestones / rollout template sub-sections, plus a Phase 3.0 boundary block
+  distinguishing PRD-scope from /spec-scope content.
   Sub-commands: resume | abort | status
   Usage: /prd [optional topic hint]
   Trigger when user asks to "write PRD", "brainstorm requirements", "define product",
@@ -422,6 +427,52 @@ User's choice + AI's reasoning summary is recorded to `progress.json.approach_de
 Transform `brainstorm_transcript` + `approach_decisions` → `docs/PRD.md` (or
 `docs/PRD.md` directly — v1 is single-file).
 
+### 3.0 Boundary: what belongs in PRD vs /spec
+
+Before writing, know what this document is NOT. The PRD captures user-facing
+product contract — positioning, principles, personas, flows, features, NFR
+targets, scope, milestones, terminology. It is consumed by `/spec` which
+produces `docs/ARCHITECTURE.md`, `docs/modules/MODULE-*.md`,
+`docs/IMPLEMENTATION_ORDER.md`, `docs/CONTEXT-MAP.md`, and `docs/adr/*.md`.
+
+**Do NOT emit these in PRD.md** (they are /spec output):
+- Module IDs (`MODULE-NNN`) or a module decomposition inventory
+- Code blocks > 5 lines defining types, traits, interfaces, class bodies,
+  `CREATE TABLE` / index / constraint DDL, GraphQL / protobuf schemas
+  (pseudocode ≤ 5 lines illustrating a user flow is OK)
+- API route tables (method + path columns) or endpoint specs with
+  request / response DTOs
+- Database schema detail (column types, foreign keys, indexes, RLS policies,
+  migration order)
+- Cross-module sequence or deployment-topology diagrams
+- Trait / interface signatures; cross-module event payload schemas
+- Directory layout, monorepo or crate structure
+- Per-module topological implementation order
+
+**DO emit these in PRD.md**:
+- §1 product positioning, §1.1 product design principles (cross-cutting
+  product invariants, NOT stack choices)
+- §2 personas with pain points and current workarounds
+- §3 user flows as prose or user-journey diagrams
+- §4 feature specs with acceptance-criteria prose (no AC-IDs — /spec allocates)
+- §5 NFR targets
+- §6 user-specified technical constraints (not AI-invented)
+- §7 scope boundaries, §7.1 high-level user-capability milestones
+- §8 user-acknowledged assumptions, decisions made, risks
+- §10 business terminology (via GLOSSARY.md)
+
+**Forwarding rule for architecture hints the user raised**: if brainstorm
+surfaced architecture detail (e.g. "we should use Postgres + Redis",
+"module X should expose a REST API"), record ONLY the product-level intent
+in §8 as `Decision made: {prose} — reasoning: {why}` or as §6 Technical
+constraints. Do NOT transcribe schemas, route tables, or trait signatures —
+`/spec` Phase 1 (ARCHITECTURE design) will absorb the intent and shape the
+concrete artifacts there.
+
+Phase 4 COVERAGE Dimension 4 re-checks every leak class above as a Critical
+finding — writing architecture detail into PRD.md now means iterating it out
+in Phase 4 anyway.
+
 ### 3.1 PRD template
 
 Write `docs/PRD.md`:
@@ -439,6 +490,26 @@ Write `docs/PRD.md`:
 {Scaled depth: trivial products = 2-3 sentences; platform-scale = 200-300 words.
 Answer: what, for whom, why valuable. Include positioning vs competitors if brainstorm
 mentioned any.}
+
+### 1.1 Design principles (optional — omit for trivial products)
+{Cross-cutting product invariants that shape many downstream decisions. Keep to
+3-7 bullets; beyond that, they are likely architecture concerns belonging in
+/spec ARCHITECTURE.md.
+
+Each principle: one-line rule + one-line "why it matters". DO NOT write stack
+choices (Rust / tokio / Postgres) here — those are §6 Technical constraints or
+/spec outputs. Principles are product-level semantic choices that persist across
+stack changes.
+
+Examples of legitimate design principles:
+- "BTC-denominated accounting" — domain choice; every price/PnL calculation obeys it
+- "Raw-first data discipline" — every derived view is reconstructible from stored raw
+- "Event-driven across modules" — shape of cross-module interaction, not a framework
+
+Examples of what does NOT belong here (goes to §6 or /spec):
+- "Use Rust + tokio mpsc" (stack)
+- "Bounded queues between tasks" (implementation pattern)
+- "Postgres + ClickHouse split" (infrastructure)}
 
 ## 2. User roles / personas
 {Each persona: who they are, what pains they face, how they currently cope, desired
@@ -489,6 +560,23 @@ technical details, flow diagrams, data shape.}
 **Explicitly out of scope**:
 - {item 1} — reason: {why excluded (e.g. "deferred to v2 per user's explicit roadmap")}
 - {item 2} — reason: {...}
+
+### 7.1 Milestones / rollout (optional — omit if single-flow product)
+{High-level delivery roadmap named by user-visible capability, NOT module-level
+topological order. /spec produces `docs/IMPLEMENTATION_ORDER.md` for module-level
+implementation sequencing; §7.1 is the coarser product-level view for stakeholder
+communication.
+
+Each milestone = a discrete, user-observable capability. Typical 3-5 milestones.
+
+| Milestone | User-visible capability | Gating decisions |
+|---|---|---|
+| M0 | {capability — e.g. "first end-to-end purchase flow"} | {what must be settled before M0 ships — e.g. "payment provider choice"} |
+| M1 | {capability} | {...} |
+
+Do NOT enumerate modules, crates, or per-component code-delivery phases here —
+that is /spec output. If a milestone naturally requires multiple modules, name
+the milestone by its user-facing capability and let /spec decompose the delivery.}
 
 ## 8. Assumptions & open risks
 (User-acknowledged via /prd dialogue, NOT AI-invented.)
@@ -833,13 +921,41 @@ Dimension 3 — Security:
 - Attack surfaces acknowledged (injection, XSS, CSRF, auth bypass)?
 - Compliance constraints (GDPR / HIPAA / PCI) explicit?
 
-Dimension 4 — SpecReview (obra 5-axis):
+Dimension 4 — SpecReview (obra 5-axis + architecture-leakage):
 - Placeholder scan: no TBD / TODO / "to be decided" / "pending"
 - Internal consistency: no contradictions between sections (e.g. §3 says feature X
   is in scope, §7 lists X as excluded)
 - Scope sufficiency: single subsystem, no multi-subsystem smuggling
 - Ambiguity elimination: no interpretive slack
 - YAGNI: unnecessary features removed; each feature earns its place
+- Architecture leakage (flag EACH occurrence as Critical — PRD body must not
+  contain /spec-level artifacts):
+    • Module IDs of the form `MODULE-NNN` or a numbered module inventory
+      decomposing the system into implementation modules / crates / packages
+    • Code blocks > 5 lines defining types, interfaces, traits, class bodies,
+      struct layouts, `CREATE TABLE` / ALTER / index / constraint / RLS DDL,
+      GraphQL schemas, or protobuf messages (short pseudocode ≤ 5 lines that
+      illustrates a user-facing flow is acceptable)
+    • API endpoint tables (method + path columns) or endpoint specs carrying
+      request / response DTO type definitions
+    • Database schema detail — column types, indexes, foreign keys, partition
+      or ORDER BY keys, migration order
+    • Cross-module sequence diagrams or deployment-topology diagrams
+      (Mermaid / ASCII) showing internal components talking to each other —
+      distinct from user-journey flow diagrams permitted in §3
+    • Trait / interface signatures with method contracts, or inter-module
+      event / message payload schemas
+    • Directory layout, monorepo structure, crate / package layout
+    • Per-module topological implementation order or code-delivery phases
+      (high-level user-capability milestones in §7.1 are acceptable;
+      module-by-module sequencing is /spec `IMPLEMENTATION_ORDER.md` output)
+  Finding format: `[Critical][SpecReview] architecture leakage at §{N}: {what}
+  — move to /spec ARCHITECTURE.md or MODULE-*.md`.
+  What remains acceptable in PRD: prose data requirements ("an order carries
+  buyer, seller, USDC amount, timestamp"), user-journey diagrams, stack choices
+  the user explicitly mandated as §6 Technical constraints, and product-level
+  design principles in §1.1 ("BTC-denominated accounting" is a principle;
+  "use Rust + tokio mpsc" is a stack choice belonging in §6 or /spec).
 - Glossary health (if docs/GLOSSARY.md present): definitions non-circular
   (A→B→A cycles flagged), synonyms within an entry normalize to the same key as
   the display form, no two entries share a normalized key, and any
