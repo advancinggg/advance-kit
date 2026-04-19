@@ -89,6 +89,8 @@ following paths:
    - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
    - DoD adds a hard gate: `deferred_findings == [] OR all entries have user_accepted_at`.
 
+When DOCS is re-entered via branch (b), §2.1.1 / §2.1.2 / §2.1.3 all re-fire in order — the rolled-back finding may surface as an ADR worth capturing (§2.1.1), a PRD/spec drift that needs upstream escalation (§2.1.2), or a §2.7 Core Logic drift (§2.1.3) rather than a plain MODULE-local update. This is why the "docs first" principle is robust across rollback branches: DOCS always owns the upstream-alignment decision regardless of which downstream phase flagged the rollback.
+
 **No spinning in place**: between any two evaluator rounds, `git diff` (previous commit..HEAD)
 MUST contain real changes; otherwise the round counts as a "no-op attempted fix" and the
 evaluator automatically FAILs (enforced by claude-auditor.md's Anti-Escape Rule).
@@ -1050,6 +1052,179 @@ Options:
 **Post-DOCS trust boundary (IMPLEMENT/AUDIT/TEST/ADVERSARIAL phases)**: the `check-phase.sh` hook intentionally allows arbitrary file writes during these phases (that's what "implementation" means). An agent in IMPLEMENT CAN technically write to `docs/adr/*.md` — not because it's authorized by the ADR governance policy but because the hook doesn't enforce ADR-specific rules post-DOCS. This is the same trust model as any other file: if the agent has write access during IMPLEMENT, it can write anywhere, and the protection against malicious rewrites is the DIFF REVIEW phase (dual-evaluator Audit loop) plus git-commit-level review by the human. ADR governance is enforced at PLAN/DOCS boundaries; post-DOCS it relies on the same review discipline as source code. If a task legitimately needs to touch an ADR during IMPLEMENT (e.g., updating a `Modules affected:` bullet after a module rename introduced in this same task), the AUDIT diff review will surface the change; if the task illegitimately touches an ADR, the AUDIT diff review should flag it. This is an accepted trust boundary, not an oversight.
 
 **Why abort+restart, not in-place pause?** Adding a `docs-paused-for-adr` phase enum to `state.json` would need a matching branch in `check-phase.sh` (the PreToolUse hook), expanding a hook surface that's currently narrow and well-tested. The abort+restart pattern preserves the existing `/dev` phase state machine (plan → docs → implement → audit → test → summary, with adversarial running as a subphase of test per §5.2) and keeps `check-phase.sh` untouched. The existing INIT `ACTIVE_WORKFLOW: YES` recovery path supplies the user-facing UX — we don't invent a new one.
+
+### 2.1.2 PRD/Spec upstream change check (2.7.0+, abort+restart pattern)
+
+During DOCS phase, if the agent identifies that the task surfaces an
+upstream-document change that crosses the MODULE-scope boundary —
+specifically (a) a PRD requirement add / remove / modify, OR (b) an
+ARCHITECTURE.md or MODULE doc change outside this task's authorized
+`docs_allowlist` (e.g., touching another MODULE's §2.1 boundary, reshaping
+a contract used by another MODULE) — the agent MUST pause before writing
+docs and use AskUserQuestion:
+
+```
+This task surfaces an upstream {PRD | spec} gap: {brief description}.
+
+Options:
+ (A) PRD-worthy — I'll stop here. You then run, in order:
+       /dev abort
+       /prd "{suggested topic or description of the gap}"
+       /spec docs/PRD.md
+       /dev {original task description}
+     (The /prd run amends PRD via guided dialogue + coverage evaluator.
+      When /prd completes, the HARD-GATE hands off to /spec — user must
+      explicitly run `/spec docs/PRD.md` to pick up the amended PRD.
+      Multi-PRD caveat: /prd v1 is single-file only and refuses
+      `docs/00-prd/` layouts; for multi-file repos, user either picks one
+      file or amends the set manually outside /prd before rerunning /spec.
+      The single canonical 4-command sequence above is the complete
+      recovery path — alternative-subcommand branches do not apply.
+      See VERSIONING.md release checklist for the frozen command contract.)
+ (B) Spec-only — PRD is correct, but ARCHITECTURE.md or a non-owned
+     MODULE doc needs to change. Stop here and run:
+       /dev abort
+       /spec                        # main-flow rerun; merge-preserve keeps unchanged rows
+       /dev {original task description}
+     (/spec main-flow rerun regenerates all MODULEs via merge-preserve —
+      unchanged rows kept verbatim; only drift propagates. Safe but
+      re-visits every MODULE; accept this cost or use Option C for a
+      single-module in-scope edit.)
+ (C) In-scope — the change is confined to this task's owned MODULE(s)
+     (the ones already in `docs_allowlist`). Continue DOCS normally.
+     Includes the "already covered by existing PRD/spec" sub-case — when
+     the referenced artifact already describes the task scope, the agent
+     cites it in DOCS reasoning prose (stdout, no plan-file edit) and
+     continues.
+```
+
+**Option A / Option B discipline**: the agent prints the exact commands
+verbatim and STOPS taking action this session. The agent does NOT
+self-invoke `/dev abort` — that operation requires deleting
+`.dev-state/state.json`, but DOCS phase's `check-phase.sh` locks `rm` /
+`Write` against state.json, and self-invocation of a slash command from
+inside its own active run is not a supported pattern (same constraint as
+§2.1.1 ADR abort+restart).
+
+**Recovery paths (both sanctioned)**:
+- **Recommended path**: user copies the commands in order. First
+  command cleanly deletes state.json.
+- **Skip-abort path**: user skips the explicit `/dev abort` step and
+  runs only the remaining commands. Phase 0 INIT's `ACTIVE_WORKFLOW:
+  YES` branch (§0.1) detects the stale state.json from the paused task
+  and issues an AskUserQuestion `resume / abort and restart / cancel`.
+  User chooses "abort and restart" → fresh state.json. Built-in safety
+  net, not a second-class recovery path.
+
+Both paths terminate in a fresh /dev run that sees the updated PRD /
+spec via Phase 1 PLAN's CONTEXT-MAP load (CONTEXT-MAP is re-derived
+from mtime including docs/PRD.md + docs/ARCHITECTURE.md +
+docs/modules/*.md + docs/adr/*.md per the §1.1 staleness check). No
+race conditions, no self-invocation.
+
+**Option C discipline**: continue DOCS normally; no state change. If
+the task also surfaces a §2.7 Core Logic drift detected by §2.1.3
+below, Option C still applies for PRD/spec scope — §2.1.3 handles
+§2.7 drift independently.
+
+**Boundary with §2.1.1** (explicit):
+- §2.1.1 — a new *architectural decision* (storage backend, transport
+  protocol, auth flow — anything that would warrant a standalone ADR
+  file or ARCHITECTURE.md §8 Decisions entry).
+- §2.1.2 — a *requirement or spec drift* (PRD says X but task needs Y;
+  one MODULE's contract shape needs reshaping to serve another MODULE).
+- If both apply in the same task: §2.1.1 runs FIRST (ADR captures the
+  decision rationale as a durable record), then §2.1.2 (PRD / spec
+  catches up to the decision). The two checks run in order inside the
+  same DOCS entry; the agent doesn't need to re-enter DOCS between
+  them.
+
+**Post-DOCS discovery** (IMPLEMENT / AUDIT / TEST / ADVERSARIAL
+phases): if one of the rollback branches (b) / (c) lands back in DOCS
+from a later phase, §2.1.1 + §2.1.2 + §2.1.3 all re-fire in order as
+part of entering DOCS. There is no separate IMPLEMENT-phase PRD / spec
+check surface — the pattern is always "surface in
+IMPLEMENT/AUDIT/TEST → rollback branch (b) → re-enter DOCS → §2.1.x
+re-fire".
+
+**Why abort+restart, not in-place pause?** Same rationale as §2.1.1:
+adding a `docs-paused-for-prd` or `docs-paused-for-spec` phase enum to
+`state.json` would need a matching branch in `check-phase.sh`,
+expanding a hook surface that is currently narrow and well-tested. The
+abort+restart pattern preserves the existing state machine and the INIT
+`ACTIVE_WORKFLOW: YES` recovery path supplies the UX.
+
+### 2.1.3 Core Logic drift check (2.7.0+)
+
+**Trigger** (explicitly gated): fires ONLY on DOCS phase **re-entry**
+from a rollback branch (b). Condition:
+`state.json.eval_history` contains at least one entry with `phase` in
+`{audit, test, adversarial}`. First-pass DOCS (empty `eval_history`, or
+only `plan`-phase entries) SKIPS §2.1.3 because no code has been
+written yet this task — §2.7 drift can only be introduced by THIS task
+after IMPLEMENT, so the check only becomes meaningful on rollback
+re-entry. Pre-existing §2.7 drift inherited from earlier tasks is a
+`/spec upgrade-template` concern (section-level merge that preserves
+/dev verification progress) and is explicitly out of scope for the
+per-task §2.1.3 check.
+
+**Scope**: for every MODULE in `docs_allowlist` whose source files are
+touched by `git diff {start_commit}..HEAD` (the re-entry's accumulated
+diff intersecting the MODULE's §2.3 Source Files), compare §2.7 Core
+Logic against the current code.
+
+**3 options** (labels FROZEN — see VERSIONING.md release-checklist):
+
+```
+§2.7 Core Logic and implementation have diverged in MODULE-NNN:
+  Doc (§2.7) says: {quote the diverging flow step}
+  Code says:     {describe actual behavior with file:line}
+
+Options:
+ (A) Code is correct — update §2.7 to match the implementation.
+     Stay in DOCS; edit §2.7; append a §3.7 Change History row
+     recording the drift resolution; proceed to §2.2 User gate.
+ (B) Doc is correct — roll back to IMPLEMENT to align the code to
+     §2.7. Set state.json phase: "implement"; emit a one-line banner
+     `§2.1.3: rolling back to IMPLEMENT to align code to §2.7 Core
+     Logic`; exit DOCS. IMPLEMENT's §3.1 user gate re-runs after the
+     fix.
+     Escalation sub-branch: if the required code fix would require
+     changes beyond this task's MODULE `docs_allowlist` (AC change,
+     interface signature change, data-model change to a shared schema,
+     scope spill into another MODULE), DO NOT take (B) directly —
+     escalate to §2.1.2 Option A or B instead so the upstream docs
+     can be aligned first.
+ (C) Intentional drift — the divergence is a deliberate refactor
+     (preserves external semantics, changes implementation detail
+     only). Update §2.7 to describe the new flow AND add a §3.8
+     Implementation Notes row recording the trade-off + alternatives
+     considered.
+```
+
+If no divergence (§2.7 matches code): no action; proceed to §2.2 User
+gate.
+
+**Fuzzy-match caveat**: the agent uses judgment, not a syntactic
+differ.
+- Triggers (drift examples): step order differs between doc and code;
+  state-machine transitions differ; error-propagation path differs;
+  branch conditions reversed.
+- Non-triggers: rewording the same sequence; swapping "user submits"
+  for "client POSTs" in prose; renaming a local variable in a code
+  sample; adding a debug log.
+- On the fence: prefer triggering the prompt. A false positive is a
+  30-second user decision; a false negative is silent spec rot
+  accumulating across tasks.
+
+**Infinite-recursion guard**: if Option B's escalation-sub-branch
+routes to §2.1.2 Option A or B, §2.1.2 aborts /dev entirely
+(abort+restart pattern). The fresh /dev run's first-pass DOCS skips
+§2.1.3 (re-entry gate not satisfied), so there is no §2.1.3 → §2.1.2
+→ §2.1.3 loop.
+
+**Lightweight-mode skip**: when `sdd_mode: false`, §2.1.3 is skipped
+alongside the rest of Phase 2. No MODULE doc exists to drift from.
 
 ### 2.2 User gate
 

@@ -356,6 +356,71 @@ If critical ambiguities exist, ask user to resolve before proceeding.
 
 Use AskUserQuestion to wait for user confirmation. If user has corrections, update understanding and continue.
 
+### 0.6 PRD-gap escalation (2.7.0+)
+
+Cross-cutting check: fires during Phase 0.5 Gate 1 review (after the user
+has been shown the PRD Understanding Confirmation output at §0.5) AND at
+any point during Phase 1 architecture drafting. Not a sequential phase
+step — a standing rule that the agent evaluates whenever a PRD
+structural gap is recognized.
+
+**Trigger**: the agent identifies a PRD structural gap — not a wording
+nit (which Phase 0.5 already handles) but:
+- A requirement the user's intent covers but PRD does not state
+- A requirement PRD states contradictorily with another
+- An explicit scope item missing from §7 "Explicitly out of scope"
+
+Distinguishing line from Phase 0.5: if the correction would ADD a new
+AC or REMOVE an existing one → Phase 0.6 applies. If it just rewords
+an existing bullet → Phase 0.5 handles it inline.
+
+**3 options** (labels FROZEN; none writes to PRD from inside /spec):
+
+```
+PRD structural gap detected: {brief description}.
+
+Options:
+ (A) PRD-worthy via /prd — abort /spec and run /prd to amend PRD
+     properly via guided dialogue + coverage evaluator. Printed
+     recovery sequence:
+       /spec abort
+       /prd "{suggested gap topic}"
+       /spec docs/PRD.md
+     User runs /prd; when /prd completes (HARD-GATE — /prd does NOT
+     auto-invoke /spec per prd/SKILL.md core principle), user
+     explicitly runs `/spec docs/PRD.md` to pick up the amended PRD.
+
+ (B) User manually edits PRD — for small edits the user prefers to
+     hand-edit outside the /prd guided dialogue. Printed recovery
+     sequence:
+       /spec abort
+       # Edit docs/PRD.md manually to address: {specific gap description}
+       /spec docs/PRD.md
+     /spec does NOT author the edit — user edits, then reruns /spec.
+     This option preserves the "/spec never ghost-writes PRD"
+     invariant while accommodating small hand-edits.
+
+ (C) Assumption documented — the gap is a narrow ambiguity the user
+     deems not worth a PRD edit. Agent continues /spec and records
+     the assumption in ARCHITECTURE.md §8 Decisions (if
+     infrastructure-level) or runs `/spec adr-new "{title}"` after
+     the current /spec run finishes (if it warrants a standalone ADR
+     file). No PRD edit.
+```
+
+**Option A multi-PRD caveat**: `/prd` v1 is single-file only
+(prd/SKILL.md:224) — it refuses `docs/00-prd/` multi-file layouts.
+If the repo uses multi-file PRD, surfacing is handled by /prd's own
+Phase 0.2 gate, not by this §0.6. User picks one file or amends the
+set manually outside /prd before rerunning /spec.
+
+**Relationship to /spec Iron Rule path #2** (spec/SKILL.md §"Iron Rule
+— No Escape Hatch" path 2 "Roll back to an upstream phase"): Phase
+0.6 is the structured operationalization of that informal rollback.
+All three Phase 0.6 options preserve the "/spec never ghost-writes
+PRD" invariant: Options A and B exit /spec before any PRD change
+happens; Option C does not touch PRD.
+
 ---
 
 ## Phase UT: Section-Level Template Upgrade (resolves Gap 4 — preserves /dev verification progress)
@@ -1104,6 +1169,8 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
    - To report an evaluator's per-round finding count, reference `eval_history[-1].claude_findings` / `codex_findings` fields — do not expose separate round numbers.
 
 ---
+
+**If a PRD structural gap is discovered during architecture drafting, return to §0.6 PRD-gap escalation for the 3-option protocol.**
 
 ## Phase 1: Generate ARCHITECTURE.md
 

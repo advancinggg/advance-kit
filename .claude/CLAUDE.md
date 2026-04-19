@@ -37,6 +37,7 @@ defines when to bump patch / minor / major.
   TODO for you / v2 deferred / Skip for now" in any phase output. The only legitimate
   "unfixed" path is `deferred_findings` with a `user_accepted_at` timestamp, produced
   after exceeding `max_round` via explicit AskUserQuestion.
+- /dev DOCS phase fires three inline upstream checks in order: §2.1.1 (ADR discovery, 2.5.0+), §2.1.2 (PRD/cross-module-spec discovery, 2.7.0+), §2.1.3 (Core Logic drift, 2.7.0+ — re-entry DOCS only). All three use AskUserQuestion; §2.1.1 and §2.1.2 use the abort+restart pattern that prints commands and exits. Lightweight mode (`sdd_mode: false`) skips all three alongside Phase 2 DOCS.
 
 ## Test command
 

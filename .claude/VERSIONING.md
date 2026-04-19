@@ -222,3 +222,71 @@ following six rules must hold (otherwise downstream ADR sets silently misbehave)
    supersedes C → exempt (A, C)) is NOT enforced (multi-hop chains are
    expected to be rare, and re-running Phase 1.0 after a supersede re-scans
    with the updated Status).
+
+## Release checklist (for upstream-alignment — 2.7.0+)
+
+When editing the `/dev` DOCS-phase subsections §2.1.2 / §2.1.3 or the
+`/spec` Phase 0.6 block, the following nine rules must hold (otherwise
+downstream /dev runs misroute mid-workflow upstream discoveries):
+
+1. **§2.1.2 / §2.1.3 / §0.6 heading strings frozen** (exact literal anchors):
+   - `### 2.1.2 PRD/Spec upstream change check (2.7.0+, abort+restart pattern)`
+   - `### 2.1.3 Core Logic drift check (2.7.0+)`
+   - `### 0.6 PRD-gap escalation (2.7.0+)`
+
+   Each anchor MUST appear exactly once outside any code fence in its
+   SKILL.md file. Rewording the heading is a MAJOR `dev` bump (downstream
+   grep anchors break). T3 / T4 enforce the count==1 + fence-outside
+   invariants mechanically.
+
+2. **§2.1.2 three-option label set frozen**: `(A) PRD-worthy`,
+   `(B) Spec-only`, `(C) In-scope`. Rename is MAJOR bump. (Option D
+   "Already covered" was explicitly folded into (C) In-scope during
+   design — do not re-split.)
+
+3. **§2.1.3 three-option label set frozen**: `(A) Code is correct`,
+   `(B) Doc is correct`, `(C) Intentional drift`. Rename is MAJOR bump.
+
+4. **§0.6 three-option label set frozen**: `(A) PRD-worthy via /prd`,
+   `(B) User manually edits PRD`, `(C) Assumption documented`. Rename
+   is MAJOR bump. None of the three options may write to PRD from
+   inside /spec — that invariant protects the `/prd` hard-gate
+   (prd/SKILL.md line 32).
+
+5. **§2.1.2 Option A command sequence frozen** (exactly 4 commands,
+   in this order):
+   ```
+   /dev abort
+   /prd "{suggested topic or description of the gap}"
+   /spec docs/PRD.md
+   /dev {original task description}
+   ```
+   Adding alternative-command branches (e.g., `/prd resume`,
+   `/spec upgrade-template`) is forbidden — these are distinct
+   workflows with their own preconditions. Reordering is a MAJOR bump
+   (user muscle-memory contract).
+
+6. **§2.1.2 Option B command sequence frozen** (exactly 3 commands,
+   in this order):
+   ```
+   /dev abort
+   /spec
+   /dev {original task description}
+   ```
+   Same ordering discipline as rule 5.
+
+7. **Anchor-collision invariant**: do not start any new line in
+   SKILL.md with `### 2.1.2 ` or `### 2.1.3 ` or `### 0.6 ` outside a
+   fenced code block. Same rule as the ADR-NEW and UT.4 anchor
+   invariants. Prose references must backtick-wrap the heading strings.
+
+8. **Skill frontmatter versions NOT bumped**: author-maintained
+   versions at dev/SKILL.md line 3 (currently `3.3.0`), spec/SKILL.md
+   line 3 (`3.6.0`), prd/SKILL.md line 3 (`1.1.0`) are NOT
+   contractually tied to plugin.json version. Maintainers may sync
+   them but are not required to.
+
+9. **Description rotation pending** (informational): plugin.json.
+   description accumulates **2.X.Y** release sentences; around 2.8.0
+   consider rotating older release notes out of the description
+   string to preserve marketplace UI legibility.
