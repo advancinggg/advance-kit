@@ -311,7 +311,7 @@ rule_count=$(awk '
 echo "PASS: T9 VERSIONING (checklist+9 rules) + CLAUDE section-presence"
 
 # ---------- T10: Cross-reference paragraph present exactly once outside fences ----------
-count=$(count_outside_fence_prefix "$DEV_SKILL" 'When DOCS is re-entered via branch (b)')
+count=$(count_outside_fence_prefix "$DEV_SKILL" 'When DOCS is re-entered via ')
 [ "$count" = "1" ] \
   || { echo "FAIL: T10 — cross-reference paragraph count=$count (expected 1)"; exit 1; }
 echo "PASS: T10 cross-reference paragraph present exactly once outside fences"

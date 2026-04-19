@@ -89,7 +89,7 @@ following paths:
    - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
    - DoD adds a hard gate: `deferred_findings == [] OR all entries have user_accepted_at`.
 
-When DOCS is re-entered via branch (b), §2.1.1 / §2.1.2 / §2.1.3 all re-fire in order — the rolled-back finding may surface as an ADR worth capturing (§2.1.1), a PRD/spec drift that needs upstream escalation (§2.1.2), or a §2.7 Core Logic drift (§2.1.3) rather than a plain MODULE-local update. This is why the "docs first" principle is robust across rollback branches: DOCS always owns the upstream-alignment decision regardless of which downstream phase flagged the rollback.
+When DOCS is re-entered via any rollback branch — (b) interface/AC/scope change, (c) Contract Drift routed through PLAN, or any future rollback variant — §2.1.1 / §2.1.2 / §2.1.3 all re-fire in order. The rolled-back finding may surface as an ADR worth capturing (§2.1.1), a PRD/spec drift that needs upstream escalation (§2.1.2), or a §2.7 Core Logic drift (§2.1.3) rather than a plain MODULE-local update. This is why the "docs first" principle is robust across rollback branches: DOCS always owns the upstream-alignment decision regardless of which downstream phase flagged the rollback.
 
 **No spinning in place**: between any two evaluator rounds, `git diff` (previous commit..HEAD)
 MUST contain real changes; otherwise the round counts as a "no-op attempted fix" and the
@@ -1138,12 +1138,12 @@ below, Option C still applies for PRD/spec scope — §2.1.3 handles
   them.
 
 **Post-DOCS discovery** (IMPLEMENT / AUDIT / TEST / ADVERSARIAL
-phases): if one of the rollback branches (b) / (c) lands back in DOCS
-from a later phase, §2.1.1 + §2.1.2 + §2.1.3 all re-fire in order as
-part of entering DOCS. There is no separate IMPLEMENT-phase PRD / spec
-check surface — the pattern is always "surface in
-IMPLEMENT/AUDIT/TEST → rollback branch (b) → re-enter DOCS → §2.1.x
-re-fire".
+phases): if one of the rollback branches (b) / (c) (or any future
+variant) lands back in DOCS from a later phase, §2.1.1 + §2.1.2 +
+§2.1.3 all re-fire in order as part of entering DOCS. There is no
+separate IMPLEMENT-phase PRD / spec check surface — the pattern is
+always "surface in IMPLEMENT/AUDIT/TEST/ADVERSARIAL → any rollback
+branch → re-enter DOCS → §2.1.x re-fire".
 
 **Why abort+restart, not in-place pause?** Same rationale as §2.1.1:
 adding a `docs-paused-for-prd` or `docs-paused-for-spec` phase enum to
