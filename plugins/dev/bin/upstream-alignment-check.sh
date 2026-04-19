@@ -16,64 +16,87 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null \
   || { echo "FAIL: not inside a git repo"; exit 1; }
 
+# Per-run scratch directory (umask 077) avoids the fixed-/tmp TOCTOU /
+# symlink-clobber attack surface and prevents concurrent-run races on
+# shared paths. Cleaned up on any exit via trap.
+UMASK_ORIG=$(umask)
+umask 077
+SCRATCH=$(mktemp -d -t ua-check.XXXXXX) \
+  || { echo "FAIL: mktemp failed"; exit 1; }
+umask "$UMASK_ORIG"
+trap 'rm -rf "$SCRATCH"' EXIT INT TERM
+
 skipped_count=0
 
 DEV_SKILL=plugins/dev/skills/dev/SKILL.md
 SPEC_SKILL=plugins/dev/skills/spec/SKILL.md
 
+# Fence-tracker matches up to 3-space-indented triple-backticks (CommonMark
+# fenced-code-block rule). This is shared by BOTH the count_outside_fence_*
+# counters AND the extract_* helpers, so the fence-aware boundary is
+# consistent across tests (closes adversarial round-1 finding 3).
+#
+# Regex: ^ *``` allows 0–3 leading spaces before the triple-backtick. A
+# 4-space-indented code fence is CommonMark's indented-code-block form, not a
+# fenced one, so we deliberately do NOT toggle on 4-space cases.
+
 # Body-extraction awk helpers (shared by T5 and T7) -----------------
 
 extract_212() {
   awk '
-    /^### 2\.1\.2 /{flag=1; print; next}
-    flag && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
+    BEGIN{in_fence=0; flag=0}
+    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    !in_fence && /^### 2\.1\.2 /{flag=1; print; next}
+    flag && !in_fence && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
     flag {print}
   ' "$DEV_SKILL"
 }
 extract_213() {
   awk '
-    /^### 2\.1\.3 /{flag=1; print; next}
-    flag && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
+    BEGIN{in_fence=0; flag=0}
+    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    !in_fence && /^### 2\.1\.3 /{flag=1; print; next}
+    flag && !in_fence && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
     flag {print}
   ' "$DEV_SKILL"
 }
 extract_06() {
   awk '
-    /^### 0\.6 PRD-gap escalation /{flag=1; print; next}
-    flag && (/^## / || /^---$/){exit}
+    BEGIN{in_fence=0; flag=0}
+    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    !in_fence && /^### 0\.6 PRD-gap escalation /{flag=1; print; next}
+    flag && !in_fence && (/^## / || /^---$/){exit}
     flag {print}
   ' "$SPEC_SKILL"
 }
 extract_claude_bullet() {
   awk '
-    BEGIN{prev_blank=0; flag=0}
-    /^- \/dev DOCS phase fires three inline upstream checks/{flag=1; print; next}
+    BEGIN{prev_blank=0; flag=0; in_fence=0}
+    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    !in_fence && /^- \/dev DOCS phase fires three inline upstream checks/{flag=1; print; next}
     flag {
-      if (/^##/) {exit}
-      if (/^- / && $0 !~ /^- \/dev DOCS/) {exit}
-      if (prev_blank && !/^  / && !/^-/) {exit}
+      if (!in_fence && /^##/) {exit}
+      if (!in_fence && /^- / && $0 !~ /^- \/dev DOCS/) {exit}
+      if (!in_fence && prev_blank && !/^  / && !/^-/) {exit}
       print
       prev_blank = (NF == 0)
     }
   ' .claude/CLAUDE.md
 }
 
-# Shared: count lines that EXACTLY equal the given literal string, OUTSIDE code fences
+# Shared counters — same fence rule as extractors (up to 3-space indent)
 count_outside_fence_exact() {
-  # $1 = file, $2 = literal heading line (must match full line text)
   awk -v target="$2" '
     BEGIN{in_fence=0; c=0}
-    /^```/{in_fence = !in_fence; next}
+    /^ {0,3}```/{in_fence = !in_fence; next}
     !in_fence && $0 == target {c++}
     END{print c+0}
   ' "$1"
 }
-# Shared: count lines STARTING WITH prefix OUTSIDE code fences (substring-anchored)
 count_outside_fence_prefix() {
-  # $1 = file, $2 = literal prefix string
   awk -v prefix="$2" '
     BEGIN{in_fence=0; c=0; plen=length(prefix)}
-    /^```/{in_fence = !in_fence; next}
+    /^ {0,3}```/{in_fence = !in_fence; next}
     !in_fence && substr($0, 1, plen) == prefix {c++}
     END{print c+0}
   ' "$1"
@@ -122,16 +145,16 @@ count=$(count_outside_fence_exact "$SPEC_SKILL" '### 0.6 PRD-gap escalation (2.7
 echo "PASS: T4 /spec SKILL.md §0.6 anchor present exactly once"
 
 # ---------- T7: body extractions (must run before T5) + Iron Rule negative scan ----------
-extract_212 > /tmp/ua_21_2.txt
-extract_213 > /tmp/ua_21_3.txt
-extract_06  > /tmp/ua_0_6.txt
-extract_claude_bullet > /tmp/ua_claude_bullet.txt
-for f in /tmp/ua_21_2.txt /tmp/ua_21_3.txt /tmp/ua_0_6.txt /tmp/ua_claude_bullet.txt; do
+extract_212 > $SCRATCH/21_2.txt
+extract_213 > $SCRATCH/21_3.txt
+extract_06  > $SCRATCH/0_6.txt
+extract_claude_bullet > $SCRATCH/claude_bullet.txt
+for f in $SCRATCH/21_2.txt $SCRATCH/21_3.txt $SCRATCH/0_6.txt $SCRATCH/claude_bullet.txt; do
   [ -s "$f" ] \
     || { echo "FAIL: T7 — extracted body $f is empty (anchor not found?)"; exit 1; }
 done
 
-cat > /tmp/ua_forbidden.txt <<'EOF'
+cat > $SCRATCH/forbidden.txt <<'EOF'
 Known unfixed
 Known issues, logged for you
 Known issues
@@ -152,11 +175,11 @@ Pending refinement
 To be addressed later
 EOF
 
-if cat /tmp/ua_21_2.txt /tmp/ua_21_3.txt /tmp/ua_0_6.txt /tmp/ua_claude_bullet.txt \
-     | grep -F -f /tmp/ua_forbidden.txt >/tmp/ua_violations.txt 2>/dev/null; then
-  if [ -s /tmp/ua_violations.txt ]; then
+if cat $SCRATCH/21_2.txt $SCRATCH/21_3.txt $SCRATCH/0_6.txt $SCRATCH/claude_bullet.txt \
+     | grep -F -f $SCRATCH/forbidden.txt >$SCRATCH/violations.txt 2>/dev/null; then
+  if [ -s $SCRATCH/violations.txt ]; then
     echo "FAIL: T7 — Iron Rule violations in new bodies:"
-    sed 's/^/  > /' /tmp/ua_violations.txt
+    sed 's/^/  > /' $SCRATCH/violations.txt
     exit 1
   fi
 fi
@@ -165,13 +188,13 @@ echo "PASS: T7 Iron Rule negative scan on 4 new bodies"
 # ---------- T5: content presence inside extracted bodies (runs AFTER T7) ----------
 # T5.a — §2.1.2 options + command sequences (AC-03/14/15)
 for lbl in '(A) PRD-worthy' '(B) Spec-only' '(C) In-scope'; do
-  grep -Fq "$lbl" /tmp/ua_21_2.txt \
+  grep -Fq "$lbl" $SCRATCH/21_2.txt \
     || { echo "FAIL: T5.a — §2.1.2 missing option label '$lbl'"; exit 1; }
 done
 # Alternative-command absence (Round 1 C1 fix)
-grep -Fq '/prd resume' /tmp/ua_21_2.txt \
+grep -Fq '/prd resume' $SCRATCH/21_2.txt \
   && { echo "FAIL: T5.a — §2.1.2 contains forbidden '/prd resume' alt-command"; exit 1; }
-grep -Fq '/spec upgrade-template' /tmp/ua_21_2.txt \
+grep -Fq '/spec upgrade-template' $SCRATCH/21_2.txt \
   && { echo "FAIL: T5.a — §2.1.2 contains forbidden '/spec upgrade-template' alt-command"; exit 1; }
 # Option A canonical 4-command check — commands are indented inline within
 # the AskUserQuestion code fence (no separate sub-fence per option).
@@ -180,24 +203,24 @@ awk '
   /\(A\) PRD-worthy/{inA=1; next}
   inA && /\(B\) Spec-only/{exit}
   inA {print}
-' /tmp/ua_21_2.txt > /tmp/ua_opt_a_region.txt
+' $SCRATCH/21_2.txt > $SCRATCH/opt_a_region.txt
 # Extract command lines (leading-space followed by "/") — strip the indent
-grep -E '^[[:space:]]+/' /tmp/ua_opt_a_region.txt | sed 's/^[[:space:]]*//' \
-  > /tmp/ua_opt_a.txt
-lines=$(wc -l < /tmp/ua_opt_a.txt | tr -d ' ')
+grep -E '^[[:space:]]+/' $SCRATCH/opt_a_region.txt | sed 's/^[[:space:]]*//' \
+  > $SCRATCH/opt_a.txt
+lines=$(wc -l < $SCRATCH/opt_a.txt | tr -d ' ')
 [ "$lines" = "4" ] \
   || { echo "FAIL: T5.a — §2.1.2 Option A has $lines command lines (expected 4)"; exit 1; }
 # Verify each command appears
-grep -Eq '^/dev abort$'          /tmp/ua_opt_a.txt || { echo "FAIL: T5.a — Option A missing '/dev abort'"; exit 1; }
-grep -Eq '^/prd "'               /tmp/ua_opt_a.txt || { echo "FAIL: T5.a — Option A missing '/prd \"...\"'"; exit 1; }
-grep -Eq '^/spec docs/PRD\.md$'  /tmp/ua_opt_a.txt || { echo "FAIL: T5.a — Option A missing '/spec docs/PRD.md'"; exit 1; }
-grep -Eq '^/dev \{'              /tmp/ua_opt_a.txt || { echo "FAIL: T5.a — Option A missing '/dev {...}'"; exit 1; }
+grep -Eq '^/dev abort$'          $SCRATCH/opt_a.txt || { echo "FAIL: T5.a — Option A missing '/dev abort'"; exit 1; }
+grep -Eq '^/prd "'               $SCRATCH/opt_a.txt || { echo "FAIL: T5.a — Option A missing '/prd \"...\"'"; exit 1; }
+grep -Eq '^/spec docs/PRD\.md$'  $SCRATCH/opt_a.txt || { echo "FAIL: T5.a — Option A missing '/spec docs/PRD.md'"; exit 1; }
+grep -Eq '^/dev \{'              $SCRATCH/opt_a.txt || { echo "FAIL: T5.a — Option A missing '/dev {...}'"; exit 1; }
 # Order check — the 4 commands must appear in the canonical order
 order=$(awk 'NR==1 && /^\/dev abort$/{printf "1"}
              NR==2 && /^\/prd "/{printf "2"}
              NR==3 && /^\/spec docs\/PRD\.md$/{printf "3"}
              NR==4 && /^\/dev \{/{printf "4"}
-             END{printf "\n"}' /tmp/ua_opt_a.txt)
+             END{printf "\n"}' $SCRATCH/opt_a.txt)
 [ "$order" = "1234" ] \
   || { echo "FAIL: T5.a — Option A command order mismatch (got '$order', expected 1234)"; exit 1; }
 
@@ -206,38 +229,38 @@ awk '
   /\(B\) Spec-only/{inB=1; next}
   inB && /\(C\) In-scope/{exit}
   inB {print}
-' /tmp/ua_21_2.txt > /tmp/ua_opt_b_region.txt
-grep -E '^[[:space:]]+/' /tmp/ua_opt_b_region.txt | sed 's/^[[:space:]]*//' \
-  > /tmp/ua_opt_b.txt
-lines=$(wc -l < /tmp/ua_opt_b.txt | tr -d ' ')
+' $SCRATCH/21_2.txt > $SCRATCH/opt_b_region.txt
+grep -E '^[[:space:]]+/' $SCRATCH/opt_b_region.txt | sed 's/^[[:space:]]*//' \
+  > $SCRATCH/opt_b.txt
+lines=$(wc -l < $SCRATCH/opt_b.txt | tr -d ' ')
 [ "$lines" = "3" ] \
   || { echo "FAIL: T5.a — §2.1.2 Option B has $lines command lines (expected 3)"; exit 1; }
-grep -Eq '^/dev abort$'                             /tmp/ua_opt_b.txt || { echo "FAIL: T5.a — Option B missing '/dev abort'"; exit 1; }
-grep -Eq '^/spec([[:space:]]|$|[[:space:]]+#)'      /tmp/ua_opt_b.txt || { echo "FAIL: T5.a — Option B missing '/spec' (bare or with inline comment)"; exit 1; }
-grep -Eq '^/dev \{'                                 /tmp/ua_opt_b.txt || { echo "FAIL: T5.a — Option B missing '/dev {...}'"; exit 1; }
+grep -Eq '^/dev abort$'                             $SCRATCH/opt_b.txt || { echo "FAIL: T5.a — Option B missing '/dev abort'"; exit 1; }
+grep -Eq '^/spec([[:space:]]|$|[[:space:]]+#)'      $SCRATCH/opt_b.txt || { echo "FAIL: T5.a — Option B missing '/spec' (bare or with inline comment)"; exit 1; }
+grep -Eq '^/dev \{'                                 $SCRATCH/opt_b.txt || { echo "FAIL: T5.a — Option B missing '/dev {...}'"; exit 1; }
 order_b=$(awk 'NR==1 && /^\/dev abort$/{printf "1"}
                NR==2 && /^\/spec([[:space:]]|$|[[:space:]]+#)/{printf "2"}
                NR==3 && /^\/dev \{/{printf "3"}
-               END{printf "\n"}' /tmp/ua_opt_b.txt)
+               END{printf "\n"}' $SCRATCH/opt_b.txt)
 [ "$order_b" = "123" ] \
   || { echo "FAIL: T5.a — Option B command order mismatch (got '$order_b', expected 123)"; exit 1; }
 echo "PASS: T5.a §2.1.2 options + Option A/B canonical command sequences"
 
 # T5.b — §2.1.3 options + trigger phrase (AC-04/16)
 for lbl in '(A) Code is correct' '(B) Doc is correct' '(C) Intentional drift'; do
-  grep -Fq "$lbl" /tmp/ua_21_3.txt \
+  grep -Fq "$lbl" $SCRATCH/21_3.txt \
     || { echo "FAIL: T5.b — §2.1.3 missing option label '$lbl'"; exit 1; }
 done
-grep -Eiq 'fires only on DOCS phase \*\*re-entry\*\*|fires only on DOCS phase re-entry|re-entry DOCS only' /tmp/ua_21_3.txt \
+grep -Eiq 'fires only on DOCS phase \*\*re-entry\*\*|fires only on DOCS phase re-entry|re-entry DOCS only' $SCRATCH/21_3.txt \
   || { echo "FAIL: T5.b — §2.1.3 missing re-entry trigger phrase"; exit 1; }
 echo "PASS: T5.b §2.1.3 options + trigger phrase"
 
 # T5.c — §0.6 options + /spec-does-NOT-author phrase (AC-06/17)
 for lbl in '(A) PRD-worthy via /prd' '(B) User manually edits PRD' '(C) Assumption documented'; do
-  grep -Fq "$lbl" /tmp/ua_0_6.txt \
+  grep -Fq "$lbl" $SCRATCH/0_6.txt \
     || { echo "FAIL: T5.c — §0.6 missing option label '$lbl'"; exit 1; }
 done
-grep -Fq '/spec does NOT author' /tmp/ua_0_6.txt \
+grep -Fq '/spec does NOT author' $SCRATCH/0_6.txt \
   || { echo "FAIL: T5.c — §0.6 missing '/spec does NOT author' phrase"; exit 1; }
 echo "PASS: T5.c §0.6 options + Option B authorship phrase"
 
@@ -245,7 +268,7 @@ echo "PASS: T5.c §0.6 options + Option B authorship phrase"
 for sub in '§2.1.1 (ADR discovery, 2.5.0+)' \
            '§2.1.2 (PRD/cross-module-spec discovery, 2.7.0+)' \
            '§2.1.3 (Core Logic drift, 2.7.0+'; do
-  grep -Fq "$sub" /tmp/ua_claude_bullet.txt \
+  grep -Fq "$sub" $SCRATCH/claude_bullet.txt \
     || { echo "FAIL: T5.d — CLAUDE.md bullet missing sub-phrase '$sub'"; exit 1; }
 done
 echo "PASS: T5.d CLAUDE.md bullet trigger-hierarchy phrase"

@@ -291,3 +291,15 @@ downstream /dev runs misroute mid-workflow upstream discoveries):
    description accumulates **2.X.Y** release sentences; around 2.8.0
    consider rotating older release notes out of the description
    string to preserve marketplace UI legibility.
+
+**Trust boundary note (2.7.0)**: §2.1.3's diff-based re-entry gate
+(`git diff {start_commit}..HEAD`) reads `start_commit` from
+`.dev-state/state.json`. A user or misbehaving agent that hand-edits
+state.json (e.g., setting `start_commit` to `HEAD`) can silently
+suppress §2.1.3's Core-Logic drift audit. This is not a novel vector
+— the entire `/dev` workflow trusts `.dev-state/state.json` as
+agent-authored truth. Treating state.json as untrusted would require a
+signature scheme, which is out of scope for the 2.7.0 release.
+Reviewers checking post-commit should spot this by inspecting the
+`start_commit` field in the commit-trailer git history and comparing
+against the actual first-commit SHA for the task.
