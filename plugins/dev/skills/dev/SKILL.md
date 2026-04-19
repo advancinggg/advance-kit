@@ -1154,17 +1154,20 @@ abort+restart pattern preserves the existing state machine and the INIT
 
 ### 2.1.3 Core Logic drift check (2.7.0+)
 
-**Trigger** (explicitly gated): fires ONLY on DOCS phase **re-entry**
-from a rollback branch (b). Condition:
-`state.json.eval_history` contains at least one entry with `phase` in
-`{audit, test, adversarial}`. First-pass DOCS (empty `eval_history`, or
-only `plan`-phase entries) SKIPS §2.1.3 because no code has been
-written yet this task — §2.7 drift can only be introduced by THIS task
-after IMPLEMENT, so the check only becomes meaningful on rollback
-re-entry. Pre-existing §2.7 drift inherited from earlier tasks is a
-`/spec upgrade-template` concern (section-level merge that preserves
-/dev verification progress) and is explicitly out of scope for the
-per-task §2.1.3 check.
+**Trigger** (explicitly gated by diff): fires only on DOCS phase re-entry
+— i.e. when `git diff {start_commit}..HEAD` has modified at least one
+file under a MODULE's §2.3 Source Files. This captures every
+re-entry path uniformly: rollback branch (b) from IMPLEMENT (code
+committed but no audit yet) OR from AUDIT / TEST / ADVERSARIAL (code
+committed plus one or more eval_history entries). The diff-based gate
+is more accurate than an `eval_history`-phase-tag check alone because
+IMPLEMENT → DOCS rollback can occur before any audit/test entry is
+written. First-pass DOCS (before IMPLEMENT) has an empty diff and
+trivially has nothing to compare — §2.1.3 skips. Pre-existing §2.7
+drift inherited from earlier tasks is a `/spec upgrade-template`
+concern (section-level merge that preserves /dev verification
+progress) and is explicitly out of scope for the per-task §2.1.3
+check.
 
 **Scope**: for every MODULE in `docs_allowlist` whose source files are
 touched by `git diff {start_commit}..HEAD` (the re-entry's accumulated
