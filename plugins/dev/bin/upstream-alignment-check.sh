@@ -31,14 +31,26 @@ skipped_count=0
 DEV_SKILL=plugins/dev/skills/dev/SKILL.md
 SPEC_SKILL=plugins/dev/skills/spec/SKILL.md
 
-# Fence-tracker matches up to 3-space-indented triple-backticks (CommonMark
-# fenced-code-block rule). This is shared by BOTH the count_outside_fence_*
-# counters AND the extract_* helpers, so the fence-aware boundary is
-# consistent across tests (closes adversarial round-1 finding 3).
+# Fence-tracker recognizes backtick AND tilde fences with 0-3 space indent
+# (CommonMark fenced-code-block rule). Shared by BOTH the count_outside_fence_*
+# counters AND the extract_* helpers, so the fence-aware boundary is consistent
+# across tests (closes adversarial round-1 finding 3 + round-2 finding 1).
 #
-# Regex: ^ *``` allows 0–3 leading spaces before the triple-backtick. A
-# 4-space-indented code fence is CommonMark's indented-code-block form, not a
-# fenced one, so we deliberately do NOT toggle on 4-space cases.
+# Regex: ^ {0,3}(```|~~~) allows 0-3 leading spaces before the fence delimiter.
+# A 4-space-indented code fence is CommonMark's indented-code-block form, not
+# a fenced one, so we deliberately do NOT toggle on 4-space cases.
+#
+# **Scope limitation (accepted — see VERSIONING.md §"Trust boundary note"
+# companion paragraph)**: this is a boolean-toggle parser, not a full
+# CommonMark fence-char/length matcher. A maliciously crafted SKILL.md with
+# mismatched fence lengths (e.g., opening ```` ```` paired with a closing
+# ```` ``` ````) or mixed fence chars (opening ``` paired with closing ~~~)
+# could theoretically desync the toggle. The plugin-repo threat model treats
+# its own SKILL.md / VERSIONING.md files as author-trusted content
+# (changes flow through /dev dual-evaluator review + git-commit review), so
+# this degenerate case is out-of-scope. A signature/integrity scheme for
+# skill files would be required to tighten further and is explicitly
+# deferred per the VERSIONING.md trust-boundary note.
 
 # Body-extraction awk helpers (shared by T5 and T7) -----------------
 

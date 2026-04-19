@@ -305,3 +305,18 @@ scheme OR a persisted-commit-trailer mechanism, neither of which
 exists in 2.7.0. This is a documented accepted limitation of the
 /dev trust model; mitigation is out-of-band (human review of the
 live state.json during the /dev run).
+
+**Related: SKILL.md content-authorship trust (2.7.0)**: the
+`upstream-alignment-check.sh` verifier uses a boolean fence-toggle
+parser (not a full CommonMark fence-char/length matcher), so a
+maliciously crafted SKILL.md with mismatched fence lengths or mixed
+fence chars could theoretically desync anchor counts / body
+extractions. The plugin-repo threat model treats its own
+`plugins/dev/skills/*/SKILL.md` and `.claude/VERSIONING.md` files as
+author-trusted content (changes flow through /dev dual-evaluator
+review + git-commit review + GitHub PR). A stronger parser would
+require CommonMark-compliant awk logic or delegation to an external
+markdown parser (e.g. `commonmark-cli`), which is out of scope for
+2.7.0. This is the same trust-boundary principle as the state.json
+note above: tighten only if a concrete threat case justifies the
+added complexity.
