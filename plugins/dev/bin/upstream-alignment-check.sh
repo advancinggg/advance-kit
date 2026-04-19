@@ -45,7 +45,7 @@ SPEC_SKILL=plugins/dev/skills/spec/SKILL.md
 extract_212() {
   awk '
     BEGIN{in_fence=0; flag=0}
-    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; if (flag) print; next}
     !in_fence && /^### 2\.1\.2 /{flag=1; print; next}
     flag && !in_fence && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
     flag {print}
@@ -54,7 +54,7 @@ extract_212() {
 extract_213() {
   awk '
     BEGIN{in_fence=0; flag=0}
-    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; if (flag) print; next}
     !in_fence && /^### 2\.1\.3 /{flag=1; print; next}
     flag && !in_fence && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
     flag {print}
@@ -63,7 +63,7 @@ extract_213() {
 extract_06() {
   awk '
     BEGIN{in_fence=0; flag=0}
-    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; if (flag) print; next}
     !in_fence && /^### 0\.6 PRD-gap escalation /{flag=1; print; next}
     flag && !in_fence && (/^## / || /^---$/){exit}
     flag {print}
@@ -72,7 +72,7 @@ extract_06() {
 extract_claude_bullet() {
   awk '
     BEGIN{prev_blank=0; flag=0; in_fence=0}
-    /^ {0,3}```/{in_fence = !in_fence; if (flag) print; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; if (flag) print; next}
     !in_fence && /^- \/dev DOCS phase fires three inline upstream checks/{flag=1; print; next}
     flag {
       if (!in_fence && /^##/) {exit}
@@ -88,7 +88,7 @@ extract_claude_bullet() {
 count_outside_fence_exact() {
   awk -v target="$2" '
     BEGIN{in_fence=0; c=0}
-    /^ {0,3}```/{in_fence = !in_fence; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; next}
     !in_fence && $0 == target {c++}
     END{print c+0}
   ' "$1"
@@ -96,7 +96,7 @@ count_outside_fence_exact() {
 count_outside_fence_prefix() {
   awk -v prefix="$2" '
     BEGIN{in_fence=0; c=0; plen=length(prefix)}
-    /^ {0,3}```/{in_fence = !in_fence; next}
+    /^ {0,3}(```|~~~)/{in_fence = !in_fence; next}
     !in_fence && substr($0, 1, plen) == prefix {c++}
     END{print c+0}
   ' "$1"
@@ -298,8 +298,10 @@ else
   else
     extract_211() {
       awk '
-        /^### 2\.1\.1 /{flag=1; print; next}
-        flag && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
+        BEGIN{in_fence=0; flag=0}
+        /^ {0,3}(```|~~~)/{in_fence = !in_fence; if (flag) print; next}
+        !in_fence && /^### 2\.1\.1 /{flag=1; print; next}
+        flag && !in_fence && /^### 2\.[0-9]+(\.[0-9]+)? /{exit}
         flag {print}
       ' "$1" | awk '{a[NR]=$0} END{while(NR>0 && a[NR]==""){NR--} for(i=1;i<=NR;i++)print a[i]}'
     }

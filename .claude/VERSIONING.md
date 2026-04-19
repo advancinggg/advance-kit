@@ -298,8 +298,10 @@ downstream /dev runs misroute mid-workflow upstream discoveries):
 state.json (e.g., setting `start_commit` to `HEAD`) can silently
 suppress §2.1.3's Core-Logic drift audit. This is not a novel vector
 — the entire `/dev` workflow trusts `.dev-state/state.json` as
-agent-authored truth. Treating state.json as untrusted would require a
-signature scheme, which is out of scope for the 2.7.0 release.
-Reviewers checking post-commit should spot this by inspecting the
-`start_commit` field in the commit-trailer git history and comparing
-against the actual first-commit SHA for the task.
+agent-authored truth; `.dev-state/` is gitignored and therefore not
+committed, so there is NO persisted git trail of `start_commit`
+values. Treating state.json as untrusted would require a signature
+scheme OR a persisted-commit-trailer mechanism, neither of which
+exists in 2.7.0. This is a documented accepted limitation of the
+/dev trust model; mitigation is out-of-band (human review of the
+live state.json during the /dev run).
