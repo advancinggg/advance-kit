@@ -250,8 +250,8 @@ downstream /dev runs misroute mid-workflow upstream discoveries):
 4. **§0.6 three-option label set frozen**: `(A) PRD-worthy via /prd`,
    `(B) User manually edits PRD`, `(C) Assumption documented`. Rename
    is MAJOR bump. None of the three options may write to PRD from
-   inside /spec — that invariant protects the `/prd` hard-gate
-   (prd/SKILL.md line 32).
+   inside /spec — that invariant protects the `/prd` HARD-GATE (bullet
+   in prd/SKILL.md "Core principles" section, currently line 37).
 
 5. **§2.1.2 Option A command sequence frozen** (exactly 4 commands,
    in this order):
@@ -281,10 +281,11 @@ downstream /dev runs misroute mid-workflow upstream discoveries):
    invariants. Prose references must backtick-wrap the heading strings.
 
 8. **Skill frontmatter versions NOT bumped**: author-maintained
-   versions at dev/SKILL.md line 3 (currently `3.3.0`), spec/SKILL.md
-   line 3 (`3.6.0`), prd/SKILL.md line 3 (`1.1.0`) are NOT
-   contractually tied to plugin.json version. Maintainers may sync
-   them but are not required to.
+   versions in the YAML frontmatter of dev/SKILL.md, spec/SKILL.md,
+   and prd/SKILL.md (currently `3.3.0`, `3.6.0`, and `1.2.0`
+   respectively as of 2.7.0 release) are NOT contractually tied to
+   plugin.json version. Maintainers may sync them but are not
+   required to.
 
 9. **Description rotation pending** (informational): plugin.json.
    description accumulates **2.X.Y** release sentences; around 2.8.0

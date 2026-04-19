@@ -1100,11 +1100,9 @@ Options:
 
 **Option A / Option B discipline**: the agent prints the exact commands
 verbatim and STOPS taking action this session. The agent does NOT
-self-invoke `/dev abort` — that operation requires deleting
-`.dev-state/state.json`, but DOCS phase's `check-phase.sh` locks `rm` /
-`Write` against state.json, and self-invocation of a slash command from
-inside its own active run is not a supported pattern (same constraint as
-§2.1.1 ADR abort+restart).
+self-invoke `/dev abort` — self-invocation of a slash command from
+inside its own active run is not a supported pattern (same rationale as
+§2.1.1 ADR abort+restart: user-typed restart is the supported UX).
 
 **Recovery paths (both sanctioned)**:
 - **Recommended path**: user copies the commands in order. First
