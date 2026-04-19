@@ -89,7 +89,7 @@ following paths:
    - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
    - DoD adds a hard gate: `deferred_findings == [] OR all entries have user_accepted_at`.
 
-When DOCS is re-entered via any rollback branch — (b) interface/AC/scope change, (c) Contract Drift routed through PLAN, or any future rollback variant — §2.1.1 / §2.1.2 / §2.1.3 all re-fire in order. The rolled-back finding may surface as an ADR worth capturing (§2.1.1), a PRD/spec drift that needs upstream escalation (§2.1.2), or a §2.7 Core Logic drift (§2.1.3) rather than a plain MODULE-local update. This is why the "docs first" principle is robust across rollback branches: DOCS always owns the upstream-alignment decision regardless of which downstream phase flagged the rollback.
+When DOCS is re-entered via any DOCS-returning rollback branch — (b) interface/AC/scope change, (c) Contract Drift routed through PLAN, or any future DOCS-returning variant (branch (d) REGRESSION does NOT return to DOCS: it fixes forward or aborts per §5.1) — §2.1.1 / §2.1.2 / §2.1.3 all re-fire in order. The rolled-back finding may surface as an ADR worth capturing (§2.1.1), a PRD/spec drift that needs upstream escalation (§2.1.2), or a §2.7 Core Logic drift (§2.1.3) rather than a plain MODULE-local update. This is why the "docs first" principle is robust across rollback branches: DOCS always owns the upstream-alignment decision regardless of which downstream phase flagged the rollback.
 
 **No spinning in place**: between any two evaluator rounds, `git diff` (previous commit..HEAD)
 MUST contain real changes; otherwise the round counts as a "no-op attempted fix" and the
@@ -1138,12 +1138,15 @@ below, Option C still applies for PRD/spec scope — §2.1.3 handles
   them.
 
 **Post-DOCS discovery** (IMPLEMENT / AUDIT / TEST / ADVERSARIAL
-phases): if one of the rollback branches (b) / (c) (or any future
-variant) lands back in DOCS from a later phase, §2.1.1 + §2.1.2 +
-§2.1.3 all re-fire in order as part of entering DOCS. There is no
-separate IMPLEMENT-phase PRD / spec check surface — the pattern is
-always "surface in IMPLEMENT/AUDIT/TEST/ADVERSARIAL → any rollback
-branch → re-enter DOCS → §2.1.x re-fire".
+phases): if a DOCS-returning rollback branch — (b) interface/AC/scope
+change, (c) Contract Drift routed through PLAN, or any future
+DOCS-returning variant — lands back in DOCS from a later phase,
+§2.1.1 + §2.1.2 + §2.1.3 all re-fire in order as part of entering
+DOCS. Branch (d) REGRESSION does NOT return to DOCS (it fixes forward
+or aborts per §5.1). There is no separate IMPLEMENT-phase PRD / spec
+check surface — the pattern is always "surface in
+IMPLEMENT/AUDIT/TEST/ADVERSARIAL → DOCS-returning rollback branch →
+re-enter DOCS → §2.1.x re-fire".
 
 **Why abort+restart, not in-place pause?** Same rationale as §2.1.1:
 adding a `docs-paused-for-prd` or `docs-paused-for-spec` phase enum to
@@ -1156,21 +1159,23 @@ abort+restart pattern preserves the existing state machine and the INIT
 
 **Trigger** (explicitly gated by diff): fires only on DOCS phase re-entry
 — i.e. when `git diff {start_commit}..HEAD` has modified at least one
-file under a MODULE's §2.3 Source Files. This captures every re-entry
-path uniformly regardless of which rollback branch produced it:
-branch (b) interface/AC/scope change from IMPLEMENT (code committed
-but no audit yet) OR from AUDIT / TEST / ADVERSARIAL (code committed
-plus one or more eval_history entries); branch (c) Contract Drift
-routed through PLAN that subsequently re-enters DOCS (code still
-committed, possibly with a revised `modified_contracts` set); or any
-future rollback variant. The diff-based gate is the common
-denominator — it keys on "has code been written this task" rather
-than enumerating rollback branches. First-pass DOCS (before IMPLEMENT)
-has an empty diff and trivially has nothing to compare — §2.1.3
-skips. Pre-existing §2.7 drift inherited from earlier tasks is a
-`/spec upgrade-template` concern (section-level merge that preserves
-/dev verification progress) and is explicitly excluded from the
-per-task §2.1.3 check.
+file under a MODULE's §2.3 Source Files. This captures every
+DOCS-returning re-entry path uniformly regardless of which rollback
+branch produced it: branch (b) interface/AC/scope change from
+IMPLEMENT (code committed but no audit yet) OR from AUDIT / TEST /
+ADVERSARIAL (code committed plus one or more eval_history entries);
+branch (c) Contract Drift routed through PLAN that subsequently
+re-enters DOCS (code still committed, possibly with a revised
+`modified_contracts` set); or any future DOCS-returning variant.
+Branch (d) REGRESSION is NOT a DOCS-returning path (it fixes forward
+or aborts per §5.1), so it never fires §2.1.3. The diff-based gate is
+the common denominator — it keys on "has code been written this task"
+rather than enumerating rollback branches. First-pass DOCS (before
+IMPLEMENT) has an empty diff and trivially has nothing to compare —
+§2.1.3 skips. Pre-existing §2.7 drift inherited from earlier tasks is
+a `/spec upgrade-template` concern (section-level merge that
+preserves /dev verification progress) and is explicitly excluded from
+the per-task §2.1.3 check.
 
 **Scope**: for every MODULE in `docs_allowlist` whose source files are
 touched by `git diff {start_commit}..HEAD` (the re-entry's accumulated
