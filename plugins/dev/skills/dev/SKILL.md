@@ -372,14 +372,26 @@ Last updated:    {updated_at}
 
 Read the existing `state.json` and continue executing the logic for its current phase.
 
-**v3→v4 schema defaulting (2.8.0+)**: If `state.json.version` is `3`
-(pre-2.8.0), treat missing fields as in-memory defaults:
-`worktree_mode = false`, `main_worktree_path = null`. The next state.json
-write (heartbeat or transition) bumps `version: 4` in place. No
-hard-fail on v3 read; backward-compatible. The §2.1.2 / §0.6
-worktree-bridging emit logic re-derives `main_worktree_path` via the
-fallback chain (`git worktree list --porcelain` → fallback to
-non-worktree text) when state.json holds null.
+**v3→v4 schema defaulting (2.8.0+)**: Read `state.json.version` and
+branch on its integer value:
+- `version == 4` (current): all fields present; no defaulting needed.
+- `version == 3` (pre-2.8.0): treat missing fields as in-memory
+  defaults (`worktree_mode = false`, `main_worktree_path = null`).
+  The next state.json write (heartbeat or transition) bumps
+  `version: 4` in place. No hard-fail on v3 read; backward-compatible.
+- `version < 3` OR `version > 4` OR field missing/non-integer: HARD
+  FAIL via AskUserQuestion: "state.json reports version `{N}` which
+  is outside the supported v3/v4 window. This may indicate a
+  hand-edit, a downgrade attempt, or a future-incompatible state.
+  Options: (a) abort and start fresh (`/dev abort` then re-invoke),
+  (b) inspect state.json manually and decide." Do NOT silently
+  default unsupported versions; the trust model treats state.json as
+  agent-authored content (see §8.3 rule 3 trust-boundary note).
+
+The §2.1.2 / §0.6 worktree-bridging emit logic re-derives
+`main_worktree_path` via the fallback chain (`git worktree list
+--porcelain` → fallback to non-worktree text) when state.json holds
+null.
 
 ### /dev abort
 
@@ -535,8 +547,11 @@ Use the Write tool to create `$STATE_DIR/state.json`:
 treats missing fields as `worktree_mode: false`,
 `main_worktree_path: null`. Next heartbeat write bumps `version: 4`
 in-place. INIT always writes v4 (no in-place v3 generation after
-2.8.0). No hard-fail on v3 read; backward-compatible. See `/dev resume`
-subcommand block for the explicit defaulting protocol.
+2.8.0). No hard-fail on v3 read; backward-compatible. `version < 3`
+or `version > 4` (or missing/non-integer) → HARD FAIL via
+AskUserQuestion (do not silently default unsupported versions). See
+`/dev resume` subcommand block for the explicit defaulting protocol
+and §8.3 rule 3 for the underlying trust-boundary rationale.
 
 **Traceability fields** (fixes #26 and #55):
 - `req_ac_map` / `in_scope_ac_ids` / `waived_scope` are synchronized from the plan file's

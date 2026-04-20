@@ -161,6 +161,22 @@ new_cmd() {
     exit 1
   fi
 
+  # Defensive metachar guard (symmetric with finish_cmd / remove_cmd, closes
+  # adversarial round-2 C1 — asymmetric guard would let copy-paste
+  # injection through the new_cmd dry-run + post-exec echo paths).
+  # $base may flow from state.json.base_branch (agent-controlled); $REPO_ROOT
+  # from the user's filesystem; $target_dir is derived from $REPO_ROOT and
+  # therefore inherits any tainted character. Slug + branch_name are already
+  # constrained by the slug regex, but we guard them defensively for symmetry.
+  for v in "$base" "$REPO_ROOT" "$target_dir" "$slug" "$branch_name"; do
+    case "$v" in
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+        echo "worktree-helper new: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
+        echo "  Inspect .dev-state/state.json or repo path for tampering; clean up manually." >&2
+        exit 1 ;;
+    esac
+  done
+
   if [ "$dry_run" -eq 1 ]; then
     cat <<EOF
 worktree-helper new --dry-run:
@@ -201,6 +217,23 @@ EOF
 list_cmd() {
   printf '%s\t%s\t%s\t%s\t%s\n' "PATH" "TASK_ID" "PHASE" "EVAL_ROUND" "UPDATED_AT"
 
+  # Sanitize each field: replace shell-metachars + literal newlines with `?`
+  # so a tampered state.json cannot inject fake rows or copy-paste shell
+  # syntax into operator output (closes adversarial round-2 W1). Refusing
+  # the whole listing would hide other valid worktrees from the operator;
+  # placeholder + stderr warning preserves visibility while flagging the
+  # tampering.
+  _sanitize() {
+    local val="$1"
+    case "$val" in
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*|*$'\r'*|*$'\t'*)
+        echo "worktree-helper list: WARNING — field for path '$2' contains shell metacharacter; displayed as ?" >&2
+        printf '?'
+        return ;;
+    esac
+    printf '%s' "$val"
+  }
+
   # Parse `git worktree list --porcelain`: paths follow "worktree " prefix
   local path task_id phase eval_round updated_at state_file
   while IFS= read -r line; do
@@ -221,7 +254,14 @@ list_cmd() {
         [ "$phase" = "null" ] && phase="—"
         [ "$eval_round" = "null" ] && eval_round="—"
         [ "$updated_at" = "null" ] && updated_at="—"
-        printf '%s\t%s\t%s\t%s\t%s\n' "$path" "$task_id" "$phase" "$eval_round" "$updated_at"
+        # Sanitize before emit; path itself is filesystem-trusted so we
+        # only sanitize state-derived fields.
+        printf '%s\t%s\t%s\t%s\t%s\n' \
+          "$path" \
+          "$(_sanitize "$task_id" "$path")" \
+          "$(_sanitize "$phase" "$path")" \
+          "$(_sanitize "$eval_round" "$path")" \
+          "$(_sanitize "$updated_at" "$path")"
         ;;
     esac
   done < <(git worktree list --porcelain 2>/dev/null)
