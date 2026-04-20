@@ -120,11 +120,15 @@ new_cmd() {
       fi
       ;;
     */*)
-      # Has a slash but not refs/* prefix — assume remote-tracking shorthand
-      if git rev-parse --verify "refs/remotes/$base" >/dev/null 2>&1; then
-        : # OK as-is, e.g. `origin/main`
+      # Has a slash but not refs/* prefix — try local branch first (e.g.
+      # `feature/x`, `release/2026.04`), then remote-tracking shorthand
+      # (`origin/main`).
+      if git rev-parse --verify "refs/heads/$base" >/dev/null 2>&1; then
+        : # local branch with slash — OK
+      elif git rev-parse --verify "refs/remotes/$base" >/dev/null 2>&1; then
+        : # remote-tracking ref — OK
       else
-        echo "worktree-helper new: remote-tracking ref '$base' (refs/remotes/$base) not found" >&2
+        echo "worktree-helper new: '$base' not found as local branch (refs/heads/$base) or remote-tracking ref (refs/remotes/$base)" >&2
         exit 1
       fi
       ;;
