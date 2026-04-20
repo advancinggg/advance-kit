@@ -10,9 +10,9 @@ description: |
   A PreToolUse hook gates file operations per phase, enforcing docs-first, closed-loop audit,
   and all-tests-passing.
   Usage: /dev [task description]
-  Subcommands: /dev status | resume | abort | doctor
+  Subcommands: /dev status | resume | abort | doctor | worktree-new | worktree-list | worktree-finish | worktree-remove
   Trigger when the user asks to "develop", "implement", "add feature", "fix", or "refactor".
-argument-hint: "[task description] or status|resume|abort|doctor"
+argument-hint: "[task description] or status|resume|abort|doctor|worktree-new|worktree-list|worktree-finish|worktree-remove"
 allowed-tools:
   - Bash
   - Read
@@ -338,12 +338,17 @@ Do NOT suggest fixes." \
 
 ## Subcommand Dispatch
 
-Parse `$ARGUMENTS` and decide whether it is a subcommand:
+Parse `$ARGUMENTS`; the first whitespace-delimited token routes:
 
 - `status` → execute "status query"
 - `resume` → execute "resume workflow"
 - `abort` → execute "abort workflow"
 - `doctor` → execute "diagnose and repair"
+- `worktree-new <slug> [--base <branch>] [--dry-run]` → invoke
+  `plugins/dev/bin/worktree-helper.sh new` (see §8.1)
+- `worktree-list` → invoke `plugins/dev/bin/worktree-helper.sh list`
+- `worktree-finish [--dry-run]` → invoke `plugins/dev/bin/worktree-helper.sh finish`
+- `worktree-remove <path> [--dry-run]` → invoke `plugins/dev/bin/worktree-helper.sh remove`
 - anything else → treat as the task description and execute the "normal workflow"
 
 ### /dev status
@@ -366,6 +371,15 @@ Last updated:    {updated_at}
 ### /dev resume
 
 Read the existing `state.json` and continue executing the logic for its current phase.
+
+**v3→v4 schema defaulting (2.8.0+)**: If `state.json.version` is `3`
+(pre-2.8.0), treat missing fields as in-memory defaults:
+`worktree_mode = false`, `main_worktree_path = null`. The next state.json
+write (heartbeat or transition) bumps `version: 4` in place. No
+hard-fail on v3 read; backward-compatible. The §2.1.2 / §0.6
+worktree-bridging emit logic re-derives `main_worktree_path` via the
+fallback chain (`git worktree list --porcelain` → fallback to
+non-worktree text) when state.json holds null.
 
 ### /dev abort
 
@@ -422,6 +436,20 @@ if [ -f "$REPO_ROOT/docs/ARCHITECTURE.md" ]; then
   awk '/^### 6\.1/{flag=1} flag && /\| *Contract ID *\|/{print "CONTRACT_REGISTRY: AVAILABLE"; exit}' \
     "$REPO_ROOT/docs/ARCHITECTURE.md" 2>/dev/null
 fi
+
+# Detect worktree mode (2.8.0+) — git worktrees have distinct GIT_DIR
+# (under .git/worktrees/<name>/) but a shared GIT_COMMON_DIR (the main
+# repo's .git/). Main worktree has GIT_DIR == GIT_COMMON_DIR.
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+GIT_DIR_VAL=$(git rev-parse --git-dir 2>/dev/null)
+if [ -n "$GIT_COMMON_DIR" ] && [ "$GIT_COMMON_DIR" != "$GIT_DIR_VAL" ]; then
+  echo "WORKTREE: YES ($REPO_ROOT)"
+  MAIN_WORKTREE=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
+  echo "MAIN_WORKTREE: $MAIN_WORKTREE"
+else
+  echo "WORKTREE: NO (main worktree)"
+  MAIN_WORKTREE=""
+fi
 ```
 
 - If the `Contract ID` column is found → set `contract_registry_available: true` in `state.json`.
@@ -439,6 +467,11 @@ fi
   Claude subagent review).
 - Test command priority: project `.claude/CLAUDE.md` declaration → auto-detection →
   AskUserQuestion.
+- If `WORKTREE: YES`, set `worktree_mode: true` + `main_worktree_path: <MAIN_WORKTREE>`
+  in state.json. Print banner: "Running in worktree mode. §2.1.2 / §0.6 escape
+  hatches will emit worktree-bridging recovery prose (cd to main worktree, cd back,
+  git rebase local ref). See §8 for details."
+- If `WORKTREE: NO`, set `worktree_mode: false` + `main_worktree_path: null`.
 
 ### 0.2 Create state.json
 
@@ -461,7 +494,7 @@ grep -q '.dev-state' "$REPO_ROOT/.gitignore" 2>/dev/null || echo '.dev-state/' >
 Use the Write tool to create `$STATE_DIR/state.json`:
 ```json
 {
-  "version": 3,
+  "version": 4,
   "phase": "plan",
   "repo_root": "{REPO_ROOT}",
   "task_id": "dev-{repo_name}-{date}-{short_hash}",
@@ -492,9 +525,18 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "sdd_mode": true/false,
   "base_branch": "{BASE}",
   "start_commit": "{git rev-parse HEAD, or empty-tree hash 4b825dc if no commits yet}",
+  "worktree_mode": true/false,
+  "main_worktree_path": "{MAIN_WORKTREE or null}",
   "updated_at": "{ISO 8601}"
 }
 ```
+
+**v3→v4 forward-compat (2.8.0+)**: `/dev resume` reading a v3 state.json
+treats missing fields as `worktree_mode: false`,
+`main_worktree_path: null`. Next heartbeat write bumps `version: 4`
+in-place. INIT always writes v4 (no in-place v3 generation after
+2.8.0). No hard-fail on v3 read; backward-compatible. See `/dev resume`
+subcommand block for the explicit defaulting protocol.
 
 **Traceability fields** (fixes #26 and #55):
 - `req_ac_map` / `in_scope_ac_ids` / `waived_scope` are synchronized from the plan file's
@@ -1080,7 +1122,12 @@ Options:
       file or amends the set manually outside /prd before rerunning /spec.
       The single canonical 4-command sequence above is the complete
       recovery path — alternative-subcommand branches do not apply.
-      See VERSIONING.md release checklist for the frozen command contract.)
+      See VERSIONING.md release checklist for the frozen command contract.
+
+      Worktree mode (2.8.0+): when state.json.worktree_mode == true, the
+      4 commands above still run literally — see /dev SKILL.md §8.2 for
+      the required cd + git commit + git rebase bridging between them.
+      The command block content itself is UNCHANGED from 2.7.0.)
  (B) Spec-only — PRD is correct, but ARCHITECTURE.md or a non-owned
      MODULE doc needs to change. Stop here and run:
        /dev abort
@@ -1089,7 +1136,11 @@ Options:
      (/spec main-flow rerun regenerates all MODULEs via merge-preserve —
       unchanged rows kept verbatim; only drift propagates. Safe but
       re-visits every MODULE; accept this cost or use Option C for a
-      single-module in-scope edit.)
+      single-module in-scope edit.
+
+      Worktree mode (2.8.0+): when state.json.worktree_mode == true, the
+      3 commands above still run literally — see /dev SKILL.md §8.2 for
+      the cd + git rebase bridging. Frozen 2.7.0 contract preserved.)
  (C) In-scope — the change is confined to this task's owned MODULE(s)
      (the ones already in `docs_allowlist`). Continue DOCS normally.
      Includes the "already covered by existing PRD/spec" sub-case — when
@@ -2216,3 +2267,196 @@ and the bookkeeping commit.
 ### 6.4 Cleanup
 
 Delete `state.json`.
+
+---
+
+## 8. Worktree mode (2.8.0+)
+
+/dev supports worktree-parallel execution: multiple concurrent /dev tasks
+on independent feature branches from the same base branch, each in its
+own git worktree. `/spec` and `/prd` stay single-flight by design — they
+author repo-shared SSOT files (`docs/PRD.md`, `docs/ARCHITECTURE.md`,
+`docs/modules/*.md`, `docs/REQUIREMENTS_REGISTRY.md`,
+`docs/CONTEXT-MAP.md`, `docs/GLOSSARY.md`, `docs/adr/*.md`,
+`docs/adr/_INDEX.md`) that don't tolerate concurrent divergent writes
+cleanly.
+
+When a /dev task in a worktree hits §2.1.2 or /spec §0.6
+upstream-alignment checks, the abort+restart recovery is augmented with
+`cd` + `git commit` + `git rebase` bridging (§8.2). The ORIGINAL
+4-command Option A and 3-command Option B sequences in §2.1.2 (and the
+3-command sequences in /spec §0.6 Option A and Option B) are UNCHANGED
+— preserving VERSIONING.md 2.7.0 rules 5 + 6 frozen-contract. Bridging
+appears below each frozen block as a parenthetical hint paragraph, not
+as extra commands inside the block.
+
+### 8.1 Four subcommands (labels FROZEN; see VERSIONING.md 2.8.0 rule 1)
+
+`/dev worktree-new <slug> [--base <branch>] [--dry-run]`,
+`/dev worktree-list`,
+`/dev worktree-finish [--dry-run]`,
+`/dev worktree-remove <path> [--dry-run]`.
+
+Each subcommand is backed by `plugins/dev/bin/worktree-helper.sh`. The
+helper NEVER auto-executes `git worktree remove` or `git branch -D` or
+`git merge` (per CLAUDE.md risky-action principle); it prints
+copy-paste commands for the user to run, with the sole exception of
+`git worktree add` in `worktree-new` (creating a new worktree IS the
+requested action, safely-bounded by slug + collision validation).
+
+**`/dev worktree-new <slug>`**: validates slug per the FROZEN grammar
+below, resolves base branch (default `state.json.base_branch` →
+`origin/HEAD` → `main` → `master` → current branch), creates
+`dev-task-<slug>` branch + sibling-dir worktree, then prints next-step
+copy-paste for user to `cd` and start a new Claude Code session.
+`--dry-run` flag: print planned commands without filesystem state.
+
+**`/dev worktree-list`**: enumerates `git worktree list --porcelain`;
+for each worktree path, reads `<path>/.dev-state/state.json` if
+present and reports `task_id`, `phase`, `eval_round`, `updated_at`.
+Tab-aligned output; missing fields show `—` (never literal `null`).
+
+**`/dev worktree-finish`**: gate — allow if current worktree
+`.dev-state/state.json` exists AND `phase == "summary"`; else refuse
+with guidance to use `/dev worktree-remove` for aborted tasks. Prints
+4-line merge-suggestion for user to run in main worktree.
+
+**`/dev worktree-remove <path>`**: gate — allow if
+`<path>/.dev-state/state.json` is absent OR `phase == "summary"`;
+else refuse with guidance to run `/dev abort` (deletes state.json) or
+complete `/dev worktree-finish` first. Prints 2-line removal-
+suggestion (`git worktree remove "<path>"` + `git branch -d
+dev-task-<slug>`); never auto-executes.
+
+**Slug grammar FROZEN** (VERSIONING.md 2.8.0 rule 6):
+- Primary regex: `^[a-z][a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$` (length
+  2-40, starts with letter, ends with alphanumeric, interior allows
+  hyphens, no trailing hyphen).
+- **Secondary guard** (NOT in regex alone): no consecutive hyphens.
+  Helper checks `[[ "$slug" =~ -- ]]` separately and rejects.
+- Reserved-word list forbidden: `status`, `resume`, `abort`, `doctor`,
+  `new`, `list`, `finish`, `remove`.
+
+### 8.2 Upstream coordination (/spec, /prd) — worktree-mode bridging
+
+This section describes the GLUE between the frozen /dev §2.1.2 and
+/spec §0.6 command sequences when `state.json.worktree_mode == true`.
+The command sequences themselves are UNCHANGED; this is narrative
+guidance for the user.
+
+**Precondition**: the main worktree MUST have `<base_branch>` checked
+out (the near-universal case for main worktree on `main` / `master`).
+If main worktree is on a different branch, user must either (a)
+switch to `<base_branch>` before running `/prd` + `/spec`, or (b)
+commit the upstream changes directly onto `<base_branch>`.
+
+**§2.1.2 Option A worktree-mode bridging**: the 4 canonical commands
+stay as printed. User runs in this order:
+
+```
+# In task worktree:
+/dev abort
+
+# Bridge 1 — cd to main worktree:
+cd "<main_worktree_literal_path>"
+
+# In main worktree:
+/prd "{suggested topic}"
+/spec docs/PRD.md
+
+# Bridge 2 — commit upstream changes + cd back + rebase via local ref:
+git add docs/ && git commit -m "prd+spec: <topic>"
+cd "<task_worktree_literal_path>"
+git rebase "<base_branch_literal>"
+
+# In task worktree (now caught up with main):
+/dev {original task description}
+```
+
+Path and branch literals are interpolated by the agent at emit time
+via the fallback chain:
+- L1: read `state.json.main_worktree_path` / `state.json.base_branch`.
+- L2 (if null/absent — e.g., v3 state.json resumed): derive via
+  `git worktree list --porcelain | awk '/^worktree /{sub(/^worktree
+  /,""); print; exit}'` for main path; `git symbolic-ref
+  refs/remotes/origin/HEAD | sed 's|.*/||'` for base branch (with
+  `main` / `master` / `git rev-parse --abbrev-ref HEAD` fallbacks).
+- L3 (if detection fully fails): emit canonical non-worktree Option A
+  text + disclaimer "worktree detection failed; coordinate manually".
+
+The agent NEVER interpolates the literal string `"null"` into emitted
+recovery text.
+
+**§2.1.2 Option B worktree-mode bridging** (spec-only): 3 canonical
+commands preserved. Bridging: `cd <main_worktree>` after `/dev abort`;
+then `/spec`; then `git add docs/ && git commit` + `cd
+<task_worktree>` + `git rebase <base_branch>`; then `/dev {original
+task}`. Same fallback chain.
+
+**Local-ref rebase rationale**: git worktrees share `.git/objects` +
+`.git/refs` via `.git/worktrees/<name>/commondir`. A local commit on
+`<base_branch>` in main worktree updates `refs/heads/<base_branch>`
+in the shared `.git/`; the task worktree's `git rebase
+<base_branch>` reads that ref directly, no `origin/` round-trip
+required. Works in repos without origin too.
+
+**/spec §0.6 Option A worktree-mode bridging**: §0.6 Option A's 3
+canonical commands (`/spec abort`, `/prd "{topic}"`, `/spec
+docs/PRD.md`) preserved. Bridging: after `/spec abort`, `cd` to main
+worktree before running `/prd`. No rebase-back step needed because
+/spec is meant to RESTART in main worktree after /prd.
+
+**/spec §0.6 Option B worktree-mode bridging** (user manually edits
+PRD): 3 canonical commands preserved. User must perform the manual
+PRD edit in main worktree, NOT a task worktree (PRD is SSOT; task-
+worktree divergence defeats the single-flight purpose).
+
+### 8.3 Concurrency constraints + trust boundaries
+
+1. **Shared `.git/` metadata**: worktrees share `.git/objects` +
+   `.git/refs` via `.git/worktrees/<name>/commondir`. Occasional
+   `index.lock` contention under heavy parallel git ops; git's own
+   retry handles most cases. Accepted operational quirk.
+
+2. **Main-worktree-only /spec + /prd**: advisory, not enforced. Agent
+   emits worktree-variant prose when `state.json.worktree_mode ==
+   true`, but cannot mechanically prevent user from running /prd
+   inside a task worktree. Doing so creates divergent PRD on the
+   task branch; merge later requires manual reconciliation.
+
+3. **CLAUDE_PLUGIN_DATA presence-based invariant**: `check-phase.sh`
+   lines 21-26 prefer `$CLAUDE_PLUGIN_DATA/state.json` if that file
+   exists. No /dev flow writes state.json there AND no plugin-level
+   install places state.json there — worktree isolation depends on
+   this file-presence invariant holding. VERSIONING.md 2.8.0 rule 5
+   freezes it. Stray admin-placed state.json at that path can subvert
+   isolation; mitigation is out-of-band inspection (same trust model
+   as the 2.7.0 state.json trust note in VERSIONING.md).
+
+4. **check-phase.sh installed via SKILL.md frontmatter, not
+   `plugins/dev/hooks/hooks.json`**: phase gating only active when
+   the Claude Code session has loaded the /dev skill. A session in a
+   task worktree that never invokes /dev has no phase gate. Same
+   trust model as today's single-worktree flow — worktree mode
+   changes nothing here.
+
+5. **stop.sh auto-push (precise, per `plugins/dev/bin/stop.sh`
+   source)**: the Stop hook MAY auto-push the current branch
+   (including `dev-task-*` task branches) to origin. The decision
+   goes through 5 gates:
+   - **No git remote configured** → no push (`stop.sh:36`).
+   - **Clean working tree path** (`stop.sh:40-55`): push only if
+     upstream `@{u}` is set AND branch has commits ahead of upstream.
+   - **Dirty tree → `git add -A` → nothing staged** (`stop.sh:58-62`)
+     → exit without push.
+   - **Dirty tree → staged → gitleaks detects secrets**
+     (`stop.sh:70-79`) → reset HEAD + exit without push.
+   - **Dirty tree → staged → gitleaks pass → commit succeeds** →
+     `git push origin "$BRANCH"` (`stop.sh:160-170`); fails-soft
+     (logs only) if origin rejects.
+   For worktree mode: task branches are NOT safe to treat as "local
+   by default" in repos with origin configured. The Stop hook WILL
+   push whenever the committing path completes. Mitigation
+   (out-of-scope for this release): user disables the Stop hook in
+   project / user `settings.json` for task-worktree sessions.
+   Accept as operational quirk.

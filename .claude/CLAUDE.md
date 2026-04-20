@@ -38,6 +38,7 @@ defines when to bump patch / minor / major.
   "unfixed" path is `deferred_findings` with a `user_accepted_at` timestamp, produced
   after exceeding `max_round` via explicit AskUserQuestion.
 - /dev DOCS phase fires three inline upstream checks in order: §2.1.1 (ADR discovery, 2.5.0+), §2.1.2 (PRD/cross-module-spec discovery, 2.7.0+), §2.1.3 (Core Logic drift, 2.7.0+ — re-entry DOCS only). All three use AskUserQuestion; §2.1.1 and §2.1.2 use the abort+restart pattern that prints commands and exits. Lightweight mode (`sdd_mode: false`) skips all three alongside Phase 2 DOCS.
+- /dev supports worktree-parallel execution (2.8.0+): 4 subcommands `worktree-new` / `worktree-list` / `worktree-finish` / `worktree-remove` backed by `plugins/dev/bin/worktree-helper.sh`. `/spec` and `/prd` stay single-flight — use them only in the main worktree. §2.1.2 / §0.6 upstream-change checks emit worktree bridging hints (cd + git commit + git rebase using local ref via shared `.git/` object store) BELOW the frozen 4-command Option A / 3-command Option B blocks. The blocks themselves are UNCHANGED from 2.7.0; see /dev SKILL.md §8 for bridging details. Known operational quirks: shared `.git/index.lock` contention (git auto-retries); `stop.sh` MAY auto-push `dev-task-*` branches to origin — exact conditions depend on multiple gates (remote configured, clean-vs-dirty tree, staging-result, gitleaks, upstream-ahead). See SKILL.md §8.3 rule 5 for the authoritative 5-gate description. Task branches are NOT "local by default" in repos with origin.
 
 ## Test command
 

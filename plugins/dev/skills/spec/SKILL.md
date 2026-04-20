@@ -390,6 +390,12 @@ Options:
      auto-invoke /spec per prd/SKILL.md core principle), user
      explicitly runs `/spec docs/PRD.md` to pick up the amended PRD.
 
+     (Worktree mode (2.8.0+): the 3 commands above still run literally
+      — see /dev SKILL.md §8.2 for the cd bridging. Run /prd in the
+      MAIN worktree, not in a task worktree; PRD is repo-shared SSOT
+      and divergent task-worktree edits defeat the single-flight
+      purpose.)
+
  (B) User manually edits PRD — for small edits the user prefers to
      hand-edit outside the /prd guided dialogue. Printed recovery
      sequence:
@@ -399,6 +405,11 @@ Options:
      /spec does NOT author the edit — user edits, then reruns /spec.
      This option preserves the "/spec never ghost-writes PRD"
      invariant while accommodating small hand-edits.
+
+     (Worktree mode (2.8.0+): the 3 commands above still run literally
+      — see /dev SKILL.md §8.2 for the cd bridging. The manual PRD
+      edit MUST happen in the MAIN worktree, not a task worktree;
+      task-worktree PRD divergence defeats the single-flight rule.)
 
  (C) Assumption documented — the gap is a narrow ambiguity the user
      deems not worth a PRD edit. Agent continues /spec and records

@@ -320,3 +320,63 @@ markdown parser (e.g. `commonmark-cli`), which is out of scope for
 2.7.0. This is the same trust-boundary principle as the state.json
 note above: tighten only if a concrete threat case justifies the
 added complexity.
+
+## Release checklist (for worktree-parallel — 2.8.0+)
+
+When editing /dev §8 (Worktree mode), §0.1 worktree-detection block,
+§0.2 state.json schema (`worktree_mode` + `main_worktree_path`), §2.1.2
+Option A/B worktree hint paragraphs, /spec §0.6 Option A/B worktree
+hint paragraphs, or `plugins/dev/bin/worktree-helper.sh`, the following
+seven rules MUST hold (otherwise downstream worktree-parallel /dev
+runs misroute or break):
+
+1. **Subcommand label set FROZEN**: `worktree-new`, `worktree-list`,
+   `worktree-finish`, `worktree-remove`. Rename or remove is MAJOR.
+   Adding a new subcommand is MINOR (additive).
+
+2. **Branch-name contract FROZEN**: task branches are
+   `dev-task-<slug>`. Different prefix breaks `worktree-list`
+   discovery and `worktree-remove` validation. Prefix change is MAJOR.
+
+3. **2.7.0 §2.1.2 Option A/B command blocks REMAIN UNCHANGED in
+   2.8.0** — worktree bridging (`cd` / `git commit` / `git rebase`)
+   is §8.2 narrative inside the AskUserQuestion's parenthetical hint
+   paragraph, NOT additions to the frozen 4-command (Option A) /
+   3-command (Option B) sequences. Reordering or command-count change
+   is still MAJOR (preserves 2.7.0 rules 5 + 6).
+
+4. **state.json `version: 4` schema** — additive new fields
+   `worktree_mode: bool` and `main_worktree_path: string|null` with
+   defaulting rules for v3 reads (`worktree_mode = false`,
+   `main_worktree_path = null` if missing on resume). Removing
+   fields OR changing defaulting semantics is MAJOR.
+
+5. **CLAUDE_PLUGIN_DATA state.json-absence invariant**: no /dev flow
+   writes state.json to `$CLAUDE_PLUGIN_DATA/state.json` AND no
+   plugin-level install places state.json there. Stray admin-placed
+   state.json at that path can subvert worktree isolation
+   (file-presence-based priority in `check-phase.sh` lines 21-26);
+   mitigation is out-of-band inspection, same trust model as the
+   existing 2.7.0 state.json trust note. Writing state.json to that
+   path in any future /dev code is a MAJOR bump (breaks worktree
+   isolation).
+
+6. **Slug grammar FROZEN** — primary regex
+   `^[a-z][a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$` (length 2-40, starts
+   with letter, ends with alphanumeric, no trailing hyphen). The
+   primary regex alone does NOT forbid consecutive hyphens (`a--b`)
+   — enforce via SECONDARY guard `[[ "$slug" =~ -- ]] && reject` in
+   the helper. Primary regex change is MAJOR. Secondary guard change
+   is MAJOR. Reserved-word list:
+   `{status, resume, abort, doctor, new, list, finish, remove}` —
+   reserved-word addition is MINOR; removal is MAJOR.
+
+7. **No auto-merge / no auto-delete** — worktree-helper prints all
+   destructive sequences (`git worktree remove`, `git branch -d`,
+   `git merge`) for the user to run; never auto-executes them.
+   Preserves CLAUDE.md risky-action discipline. Switching to
+   auto-execution is MAJOR (changes the trust model).
+
+**2.7.0 upstream-alignment checklist rules 1-9 REMAIN in force**
+under 2.8.0. The 2.8.0 rules above are additive and do not supersede
+any 2.7.0 freeze.
