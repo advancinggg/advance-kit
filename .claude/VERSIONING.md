@@ -287,10 +287,18 @@ downstream /dev runs misroute mid-workflow upstream discoveries):
    plugin.json version. Maintainers may sync them but are not
    required to.
 
-9. **Description rotation pending** (informational): plugin.json.
-   description accumulates **2.X.Y** release sentences; around 2.8.0
-   consider rotating older release notes out of the description
-   string to preserve marketplace UI legibility.
+9. **Description compressed-history convention (established
+   2.8.1)**: `plugin.json` + `marketplace.json` `description` and the
+   3 README Status cells follow the pattern `[core capability
+   sentence] + 'Latest:' <current minor highlight> + 'Earlier:'
+   <≤1 sentence per recent minor>`. When a new minor ships, rotate
+   the previous Latest into Earlier and drop the oldest Earlier
+   entry to keep the tail at ≤3 minor versions. README Status cell
+   omits the core-capability sentence prefix in marketplace.json/
+   plugin.json (Version column already shows the number). Hard
+   rule 1's 5-sync-point invariant continues to apply. Verbose
+   accumulation (the pre-2.8.1 pattern) regressed marketplace UI
+   legibility and is forbidden going forward.
 
 **Trust boundary note (2.7.0)**: §2.1.3's diff-based re-entry gate
 (`git diff {start_commit}..HEAD`) reads `start_commit` from
