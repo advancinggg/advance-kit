@@ -107,18 +107,39 @@ new_cmd() {
     exit 1
   fi
 
-  # Accept either a local branch OR a remote-tracking branch (origin/<base>).
-  # `git worktree add ... -b <new> <base>` accepts any commit-ish, but we
-  # restrict to branch-shaped names: refuse if `<base>` resolves only as a
-  # raw SHA (no symbolic ref).
-  if git rev-parse --verify "refs/heads/$base" >/dev/null 2>&1; then
-    : # local branch — OK
-  elif git rev-parse --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then
-    base="origin/$base"
-  else
-    echo "worktree-helper new: base '$base' is not a local branch or origin/$base" >&2
-    exit 1
-  fi
+  # Accept any branch-shaped base: short name (`main`), remote-tracking
+  # short (`origin/main`), or fully-qualified ref (`refs/heads/main`,
+  # `refs/remotes/origin/main`). Refuse raw SHA / detached commits — we
+  # require a symbolic ref. Three resolution attempts in order:
+  case "$base" in
+    refs/heads/*|refs/remotes/*)
+      # Fully-qualified ref — try as-is
+      if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
+        echo "worktree-helper new: ref '$base' not found" >&2
+        exit 1
+      fi
+      ;;
+    */*)
+      # Has a slash but not refs/* prefix — assume remote-tracking shorthand
+      if git rev-parse --verify "refs/remotes/$base" >/dev/null 2>&1; then
+        : # OK as-is, e.g. `origin/main`
+      else
+        echo "worktree-helper new: remote-tracking ref '$base' (refs/remotes/$base) not found" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      # Short name — local branch first, then origin/<base> fallback
+      if git rev-parse --verify "refs/heads/$base" >/dev/null 2>&1; then
+        : # local branch — OK
+      elif git rev-parse --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then
+        base="origin/$base"
+      else
+        echo "worktree-helper new: base '$base' is not a local branch or origin/$base" >&2
+        exit 1
+      fi
+      ;;
+  esac
 
   # Target path: sibling of REPO_ROOT
   local repo_basename target_dir branch_name
