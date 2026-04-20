@@ -140,21 +140,36 @@ extract_option_region "$DEV_SKILL" '\\(B\\) Spec-only' '\\(C\\) In-scope' \
 [ -s "$SCRATCH/dev_opt_b.txt" ] \
   || { echo "FAIL: T5.b — §2.1.2 Option B region extraction empty"; exit 1; }
 
-# T5.a: Option A has exactly 4 indented `/`-prefixed command lines
+# T5.a: Option A has exactly 4 indented `/`-prefixed command lines IN
+# canonical order (round-2 audit fix: ordered byte-identical contract).
 grep -E '^[[:space:]]+/' "$SCRATCH/dev_opt_a.txt" | sed 's/^[[:space:]]*//' \
   > "$SCRATCH/dev_opt_a_cmds.txt"
 lines=$(wc -l < "$SCRATCH/dev_opt_a_cmds.txt" | tr -d ' ')
 [ "$lines" = "4" ] \
   || { echo "FAIL: T5.a — §2.1.2 Option A has $lines command lines (expected 4 — 2.7.0 frozen contract)"; exit 1; }
-echo "PASS: T5.a §2.1.2 Option A preserved (exactly 4 commands)"
+order=$(awk 'NR==1 && /^\/dev abort$/{printf "1"}
+             NR==2 && /^\/prd "/{printf "2"}
+             NR==3 && /^\/spec docs\/PRD\.md$/{printf "3"}
+             NR==4 && /^\/dev \{/{printf "4"}
+             END{printf "\n"}' "$SCRATCH/dev_opt_a_cmds.txt")
+[ "$order" = "1234" ] \
+  || { echo "FAIL: T5.a — §2.1.2 Option A canonical order broken (got '$order', expected 1234)"; exit 1; }
+echo "PASS: T5.a §2.1.2 Option A preserved (4 commands, canonical order)"
 
-# T5.b: Option B has exactly 3 indented `/`-prefixed command lines
+# T5.b: Option B has exactly 3 indented `/`-prefixed command lines IN
+# canonical order.
 grep -E '^[[:space:]]+/' "$SCRATCH/dev_opt_b.txt" | sed 's/^[[:space:]]*//' \
   > "$SCRATCH/dev_opt_b_cmds.txt"
 lines=$(wc -l < "$SCRATCH/dev_opt_b_cmds.txt" | tr -d ' ')
 [ "$lines" = "3" ] \
   || { echo "FAIL: T5.b — §2.1.2 Option B has $lines command lines (expected 3 — 2.7.0 frozen contract)"; exit 1; }
-echo "PASS: T5.b §2.1.2 Option B preserved (exactly 3 commands)"
+order_b=$(awk 'NR==1 && /^\/dev abort$/{printf "1"}
+               NR==2 && /^\/spec([[:space:]]|$|[[:space:]]+#)/{printf "2"}
+               NR==3 && /^\/dev \{/{printf "3"}
+               END{printf "\n"}' "$SCRATCH/dev_opt_b_cmds.txt")
+[ "$order_b" = "123" ] \
+  || { echo "FAIL: T5.b — §2.1.2 Option B canonical order broken (got '$order_b', expected 123)"; exit 1; }
+echo "PASS: T5.b §2.1.2 Option B preserved (3 commands, canonical order)"
 
 # T5.c: Option A body contains "Worktree mode" hint
 grep -Fq 'Worktree mode' "$SCRATCH/dev_opt_a.txt" \
@@ -180,12 +195,19 @@ extract_option_region "$SPEC_SKILL" '\\(B\\) User manually edits PRD' '\\(C\\) A
   || { echo "FAIL: T6.b — /spec §0.6 Option B region extraction empty"; exit 1; }
 
 # T6.a: §0.6 Option A has exactly 3 indented `/`-prefixed command lines
+# IN canonical order (/spec abort → /prd "..." → /spec docs/PRD.md)
 grep -E '^[[:space:]]+/' "$SCRATCH/spec_opt_a.txt" | sed 's/^[[:space:]]*//' \
   > "$SCRATCH/spec_opt_a_cmds.txt"
 lines=$(wc -l < "$SCRATCH/spec_opt_a_cmds.txt" | tr -d ' ')
 [ "$lines" = "3" ] \
   || { echo "FAIL: T6.a — /spec §0.6 Option A has $lines command lines (expected 3)"; exit 1; }
-echo "PASS: T6.a /spec §0.6 Option A preserved (exactly 3 commands)"
+order_a=$(awk 'NR==1 && /^\/spec abort$/{printf "1"}
+               NR==2 && /^\/prd "/{printf "2"}
+               NR==3 && /^\/spec docs\/PRD\.md$/{printf "3"}
+               END{printf "\n"}' "$SCRATCH/spec_opt_a_cmds.txt")
+[ "$order_a" = "123" ] \
+  || { echo "FAIL: T6.a — /spec §0.6 Option A canonical order broken (got '$order_a', expected 123)"; exit 1; }
+echo "PASS: T6.a /spec §0.6 Option A preserved (3 commands, canonical order)"
 
 # T6.b: §0.6 Option B contains the canonical 3-line code block:
 # 2 indented slash-commands at 7-space indent + 1 indented `# comment`.
@@ -225,15 +247,23 @@ list_out=$(bash "$HELPER" list 2>&1) || { echo "FAIL: T7 — list exited non-zer
 echo "$list_out" | head -1 | grep -Fq 'PATH' \
   || { echo "FAIL: T7 — list header missing"; exit 1; }
 
-# `new test-xyz --dry-run` → exit 0, no fs state created
-target_dir="$(dirname "$(pwd)")/$(basename "$(pwd)")-test-xyz"
+# `new test-xyz-NNNN --dry-run` → exit 0, no fs state created. Use
+# random suffix to avoid collisions with pre-existing dirs on dev machines.
+test_slug="test-xyz-$$"
+target_dir="$(dirname "$(pwd)")/$(basename "$(pwd)")-${test_slug}"
 if [ -e "$target_dir" ]; then
-  echo "FAIL: T7 — pre-existing target dir interferes: $target_dir"; exit 1
+  # Should be very rare (PID collision). Skip rather than fail.
+  echo "SKIP: T7 dry-run new — target dir already exists: $target_dir"
+  skipped_count=$((skipped_count+1))
+else
+  dry_out=$(bash "$HELPER" new "$test_slug" --dry-run 2>&1) \
+    || { echo "FAIL: T7 — new --dry-run exited non-zero"; echo "$dry_out" | sed 's/^/  > /'; exit 1; }
+  # Verify dry-run printed the planned command (not silent success)
+  echo "$dry_out" | grep -Fq 'git worktree add' \
+    || { echo "FAIL: T7 — new --dry-run missing 'git worktree add' in preview"; echo "$dry_out" | sed 's/^/  > /'; exit 1; }
+  [ ! -e "$target_dir" ] \
+    || { echo "FAIL: T7 — new --dry-run created target dir: $target_dir"; rm -rf "$target_dir"; exit 1; }
 fi
-bash "$HELPER" new test-xyz --dry-run >/dev/null 2>&1 \
-  || { echo "FAIL: T7 — new --dry-run exited non-zero"; exit 1; }
-[ ! -e "$target_dir" ] \
-  || { echo "FAIL: T7 — new --dry-run created target dir: $target_dir"; rm -rf "$target_dir"; exit 1; }
 
 # `remove /nonexistent --dry-run` → exit non-zero (validation fails)
 if bash "$HELPER" remove /nonexistent/path --dry-run 2>/dev/null; then

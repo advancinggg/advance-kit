@@ -93,9 +93,15 @@ new_cmd() {
     echo "worktree-helper new: could not resolve a base branch" >&2
     exit 1
   fi
+  # Accept either a local branch OR a remote-tracking branch (origin/<base>).
+  # `git worktree add ... -b <new> <base>` accepts any commit-ish.
   if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
-    echo "worktree-helper new: base branch '$base' not found locally" >&2
-    exit 1
+    if git rev-parse --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then
+      base="origin/$base"
+    else
+      echo "worktree-helper new: base branch '$base' not found locally or as origin/$base" >&2
+      exit 1
+    fi
   fi
 
   # Target path: sibling of REPO_ROOT
@@ -199,6 +205,24 @@ finish_cmd() {
     exit 1
   fi
 
+  # Derive main worktree path + current branch
+  local main_wt branch_name base_branch task_branch
+  main_wt=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
+  branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+  # Refuse if current dir is the main worktree (finish is for task worktrees only)
+  if [ "$REPO_ROOT" = "$main_wt" ]; then
+    echo "worktree-helper finish: refusing to run in main worktree (only meaningful in a task worktree)." >&2
+    echo "  Main worktree's /dev SUMMARY does not need 'finish' — there's nothing to merge back." >&2
+    exit 1
+  fi
+
+  # Refuse on detached HEAD (no branch to merge)
+  if [ "$branch_name" = "HEAD" ] || [ -z "$branch_name" ]; then
+    echo "worktree-helper finish: current worktree has detached HEAD; cannot derive a task branch to merge." >&2
+    exit 1
+  fi
+
   local phase
   phase=$(jq -r '.phase // empty' "$state_file" 2>/dev/null || true)
   if [ "$phase" != "summary" ]; then
@@ -207,10 +231,6 @@ finish_cmd() {
     exit 1
   fi
 
-  # Derive main worktree path + base branch + current branch
-  local main_wt branch_name base_branch task_branch
-  main_wt=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
-  branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
   base_branch=$(jq -r '.base_branch // "main"' "$state_file" 2>/dev/null || echo "main")
   task_branch="$branch_name"
 
