@@ -88,7 +88,14 @@ new_cmd() {
   fi
   [ -z "$base" ] && git rev-parse --verify main >/dev/null 2>&1 && base=main
   [ -z "$base" ] && git rev-parse --verify master >/dev/null 2>&1 && base=master
-  [ -z "$base" ] && base=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [ -z "$base" ]; then
+    base=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$base" = "HEAD" ]; then
+      echo "worktree-helper new: refusing detached-HEAD fallback as base branch" >&2
+      echo "  Either pass --base <branch> explicitly, or git checkout a branch in the current worktree first." >&2
+      exit 1
+    fi
+  fi
   if [ -z "$base" ]; then
     echo "worktree-helper new: could not resolve a base branch" >&2
     exit 1
@@ -207,15 +214,29 @@ finish_cmd() {
 
   # Derive main worktree path + current branch
   local main_wt branch_name base_branch task_branch
-  main_wt=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
   branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-  # Refuse if current dir is the main worktree (finish is for task worktrees only)
-  if [ "$REPO_ROOT" = "$main_wt" ]; then
+  # Refuse if current dir is the main worktree. Detection: main worktree's
+  # `.git` is a real directory; linked worktrees have `.git` as a file
+  # containing "gitdir: /path/to/.git/worktrees/<name>". This is more
+  # reliable than parsing porcelain output ordering.
+  if [ -d "$REPO_ROOT/.git" ]; then
     echo "worktree-helper finish: refusing to run in main worktree (only meaningful in a task worktree)." >&2
     echo "  Main worktree's /dev SUMMARY does not need 'finish' — there's nothing to merge back." >&2
     exit 1
   fi
+
+  # Main worktree is the parent of git-common-dir. Use --absolute when
+  # available; otherwise canonicalize manually for portability.
+  local common_dir
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+  case "$common_dir" in
+    /*) ;;
+    *)  common_dir="$REPO_ROOT/$common_dir" ;;
+  esac
+  # Resolve symlinks via python3 (matches check-phase.sh portability pattern)
+  main_wt=$(python3 -c "import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))" "$common_dir" 2>/dev/null) \
+    || main_wt=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
 
   # Refuse on detached HEAD (no branch to merge)
   if [ "$branch_name" = "HEAD" ] || [ -z "$branch_name" ]; then
@@ -235,12 +256,14 @@ finish_cmd() {
   task_branch="$branch_name"
 
   if [ "$dry_run" -eq 1 ]; then
-    echo "worktree-helper finish --dry-run:"
-    echo "  Phase gate:    PASS (phase=$phase)"
-    echo "  Main worktree: $main_wt"
-    echo "  Task branch:   $task_branch"
-    echo "  Base branch:   $base_branch"
-    echo "  (would print merge-suggestion below)"
+    cat <<EOF
+worktree-helper finish [DRY-RUN]:
+  Phase gate:    PASS (phase=$phase)
+  Main worktree: $main_wt
+  Task branch:   $task_branch
+  Base branch:   $base_branch
+  Suggestion (would be printed without --dry-run):
+EOF
   fi
 
   cat <<EOF
@@ -271,16 +294,16 @@ remove_cmd() {
     esac
   done
 
-  # Validate <path> is a known worktree (not main)
-  local wt_path is_main_wt=0 is_known_wt=0 main_wt
-  main_wt=$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print; exit}')
+  # Validate <path> is a known worktree (not main).
+  # Main detection same logic as finish_cmd: `.git` is a dir for main,
+  # a file for linked. Don't rely on porcelain ordering.
+  local wt_path is_known_wt=0
   while IFS= read -r line; do
     case "$line" in
       "worktree "*)
         wt_path="${line#worktree }"
         if [ "$wt_path" = "$path" ]; then
           is_known_wt=1
-          [ "$wt_path" = "$main_wt" ] && is_main_wt=1
         fi
         ;;
     esac
@@ -290,8 +313,8 @@ remove_cmd() {
     echo "worktree-helper remove: '$path' is not a registered git worktree" >&2
     exit 1
   fi
-  if [ "$is_main_wt" -eq 1 ]; then
-    echo "worktree-helper remove: refusing to remove main worktree" >&2
+  if [ -d "$path/.git" ]; then
+    echo "worktree-helper remove: refusing to remove main worktree (its .git is a directory, not a worktree pointer file)" >&2
     exit 1
   fi
 
@@ -312,11 +335,13 @@ remove_cmd() {
   branch_name=$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
   if [ "$dry_run" -eq 1 ]; then
-    echo "worktree-helper remove --dry-run:"
-    echo "  Path:        $path"
-    echo "  Branch:      $branch_name"
-    echo "  Phase gate:  PASS"
-    echo "  (would print removal-suggestion below)"
+    cat <<EOF
+worktree-helper remove [DRY-RUN]:
+  Path:        $path
+  Branch:      $branch_name
+  Phase gate:  PASS
+  Suggestion (would be printed without --dry-run):
+EOF
   fi
 
   cat <<EOF

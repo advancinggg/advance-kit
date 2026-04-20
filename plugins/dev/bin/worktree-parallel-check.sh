@@ -209,15 +209,22 @@ order_a=$(awk 'NR==1 && /^\/spec abort$/{printf "1"}
   || { echo "FAIL: T6.a — /spec §0.6 Option A canonical order broken (got '$order_a', expected 123)"; exit 1; }
 echo "PASS: T6.a /spec §0.6 Option A preserved (3 commands, canonical order)"
 
-# T6.b: §0.6 Option B contains the canonical 3-line code block:
-# 2 indented slash-commands at 7-space indent + 1 indented `# comment`.
-# Use 7+ space indent to distinguish CODE-block lines from PROSE
-# continuation (which uses 5-space indent in /spec §0.6).
-slash_lines=$(grep -cE '^[[:space:]]{7,}/' "$SCRATCH/spec_opt_b.txt" || true)
-comment_lines=$(grep -cE '^[[:space:]]{7,}#' "$SCRATCH/spec_opt_b.txt" || true)
-[ "$slash_lines" = "2" ] && [ "$comment_lines" -ge "1" ] \
-  || { echo "FAIL: T6.b — /spec §0.6 Option B (slash=$slash_lines, comment=$comment_lines; expected slash=2 + ≥1 comment at 7+ space indent)"; exit 1; }
-echo "PASS: T6.b /spec §0.6 Option B preserved (2 slash + ≥1 comment)"
+# T6.b: §0.6 Option B contains the canonical 3-line code block in
+# canonical order: /spec abort → # Edit comment → /spec docs/PRD.md.
+# Extract lines starting with 7+ spaces (CODE-block indent — distinct
+# from 5-space prose continuation) and walk them with awk.
+grep -E '^[[:space:]]{7,}(/|#)' "$SCRATCH/spec_opt_b.txt" \
+  | sed 's/^[[:space:]]*//' > "$SCRATCH/spec_opt_b_codelines.txt"
+lines=$(wc -l < "$SCRATCH/spec_opt_b_codelines.txt" | tr -d ' ')
+[ "$lines" = "3" ] \
+  || { echo "FAIL: T6.b — /spec §0.6 Option B has $lines code lines (expected 3)"; exit 1; }
+order_b=$(awk 'NR==1 && /^\/spec abort$/{printf "1"}
+               NR==2 && /^# Edit docs\/PRD\.md/{printf "2"}
+               NR==3 && /^\/spec docs\/PRD\.md$/{printf "3"}
+               END{printf "\n"}' "$SCRATCH/spec_opt_b_codelines.txt")
+[ "$order_b" = "123" ] \
+  || { echo "FAIL: T6.b — /spec §0.6 Option B canonical order broken (got '$order_b', expected 123)"; exit 1; }
+echo "PASS: T6.b /spec §0.6 Option B preserved (3 lines, canonical order)"
 
 # T6.c: §0.6 Option A contains "Worktree mode" hint
 grep -Fq 'Worktree mode' "$SCRATCH/spec_opt_a.txt" \
