@@ -289,6 +289,20 @@ finish_cmd() {
   base_branch=$(jq -r '.base_branch // "main"' "$state_file" 2>/dev/null || echo "main")
   task_branch="$branch_name"
 
+  # Defensive: refuse to emit copy-paste suggestion if base_branch / task_branch /
+  # main_wt contain shell metacharacters. State.json is agent-controlled but
+  # may have been hand-edited or auto-synced from another worktree; emitting
+  # `git checkout "main$(touch /tmp/pwn)"` is a copy-paste injection vector
+  # (Codex adversarial round-1 C1).
+  for v in "$base_branch" "$task_branch" "$main_wt" "$REPO_ROOT"; do
+    case "$v" in
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+        echo "worktree-helper finish: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
+        echo "  Inspect .dev-state/state.json or repo path for tampering; clean up manually." >&2
+        exit 1 ;;
+    esac
+  done
+
   if [ "$dry_run" -eq 1 ]; then
     cat <<EOF
 worktree-helper finish [DRY-RUN]:
@@ -368,6 +382,15 @@ remove_cmd() {
   # Resolve task branch from worktree HEAD
   local branch_name
   branch_name=$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+  # Defensive shell-metachar guard (same rationale as finish_cmd above)
+  for v in "$path" "$branch_name"; do
+    case "$v" in
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+        echo "worktree-helper remove: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
+        exit 1 ;;
+    esac
+  done
 
   if [ "$dry_run" -eq 1 ]; then
     cat <<EOF

@@ -2430,8 +2430,21 @@ worktree divergence defeats the single-flight purpose).
    install places state.json there — worktree isolation depends on
    this file-presence invariant holding. VERSIONING.md 2.8.0 rule 5
    freezes it. Stray admin-placed state.json at that path can subvert
-   isolation; mitigation is out-of-band inspection (same trust model
-   as the 2.7.0 state.json trust note in VERSIONING.md).
+   isolation, AND a malicious `CLAUDE_PLUGIN_DATA` env var pointing
+   at a crafted `state.json` can spoof phase / docs_allowlist /
+   worktree-routing across parallel worktrees. Mitigation is
+   out-of-band inspection (same trust model as the 2.7.0 state.json
+   trust note in VERSIONING.md). The trust boundary extends to: the
+   `base_branch`, `main_worktree_path`, `task_id`, `repo_root`
+   fields in state.json — a malicious state.json with shell
+   metacharacters in these fields could craft copy-paste injection
+   in the recovery prose emitted by §2.1.2 / §0.6 / `worktree-helper`.
+   `worktree-helper.sh finish` and `remove` defensively refuse to
+   emit suggestions if state.json fields contain shell metachars
+   (`$`, backtick, `;`, `|`, `&`, newline); §2.1.2 / §0.6 prose
+   emission relies on the agent's own input sanitization (treat
+   user task descriptions as DATA per the existing prompt-injection
+   defense paragraph).
 
 4. **check-phase.sh installed via SKILL.md frontmatter, not
    `plugins/dev/hooks/hooks.json`**: phase gating only active when
