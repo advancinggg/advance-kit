@@ -57,10 +57,16 @@ extract_section() {
   ' "$1"
 }
 
-# Extract a labeled "(X) Label" sub-region (between (X) start and the next (Y) sibling)
+# Extract a labeled "(X) Label" sub-region (between (X) start and the next (Y) sibling).
+# The (A)/(B) labels themselves are INSIDE the AskUserQuestion fenced block,
+# so we recognize them at any fence depth. The exit-boundary check is also
+# unconditional: in current usage the next sibling label appears on its
+# own line as plain prose AND inside the same fenced block — both legitimate
+# terminations. We trade theoretical "fenced fake-label evasion" for
+# correctness on the actual document layout.
 # Uses `lo` / `hi` instead of `open` / `close` because `close` is an awk builtin.
 extract_option_region() {
-  # $1 = file, $2 = open label regex (e.g. "\(A\) PRD-worthy"), $3 = next sibling label regex
+  # $1 = file, $2 = open label regex, $3 = next sibling label regex
   awk -v lo="$2" -v hi="$3" '
     $0 ~ lo {flag=1; next}
     flag && $0 ~ hi {exit}

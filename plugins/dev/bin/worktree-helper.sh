@@ -100,15 +100,24 @@ new_cmd() {
     echo "worktree-helper new: could not resolve a base branch" >&2
     exit 1
   fi
+  # Refuse explicit `--base HEAD` (or any value resolving to "HEAD") —
+  # we require a branch, not an arbitrary detached commit-ish.
+  if [ "$base" = "HEAD" ]; then
+    echo "worktree-helper new: refusing --base HEAD (require a branch, not detached HEAD)" >&2
+    exit 1
+  fi
+
   # Accept either a local branch OR a remote-tracking branch (origin/<base>).
-  # `git worktree add ... -b <new> <base>` accepts any commit-ish.
-  if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
-    if git rev-parse --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then
-      base="origin/$base"
-    else
-      echo "worktree-helper new: base branch '$base' not found locally or as origin/$base" >&2
-      exit 1
-    fi
+  # `git worktree add ... -b <new> <base>` accepts any commit-ish, but we
+  # restrict to branch-shaped names: refuse if `<base>` resolves only as a
+  # raw SHA (no symbolic ref).
+  if git rev-parse --verify "refs/heads/$base" >/dev/null 2>&1; then
+    : # local branch — OK
+  elif git rev-parse --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then
+    base="origin/$base"
+  else
+    echo "worktree-helper new: base '$base' is not a local branch or origin/$base" >&2
+    exit 1
   fi
 
   # Target path: sibling of REPO_ROOT
@@ -262,8 +271,9 @@ worktree-helper finish [DRY-RUN]:
   Main worktree: $main_wt
   Task branch:   $task_branch
   Base branch:   $base_branch
-  Suggestion (would be printed without --dry-run):
+  (Re-run without --dry-run to print the merge-suggestion block.)
 EOF
+    return 0
   fi
 
   cat <<EOF
@@ -340,8 +350,9 @@ worktree-helper remove [DRY-RUN]:
   Path:        $path
   Branch:      $branch_name
   Phase gate:  PASS
-  Suggestion (would be printed without --dry-run):
+  (Re-run without --dry-run to print the removal-suggestion block.)
 EOF
+    return 0
   fi
 
   cat <<EOF
