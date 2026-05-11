@@ -109,9 +109,15 @@ if [ "$SKIP_LLM" = "0" ]; then
     fi
 
     # Safe empty-array expansion (bash 3.2 compat: ${arr[@]:+"${arr[@]}"} pattern)
+    # NOTE: do NOT pass --bare. --bare skips user config loading, which means the
+    # nested `claude` cannot resolve the OAuth token and exits rc=1 with
+    # "Not logged in · Please run /login" (verified 2026-05-11). Without --bare,
+    # `-p` resolves auth normally; recursion is prevented by CLAUDE_SKIP_AUTOSYNC=1
+    # below (exported into the child env so its own stop.sh / git-auto-pull.sh
+    # short-circuit). Cost: ~18s vs ~1s under --bare; still well under the 60s timeout.
     OUT=$(printf '%s' "$PROMPT" | \
       CLAUDE_SKIP_AUTOSYNC=1 ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "$CLAUDE_BIN_RESOLVED" \
-        --bare -p \
+        -p \
         --strict-mcp-config \
         --model haiku \
         --output-format text \

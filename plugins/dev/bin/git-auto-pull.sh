@@ -12,7 +12,7 @@ set -euo pipefail
 
 cat > /dev/null  # drain stdin (hook sends JSON)
 
-# ── Recursion guard (defense-in-depth; --bare on nested `claude -p` already skips hooks) ──
+# ── Recursion guard (primary; nested `claude -p` from stop.sh exports CLAUDE_SKIP_AUTOSYNC=1) ──
 [ "${CLAUDE_SKIP_AUTOSYNC:-0}" = "1" ] && exit 0
 
 COOLDOWN="${GIT_PULL_COOLDOWN_SECS:-300}"

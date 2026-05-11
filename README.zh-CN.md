@@ -127,7 +127,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.8.1` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.8.0 worktree 并行（4 个 `worktree-*` 子命令；`/spec` + `/prd` 保持单飞行）。**早期：** 2.5.0 ADR 系统、2.6.0 /prd 范围纪律、2.7.0 上游对齐机制。 |
+| `dev` | `2.8.2` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.8.0 worktree 并行（4 个 `worktree-*` 子命令；`/spec` + `/prd` 保持单飞行）。**早期：** 2.5.0 ADR 系统、2.6.0 /prd 范围纪律、2.7.0 上游对齐机制。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 

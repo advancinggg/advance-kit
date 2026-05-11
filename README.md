@@ -139,7 +139,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.8.1` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.8.0 worktree-parallel (4 `worktree-*` subcommands; `/spec` + `/prd` stay single-flight). **Earlier:** 2.5.0 ADR system, 2.6.0 /prd scope discipline, 2.7.0 upstream-alignment escape hatches. |
+| `dev` | `2.8.2` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.8.0 worktree-parallel (4 `worktree-*` subcommands; `/spec` + `/prd` stay single-flight). **Earlier:** 2.5.0 ADR system, 2.6.0 /prd scope discipline, 2.7.0 upstream-alignment escape hatches. |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 
