@@ -292,6 +292,21 @@ export interface StatusSnapshot {
 }
 ```
 
+**M008-internal additions (Slice 2)** — NOT cross-module CONTRACTs:
+- `ObservabilityCtx.setAdminChat(chatId: number): void` — public method on the
+  ObservabilityCtx interface returned by `installObservability(...)`. Delegates to
+  AlertDispatcher's new `setAdminChat(chatId)` setter. Wired by daemon main.ts
+  via `adminChatRegistry.subscribe(chatId => obs.setAdminChat(chatId ?? 0))` so
+  AlertDispatcher's destination chat tracks the live AdminChatRegistry value.
+- `AlertDispatcher.setAdminChat(chatId: number): void` — internal to AlertDispatcher.
+  Updates `this.adminChatId`; mirrors `setTgClient`'s `void this.flushQueue()`
+  invariant — any alerts queued while adminChatId was a placeholder (0) flush
+  immediately on first real chat-id binding.
+
+These are intra-M008 (not cross-module CONTRACT surfaces; do not appear in
+ARCHITECTURE.md §6.1). They exist to bridge the M005 AdminChatRegistry pattern
+into M008's alert delivery without making M008 depend on M005's data structure.
+
 #### Required External Interfaces
 
 | Required Contract | Provider | Used For |
@@ -589,6 +604,7 @@ stateDiagram-v2
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: observability subsystem (subscriber, redaction, JSON logger, alert dispatcher with 3 categories + crash-restart merge, StatusReporter, measurement helper, retention janitor) under `plugins/telegram-channels-pro/`. Adds `drainAlertsToLogOnly` exit-path helper for boot-error paths that exit before tgClient is ready. |
+| 2026-05-15 | Slice 2 additive: `ObservabilityCtx.setAdminChat(chatId)` public method + `AlertDispatcher.setAdminChat(chatId)` internal setter (with flushQueue mirror) — wires AlertDispatcher's destination chat to M005's AdminChatRegistry via subscribe pattern. M008 also re-verified for CONTRACT-001 additive `controlSocketFile` field (AC-02 + AC-18 in scope_expansion). |
 
 ### 3.8 Implementation Notes
 
@@ -600,3 +616,5 @@ stateDiagram-v2
 | Per-key token bucket (event_type + sender_hash) for auth_deny | granular dedup avoids one noisy sender silencing all alerts | global bucket | finer-grained = better signal quality |
 | StatusReporter cache via subscribed events (not direct query) | Decision A12; no M008→M004/M005 direct call edges | direct query | freshness slight lag (event dispatch), but seconds-old is fine for status |
 | Measurement helper subscribes to tool_call (not active queries) | Passive observation; no perf impact when idle | poll daemon state every 30s | passive is cheaper |
+| `setAdminChat(chatId)` mirrors `setTgClient`'s flushQueue invariant | Alerts queued while adminChatId was a placeholder (0) MUST flush on first real chat-id binding; otherwise queued alerts sit forever | Drop queued alerts; require chat at construction | flushQueue is the consistent pattern across both setters |
+| `ObservabilityCtx.setAdminChat` exposed publicly (vs reusing `getAlertDispatcherForTest`) | Test-named accessor (`*ForTest`) is a code smell when called from production wiring; the public method documents the AdminChatRegistry → AlertDispatcher binding as intentional | Reuse getAlertDispatcherForTest | Crosses test/prod API boundary; better to expose the contract explicitly |

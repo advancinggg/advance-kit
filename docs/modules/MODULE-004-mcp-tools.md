@@ -145,48 +145,64 @@ Calls M002 `editMessageText`.
 ```
 
 **Flow**:
-1. Check PendingApprovalRegistry capacity — if size >= 50, return `{ok: false, error: "CapacityExceededError"}` immediately.
-2. Allocate `pending_id` (random 16-byte hex).
-3. Construct callback_data per-option: `cb_<pending_id>_<option_index>` (within Telegram's 64-byte limit).
-4. Build inline_keyboard: each row has buttons for each option with their callback_data.
-5. Call M002 sendMessage to admin chat with text + inline_keyboard. Receive `message_id`.
-6. Store `{pending_id, requester_session_id, callback_data_map, message_id, options, created_at}` in registry.
-7. Create a Promise<string> (the await target) and store its resolver in registry alongside.
-8. Return the Promise to the claude-side handler — which will be awaited by claude.
+0. Resolve target chat via `M005.AdminChatRegistry.get()` — if `null`, return `{ok: false, error: "NoAdminChatConfigured", hint: "send the bot any DM as admin first OR set TG_ADMIN_CHAT_ID env"}` immediately. (Slice 2 design note: in-process derivation, no PRD/spec rollback.)
+1. Validate `options.length` ∈ [1..10] (single-row inline keyboard practical limit). Out-of-range → `{ok: false, error: "InvalidOptionsLength"}`.
+2. Check PendingApprovalRegistry capacity — if size >= 50, return `{ok: false, error: "CapacityExceededError"}` immediately.
+3. Allocate `pending_id` (random 16-byte hex).
+4. Construct callback_data per-option: `cb_<pending_id>_<option_index>` (within Telegram's 64-byte limit).
+5. Build inline_keyboard: each row has buttons for each option with their callback_data.
+6. Call M002 sendMessage to admin chat (resolved in step 0) with text + inline_keyboard. Receive `message_id`.
+7. Store `{pending_id, requester_session_id, chat_id (admin chat from step 0), callback_data_map, message_id, options, created_at}` in registry.
+8. Create a Promise<string> (the await target) and store its resolver in registry alongside.
+9. Return the Promise to the claude-side handler — which will be awaited by claude.
 
-**Resolution**:
+**Resolution** (Slice 2: signature now async + carries callback_query_id + tg):
 - M005 routing receives a `callback_query` inbound update.
 - M005 verifies callback.from.id is admin (CONTRACT-009).
 - M005 calls `lookupByPendingId(callback.data)` on M004.
-- M005 calls `resolveApproval(pending_id, selected_option)` on M004.
+- M005 awaits `resolveApproval(pending_id, selected_option, callback.id, tg)` on M004.
+- M004 calls `tg.answerCallbackQuery({callback_query_id: callback.id})` to dismiss the inline-button spinner.
 - M004 resolves the stored Promise with the option string.
-- M004 calls M002 `answerCallbackQuery(callback_query_id)` to dismiss button spinner.
+- M004 removes the entry; emits pending_capacity_snapshot.
 - claude receives `{ok: true, result: {choice: <option>}}`.
 
-**Cleanup on session disconnect**:
-- M005 subscribes to `session_disconnected` events; on receipt, calls `cleanupBySession(session_id)` on M004.
+**Ordering invariant**: M005 awaits resolveApproval; only after answerCallbackQuery has been dispatched does claude's request_approval Promise resolve (avoids zombie spinner UX).
+
+**Cleanup on session disconnect** (Slice 2: signature now `cleanupBySession(session_id, tg)`):
+- M005 subscribes to `session_disconnected` events; on receipt, calls `cleanupBySession(session_id, tg)` on M004.
 - M004 iterates registry, finds pending entries where requester_session_id matches.
-- For each: resolve the stored Promise with `{ok: false, error: "SessionTerminated"}`; call M002 `editMessageText` to replace the inline-button message text with "approval cancelled (session ended)"; remove entry from registry.
+- For each: reject the stored Promise with `Error("session_terminated")`; call `tg.editMessageText({ chat_id: entry.chat_id, message_id: entry.message_id, text: "approval cancelled (session ended)" })`; remove entry from registry.
 
 **Cleanup on daemon crash**: pending registry is in-memory; lost on crash. Subsequent user click on stale buttons → M005 lookup misses → M005 calls M002 `answerCallbackQuery` with `text: "approval expired"` and `show_alert: true`. PRD §3.3 edge case.
 
 #### 1.4.6 PendingApprovalRegistry
 
-**API** (CONTRACT-011):
+**API** (CONTRACT-011 — Slice 2 first implementation; signatures as below):
 
 ```ts
 export interface PendingApprovalRegistry {
-  add(entry: PendingEntry): { ok: true } | { ok: false, error: 'CapacityExceededError' };
+  add(entry: Omit<PendingEntry, 'resolver' | 'rejecter'>):
+    | { ok: true; promise: Promise<string> }
+    | { ok: false; error: 'CapacityExceededError' };
   lookupByPendingId(callback_data: string): PendingEntry | null;
-  resolveApproval(pending_id: string, choice: string): void;
-  cleanupBySession(session_id: string): { cleaned: number };
+  resolveApproval(
+    pending_id: string,
+    choice: string,
+    callback_query_id: string,
+    tg: TelegramAPIClient,
+  ): Promise<{ ok: true } | { ok: false; error: 'unknown_pending' }>;
+  cleanupBySession(
+    session_id: string,
+    tg: TelegramAPIClient,
+  ): Promise<{ cleaned: number }>;
   size(): number;
 }
 interface PendingEntry {
   pending_id: string;
   requester_session_id: string;
   message_id: number;
-  callback_data_map: Map<string, string>;  // cb_xxx_0 → "Approve", cb_xxx_1 → "Reject"
+  chat_id: number;                          // admin chat (resolved at add() time via AdminChatRegistry)
+  callback_data_map: Map<string, string>;   // cb_xxx_0 → "Approve", cb_xxx_1 → "Reject"
   options: string[];
   created_at: number;
   resolver: (choice: string) => void;
@@ -317,10 +333,20 @@ Background `setInterval` (every 5 min):
 
 ```ts
 export interface PendingApprovalRegistry {
-  add(entry: Omit<PendingEntry, 'resolver' | 'rejecter'>): { ok: true; promise: Promise<string> } | { ok: false; error: 'CapacityExceededError' };
+  add(entry: Omit<PendingEntry, 'resolver' | 'rejecter'>):
+    | { ok: true; promise: Promise<string> }
+    | { ok: false; error: 'CapacityExceededError' };
   lookupByPendingId(callback_data: string): PendingEntry | null;
-  resolveApproval(pending_id: string, choice: string): { ok: true } | { ok: false; error: 'unknown_pending' };
-  cleanupBySession(session_id: string): { cleaned: number };
+  resolveApproval(
+    pending_id: string,
+    choice: string,
+    callback_query_id: string,
+    tg: TelegramAPIClient,
+  ): Promise<{ ok: true } | { ok: false; error: 'unknown_pending' }>;
+  cleanupBySession(
+    session_id: string,
+    tg: TelegramAPIClient,
+  ): Promise<{ cleaned: number }>;
   size(): number;
 }
 ```
@@ -431,6 +457,7 @@ sequenceDiagram
 | `TGCP_ATTACHMENT_TTL_HOURS` | No | 6 | TTL for attachment cleanup (range 1-24) |
 | `TGCP_PENDING_CAPACITY` | No | 50 | Pending registry capacity (REQ-022 bound) |
 | `TGCP_JANITOR_INTERVAL_MIN` | No | 5 | Attachment janitor sweep cadence |
+| `TG_ADMIN_CHAT_ID` | No | (none — captured from first admin DM) | Bootstrap value for `M005.AdminChatRegistry`. Without it, `request_approval` returns `NoAdminChatConfigured` until admin DMs the bot once. Decimal integer; malformed → silently ignored at boot. |
 
 ### 2.11 Operational Parameters
 
@@ -576,12 +603,16 @@ stateDiagram-v2
 
 - `download_attachment` does not stream large files — full buffer in memory; if Telegram raises file size limit beyond 20 MB, would need streaming. v0.3+ if needed.
 - Compat suite fixtures must be sourced from upstream 0.0.6 repo at fork-time; no automated drift detection in v0.2.
+- `request_approval` requires admin chat to be known via `M005.AdminChatRegistry`. Bootstrap path: env `TG_ADMIN_CHAT_ID` OR first admin DM (private chat only) captured via M005's inbound dispatcher. Without either, `request_approval` returns `NoAdminChatConfigured`. Registry is in-process (no persistence) — lost on daemon restart; user must re-DM (or have env set) before request_approval works post-restart. Documented limitation; v0.3+ may persist last-known admin chat to admin.json.
+- `request_approval` options array bounded to 1..10 (single-row inline keyboard practical UX limit; Telegram Bot API supports more rows but UX degrades). Out-of-range → `InvalidOptionsLength` error.
+- `react`, `reply` (with files), and `download_attachment` use M004-internal HTTP helpers (`internal-reaction.ts`, `internal-multipart.ts`) for `setMessageReaction` / `sendPhoto` / `sendDocument` / file download — these methods are NOT in CONTRACT-004 surface. The helpers consume the bot token via injection from `installToolHandlers`, NOT via direct env read. CONTRACT-004 stays minimal (only methods used by ≥2 modules).
 
 ### 3.7 Change History
 
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-15 | /dev Slice 2 begins: 5 MCP tools (reply / react / edit_message / download_attachment / request_approval) + PendingApprovalRegistry (CONTRACT-011) + AttachmentJanitor + SnapshotEmitter; CONTRACT-011 signature includes `(callback_query_id, tg)` on resolveApproval and `(tg)` on cleanupBySession; PendingEntry adds `chat_id` field; new TG_ADMIN_CHAT_ID env documented |
 
 ### 3.8 Implementation Notes
 
@@ -592,3 +623,8 @@ stateDiagram-v2
 | Attachment files use random 8-hex filename | Avoids path collisions; not user-controlled; no reuse | original filename | original filename could be malicious (path traversal, weird chars); random is safer |
 | Janitor uses filesystem mtime (not metadata DB) | Simplest; no schema | track in-process map of file → expiry | mtime is durable across crash; in-process map would lose state |
 | `react` uses setMessageReaction (Telegram Bot API method) | Standard API endpoint; same as upstream | sendChatAction is just typing indicator | Reaction is the actual emoji feature |
+| `setMessageReaction` / `sendPhoto` / `sendDocument` via M004-internal HTTP helpers (`internal-reaction.ts`, `internal-multipart.ts`) NOT CONTRACT-004 expansion | Keeps CONTRACT-004 (M002 surface) minimal — only methods used by ≥2 modules; reaction + multipart upload are M004-only | Add to TelegramAPIClient interface | Contract-minimalism principle; helpers receive token via injection from `installToolHandlers` |
+| `request_approval` admin chat via M005.AdminChatRegistry (in-process derivation), not PRD-formalized | PRD references "the admin chat" but doesn't formalize resolution; in-process derivation (env bootstrap + first-admin-DM capture) avoids PRD escalation | Persist last admin chat to admin.json; require explicit chat_id param | In-process is simplest; restart loss is acceptable per existing PendingApprovalRegistry semantics |
+| `request_approval` options array bounded 1..10 | Single-row inline keyboard practical UX limit | Allow Telegram's full 8 rows × N | UX degrades past 10; can be revisited if user feedback warrants |
+| `resolveApproval` async with `(callback_query_id, tg)` extra params; ordering: answerCallbackQuery dispatched BEFORE Promise resolves | Avoids zombie-spinner UX (admin sees button-clicked feedback before claude returns) | Fire-and-forget answerCallbackQuery | Async ordering is the user-facing correctness invariant |
+| `cleanupBySession(session_id, tg)` rejects pending Promises with `Error('session_terminated')` and edits TG button to "approval cancelled (session ended)" | Mirrors PRD §3.3 cleanup semantics; `tg.editMessageText` provides admin visibility | Just reject Promise + leave stale buttons | Stale buttons confuse admin; edit closes the loop |

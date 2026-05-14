@@ -12,6 +12,11 @@ import { MeasurementHelper } from "./measurement-helper";
 export interface ObservabilityCtx {
   setStateDir(sd: StateDir): void;
   setTgClient(tg: TelegramAPIClient, adminChatId?: number): void;
+  /**
+   * Slice 2: bind AlertDispatcher's destination chat to a dynamic source
+   * (e.g., M005 AdminChatRegistry subscribe). Triggers flushQueue if changed.
+   */
+  setAdminChat(chatId: number): void;
   getStatusReporter(): StatusReporter;
   getLoggerForTest(): JsonLogger;
   getAlertDispatcherForTest(): AlertDispatcher;
@@ -55,6 +60,9 @@ export function installObservability(args: InstallObservabilityArgs): Observabil
     },
     setTgClient(tg, adminChatId = 0) {
       alertDispatcher.setTgClient(tg, adminChatId);
+    },
+    setAdminChat(chatId: number) {
+      alertDispatcher.setAdminChat(chatId);
     },
     getStatusReporter() {
       return statusReporter;

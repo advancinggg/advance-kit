@@ -1,0 +1,237 @@
+import type { TelegramAPIClient } from "../telegram/client";
+import type { EventBus } from "../daemon/event-bus";
+import type { Clock } from "../daemon/clock";
+import type { MCPDaemonAcceptor } from "../mcp/daemon-acceptor";
+import type { AdminAllowlist } from "../auth/allowlist";
+import type { RegistrationGate } from "../auth/registration-gate";
+import type { StatusReporter } from "../obs/status-reporter";
+import type { PendingApprovalRegistry } from "../tools/pending-registry";
+import { shortHash } from "../common/hash";
+import { SessionRegistry } from "./session-registry";
+import { AdminChatRegistry } from "./admin-chat-registry";
+import { NoSessionReplyThrottle } from "./no-session-throttle";
+import { handleSessionCommand } from "./commands/session";
+import { handleListCommand } from "./commands/list";
+import { handleStatusCommand } from "./commands/status";
+
+interface TgUser {
+  id: number;
+}
+interface TgChat {
+  id: number;
+  type: string;
+}
+interface TgMessage {
+  message_id?: number;
+  from?: TgUser;
+  chat?: TgChat;
+  text?: string;
+}
+interface TgCallbackQuery {
+  id: string;
+  from?: TgUser;
+  message?: { chat?: TgChat; message_id?: number };
+  data?: string;
+}
+
+export interface InboundDispatcherConfig {
+  tg: TelegramAPIClient;
+  eventBus: EventBus;
+  clock: Clock;
+  acceptor: MCPDaemonAcceptor;
+  adminAllowlist: AdminAllowlist;
+  registrationGate: RegistrationGate;
+  statusReporter: StatusReporter;
+  pendingRegistry: PendingApprovalRegistry;
+  sessionRegistry: SessionRegistry;
+  adminChatRegistry: AdminChatRegistry;
+  throttle: NoSessionReplyThrottle;
+}
+
+export class InboundDispatcher {
+  private cfg: InboundDispatcherConfig;
+  private unsubs: Array<() => void> = [];
+
+  constructor(cfg: InboundDispatcherConfig) {
+    this.cfg = cfg;
+  }
+
+  install(): void {
+    const u1 = this.cfg.eventBus.on("inbound_update", (payload) => {
+      void this.handleInbound(payload);
+    });
+    const u2 = this.cfg.eventBus.on("session_disconnected", (payload) => {
+      const p = payload as { session_id: string };
+      void this.cfg.pendingRegistry.cleanupBySession(p.session_id, this.cfg.tg);
+    });
+    this.unsubs.push(u1, u2);
+  }
+
+  dispose(): void {
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
+  }
+
+  private async handleInbound(payload: unknown): Promise<void> {
+    const p = payload as { update_id?: number; type: "message" | "callback_query"; payload: unknown };
+    const updateId = typeof p.update_id === "number" ? p.update_id : 0;
+    if (p.type === "message") {
+      await this.handleText(updateId, p.payload as TgMessage);
+    } else if (p.type === "callback_query") {
+      await this.handleCallback(updateId, p.payload as TgCallbackQuery);
+    }
+  }
+
+  private async handleText(updateId: number, msg: TgMessage): Promise<void> {
+    const senderId = msg.from?.id;
+    const chatId = msg.chat?.id;
+    const chatType = msg.chat?.type ?? "unknown";
+    const text = msg.text ?? "";
+    if (senderId === undefined || chatId === undefined) {
+      return; // malformed
+    }
+    // Step 1: registration window check FIRST (before admin check)
+    if (this.cfg.registrationGate.isInRegistrationWindow()) {
+      const result = await Promise.resolve(
+        this.cfg.registrationGate.processRegistrationDM(senderId, text),
+      );
+      if (result.kind !== "not_registration_dm") {
+        // Registration in progress (success / fail / rate-limited) — terminal for this DM
+        return;
+      }
+      // not_registration_dm during registration window: drop silently (no admin to route to)
+      return;
+    }
+    // Step 2: admin verify
+    if (!this.cfg.adminAllowlist.isAdmin(senderId)) {
+      this.cfg.eventBus.emit("auth_deny_routing", {
+        sender_hash: shortHash(String(senderId)),
+        reason: "inbound_text_deny",
+      });
+      return;
+    }
+    // Step 2a: capture admin chat (private chats only — CCD-10 privilege-leak defense)
+    this.cfg.adminChatRegistry.setFromInbound(chatId, chatType);
+    // Step 3: command match
+    if (text.startsWith("/session ") || text === "/session") {
+      const arg = text.slice("/session".length).trim();
+      await handleSessionCommand({
+        shortid: arg,
+        chatId,
+        updateId,
+        tg: this.cfg.tg,
+        eventBus: this.cfg.eventBus,
+        registry: this.cfg.sessionRegistry,
+      });
+      return;
+    }
+    if (text === "/list") {
+      await handleListCommand({
+        chatId,
+        updateId,
+        tg: this.cfg.tg,
+        eventBus: this.cfg.eventBus,
+        registry: this.cfg.sessionRegistry,
+        clock: this.cfg.clock,
+      });
+      return;
+    }
+    if (text === "/status") {
+      await handleStatusCommand({
+        chatId,
+        updateId,
+        tg: this.cfg.tg,
+        eventBus: this.cfg.eventBus,
+        statusReporter: this.cfg.statusReporter,
+      });
+      return;
+    }
+    // Step 4: LRU dispatch (with stale-deliver fallback)
+    await this.dispatchToFocus(updateId, chatId, msg);
+  }
+
+  private async dispatchToFocus(updateId: number, chatId: number, msg: TgMessage): Promise<void> {
+    while (true) {
+      const focus = this.cfg.sessionRegistry.getFocus();
+      if (!focus) {
+        // No sessions — throttled no-session reply
+        if (this.cfg.throttle.tryReply(chatId)) {
+          await this.cfg.tg.sendMessage({
+            chat_id: chatId,
+            text: "No active claude session. Run `claude --channels telegram` to start one.",
+          });
+        }
+        this.cfg.eventBus.emit("route_decision", {
+          update_id: updateId,
+          target_session: null,
+          reason: "no_session",
+        });
+        return;
+      }
+      const result = await this.cfg.acceptor.deliverToSession(focus.session_id, {
+        kind: "inbound_push",
+        type: "message",
+        payload: msg,
+      });
+      if (result.ok) {
+        this.cfg.eventBus.emit("route_decision", {
+          update_id: updateId,
+          target_session: focus.session_id,
+          reason: "text_delivered",
+        });
+        return;
+      }
+      // Stale session — remove and retry
+      this.cfg.sessionRegistry.removeStale(focus.session_id);
+      // loop continues with next focus
+    }
+  }
+
+  private async handleCallback(updateId: number, cb: TgCallbackQuery): Promise<void> {
+    const senderId = cb.from?.id;
+    const callbackData = cb.data ?? "";
+    if (senderId === undefined) return;
+    // Admin verify FIRST
+    if (!this.cfg.adminAllowlist.isAdmin(senderId)) {
+      this.cfg.eventBus.emit("auth_deny_routing", {
+        sender_hash: shortHash(String(senderId)),
+        reason: "callback_deny",
+      });
+      // SILENT DROP — no answerCallbackQuery to attacker (PRD §3.3 / M005 §1.4.3)
+      return;
+    }
+    // Lookup pending entry
+    const entry = this.cfg.pendingRegistry.lookupByPendingId(callbackData);
+    if (!entry) {
+      // Stale post-crash button click → "approval expired"
+      try {
+        await this.cfg.tg.answerCallbackQuery({
+          callback_query_id: cb.id,
+          text: "approval expired",
+          show_alert: true,
+        });
+      } catch {
+        /* best-effort */
+      }
+      this.cfg.eventBus.emit("route_decision", {
+        update_id: updateId,
+        target_session: null,
+        reason: "callback_resolved",
+      });
+      return;
+    }
+    // Resolve via M004 — ordering invariant: M004 dispatches answerCallbackQuery before resolving Promise
+    const optionLabel = entry.callback_data_map.get(callbackData) ?? "";
+    await this.cfg.pendingRegistry.resolveApproval(
+      entry.pending_id,
+      optionLabel,
+      cb.id,
+      this.cfg.tg,
+    );
+    this.cfg.eventBus.emit("route_decision", {
+      update_id: updateId,
+      target_session: entry.requester_session_id,
+      reason: "callback_resolved",
+    });
+  }
+}

@@ -174,6 +174,7 @@ reset-admin is meant to be followed by daemon restart so the next boot re-enters
 | MODULE-006-AC-17 | REQ-014 / RISK-008 | CONTRACT-003 | Registration code redacted from all log_emit events (only code-hash logged) | unit test |
 | MODULE-006-AC-18 | REQ-013 | — | env var parsed as JSON array OR single integer; malformed env → daemon refuses to start with clear error | unit test |
 | MODULE-006-AC-19 | REQ-011 | CONTRACT-010 | isInRegistrationWindow() returns true between window_opened and either success/timeout/global_trip | unit test |
+| MODULE-006-AC-20 | REQ-014 | CONTRACT-010 | `forceReopenForReset()` transitions gate from any prior state (`open` / `waiting_for_reset` / `closed`) to `open`; cancels both `timer` and `waitForResetReminderTimer`; resets `perSenderCount` + `globalCount`; emits `registration_event{kind:'window_opened', detail:{code_hash, trigger:'admin_reset'}}` | unit test |
 
 ### 1.6 Non-functional Requirements
 
@@ -254,6 +255,16 @@ export type RegistrationResult =
 export interface RegistrationGate {
   isInRegistrationWindow(): boolean;
   processRegistrationDM(sender_user_id: number, text: string): RegistrationResult;
+  /**
+   * Slice 2 additive: in-process reset-and-reopen for M007 reset-admin CLI.
+   * Transitions gate to `open` from ANY prior state (open / waiting_for_reset / closed).
+   * Cancels both pending timers (window-timeout + waitForResetReminderTimer).
+   * Resets perSenderCount + globalCount.
+   * Emits `registration_event{kind:'window_opened', detail:{code_hash, trigger:'admin_reset'}}`.
+   * Used only by M007's control socket reset-admin handler — daemon stays alive in
+   * both launchd and lazy-spawn modes; no daemon restart required.
+   */
+  forceReopenForReset(): void;
 }
 
 // CONTRACT-015
@@ -446,6 +457,7 @@ stateDiagram-v2
 | MODULE-006-T17 | Unit | AC-17 | code redaction | inspect all emitted events | code itself never appears; only code_hash | P0 |
 | MODULE-006-T18 | Unit | AC-18 | malformed env | TELEGRAM_AUTHORIZED_USERS="not-json" | daemon refuses to start; clear stderr | P1 |
 | MODULE-006-T19 | Unit | AC-19 | isInRegistrationWindow | check during open/closed/waiting | returns true during open only | P0 |
+| MODULE-006-T20 | Unit | AC-20 | forceReopenForReset cross-state | 3 sub-cases: pre-state ∈ {open, waiting_for_reset, closed} → call forceReopenForReset() | post-state == 'open'; both timer + waitForResetReminderTimer cancelled (FakeClock advance asserts no fire); perSenderCount + globalCount == 0; registration_event{kind:'window_opened', detail:{code_hash, trigger:'admin_reset'}} emitted exactly once | P0 |
 
 ### 3.4 Acceptance Criteria Verification
 
@@ -470,6 +482,7 @@ stateDiagram-v2
 | MODULE-006-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-006-AC-20 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -493,6 +506,7 @@ stateDiagram-v2
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: admin-auth (allowlist + registration gate + brute-force counters + AdminStateReset + deployment-mode-aware timeout) under `plugins/telegram-channels-pro/` |
+| 2026-05-15 | Slice 2 additive: `forceReopenForReset()` added to CONTRACT-010 RegistrationGate interface for M007's reset-admin in-process re-open path; new AC-20 + T20; existing 19 AC tests unchanged |
 
 ### 3.8 Implementation Notes
 
@@ -504,3 +518,5 @@ stateDiagram-v2
 | Counter trip closes window IMMEDIATELY (not waiting for 5min) | Active brute-force attempt is more critical than passive timeout | wait until timer | aggressive close reduces attack window further |
 | `crypto.randomBytes` via Node built-in | well-audited; no extra dep | self-built PRNG | trivial; standard |
 | code stored only in process memory (not on disk) | minimizes exposure window | persist for resume | 5min validity makes persistence pointless |
+| forceReopenForReset transitions from any state via internal `currentState = "closed"` then re-calls openWindow() | Reuses existing openWindow code path; preserves invariants (counter reset, timer schedule, event emission) | Inline duplicate the open logic | Single source of truth for "open a window"; openWindow's idempotency guard naturally rejects double-open |
+| forceReopenForReset emits same event kind (window_opened) with additive `trigger` field | M008 Subscriber treats unknown detail fields as opaque (logs whole detail object); preserves backward compat with code_hash field consumers | New event kind like `window_reopened` | New event type would require event-types.ts catalog change AND M008 subscriber branch — not justified for an audit-only distinction |

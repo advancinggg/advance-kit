@@ -1,0 +1,7 @@
+{
+  "tool": "react",
+  "params_required": ["chat_id", "message_id", "emoji"],
+  "params_optional": [],
+  "result_keys_ok": ["ok"],
+  "result_keys_err": ["ok", "error"]
+}

@@ -399,6 +399,23 @@ File perms: 0600.
 Owner: process uid.
 Path: `<state_dir>/daemon.lock`.
 
+`StateDirSpec` paths (CONTRACT-001 surface):
+
+| Field | Path | Owner module | Purpose |
+|-------|------|--------------|---------|
+| `lockFile` | `<root>/daemon.lock` | M001 | single-instance lock |
+| `socketFile` | `<root>/daemon.sock` | M003 | MCP UDS for claude sessions |
+| `controlSocketFile` | `<root>/daemon.ctl.sock` | M007 | CLI control socket (status / reset-admin) |
+| `adminFile` | `<root>/admin.json` | M006 | persisted admin allowlist |
+| `offsetFile` | `<root>/offset.json` | M002 | TG getUpdates offset |
+| `attachmentDir` | `<root>/attachments/` | M004 | downloaded TG attachments (TTL-bounded) |
+| `logDir` | (separate; default `~/Library/Logs/advance-kit/...`) | M008 | JSONL daemon logs |
+
+**Additive-field invariant**: when adding a path field to `StateDirSpec`, both
+`resolveStateDir()` and any test helper that constructs a `StateDirSpec` literal
+(e.g., `tests/helpers/tmp-state-dir.ts`) must populate the new field. The existing
+6 path fields are stable across slices; new fields are append-only.
+
 No SQL / migrations.
 
 ### 2.6 Database Functions & RPCs
@@ -673,6 +690,7 @@ stateDiagram-v2
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: bringing up StateDir + ProcessLock + EventBus + DeploymentMode + Watchdog + graceful shutdown under `plugins/telegram-channels-pro/` |
+| 2026-05-15 | Slice 2 additive: `controlSocketFile` field added to StateDirSpec for M007 daemon-side control socket; resolveStateDir + tmp-state-dir.ts helpers updated; existing consumers unchanged (no removed/renamed fields) |
 
 ### 3.8 Implementation Notes
 

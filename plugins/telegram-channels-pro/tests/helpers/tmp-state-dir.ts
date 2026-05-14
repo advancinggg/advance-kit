@@ -22,6 +22,7 @@ export function makeTmpStateDir(eventBus?: EventBus): TmpStateDir {
     root,
     lockFile: path.join(root, "daemon.lock"),
     socketFile: path.join(root, "daemon.sock"),
+    controlSocketFile: path.join(root, "daemon.ctl.sock"),
     adminFile: path.join(root, "admin.json"),
     offsetFile: path.join(root, "offset.json"),
     attachmentDir: path.join(root, "attachments"),

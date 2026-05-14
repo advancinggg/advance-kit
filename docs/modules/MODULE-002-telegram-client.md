@@ -641,6 +641,7 @@ sequenceDiagram
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: telegram-client implementation under `plugins/telegram-channels-pro/` |
+| 2026-05-15 | Slice 2 scope-expansion re-verification: M002 implementation unchanged; included in scope_expansion for CONTRACT-001 additive `controlSocketFile` field — no consumer in M002 references the new field. |
 
 ### 3.8 Implementation Notes
 

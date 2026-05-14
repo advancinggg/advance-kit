@@ -273,3 +273,74 @@ describe("MODULE-006-AC-16: case sensitivity (smoke)", () => {
     expect(result.kind).toBe("fail_format");
   });
 });
+
+describe("MODULE-006-AC-20: forceReopenForReset transitions from any state", () => {
+  test("MODULE-006-T20.a — pre-state 'open' → forceReopenForReset → state remains 'open' with fresh code; counters reset; window_opened with trigger:'admin_reset' emitted", async () => {
+    const { gate, tmp } = makeGate({ deploymentMode: "launchd", windowMs: 5 * 60_000 });
+    await tmp.stateDir.initialize();
+    const collector = new EventCollector(tmp.eventBus);
+    cleanups.push(() => collector.stop());
+    gate.openWindow();
+    expect(gate.state()).toBe("open");
+    const codeBefore = gate.currentCodeForTest();
+    await gate.processRegistrationDM(1, "register WRONG1");
+    await gate.processRegistrationDM(2, "register WRONG2");
+    collector.clear();
+    gate.forceReopenForReset();
+    expect(gate.state()).toBe("open");
+    const codeAfter = gate.currentCodeForTest();
+    expect(codeAfter).not.toBeNull();
+    expect(codeAfter).not.toBe(codeBefore);
+    const opened = collector.byType("registration_event").filter((e) => {
+      const p = e.payload as { kind?: string; detail?: { trigger?: string } };
+      return p.kind === "window_opened" && p.detail?.trigger === "admin_reset";
+    });
+    expect(opened.length).toBe(1);
+    const detail = (opened[0]!.payload as { detail: { code_hash: string; trigger: string } }).detail;
+    expect(typeof detail.code_hash).toBe("string");
+    expect(detail.trigger).toBe("admin_reset");
+    // Counters reset: sender 1's per-sender count is now 0; allowed to attempt again
+    // Use a regex-valid but wrong code (uppercase 6 chars from the allowed alphabet, distinct from any real code)
+    const r = await gate.processRegistrationDM(1, "register ABCDEF");
+    expect(r.kind).toBe("fail_code");
+  });
+
+  test("MODULE-006-T20.b — pre-state 'waiting_for_reset' → forceReopenForReset → state 'open'; old reminder timer cancelled (only ONE timeout fires after 5min)", async () => {
+    const { gate, tmp, clock } = makeGate({ deploymentMode: "launchd", windowMs: 5 * 60_000 });
+    await tmp.stateDir.initialize();
+    gate.openWindow();
+    gate.forceTimeoutForTest();
+    expect(gate.state()).toBe("waiting_for_reset");
+    const collector = new EventCollector(tmp.eventBus);
+    cleanups.push(() => collector.stop());
+    gate.forceReopenForReset();
+    expect(gate.state()).toBe("open");
+    const opened = collector.byType("registration_event").filter((e) => {
+      const p = e.payload as { kind?: string; detail?: { trigger?: string } };
+      return p.kind === "window_opened" && p.detail?.trigger === "admin_reset";
+    });
+    expect(opened.length).toBe(1);
+    collector.clear();
+    clock.tick(5 * 60_000);
+    const timeouts = collector.byType("registration_event").filter((e) => {
+      const p = e.payload as { kind?: string };
+      return p.kind === "timeout_launchd";
+    });
+    expect(timeouts.length).toBe(1); // exactly one from the NEW timer (old reminder timer was cancelled)
+  });
+
+  test("MODULE-006-T20.c — pre-state 'closed' → forceReopenForReset → state 'open'", async () => {
+    const { gate, tmp } = makeGate();
+    await tmp.stateDir.initialize();
+    expect(gate.state()).toBe("closed");
+    const collector = new EventCollector(tmp.eventBus);
+    cleanups.push(() => collector.stop());
+    gate.forceReopenForReset();
+    expect(gate.state()).toBe("open");
+    const opened = collector.byType("registration_event").filter((e) => {
+      const p = e.payload as { kind?: string; detail?: { trigger?: string } };
+      return p.kind === "window_opened" && p.detail?.trigger === "admin_reset";
+    });
+    expect(opened.length).toBe(1);
+  });
+});

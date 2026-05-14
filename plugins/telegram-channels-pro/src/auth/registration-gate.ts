@@ -25,6 +25,12 @@ export interface RegistrationGate {
   currentCodeForTest(): string | null;
   /** Test-visible: force the 5-min timeout to fire. */
   forceTimeoutForTest(): void;
+  /**
+   * Slice 2: in-process re-open from any prior state for M007 reset-admin recovery.
+   * Cancels both pending timers (window-timeout + waitForResetReminder), resets brute-force
+   * counters, transitions state to 'open', emits registration_event{window_opened, detail:{code_hash, trigger:'admin_reset'}}.
+   */
+  forceReopenForReset(): void;
   /** Stop timer (e.g., on daemon_stop). */
   stop(): void;
 }
@@ -61,7 +67,7 @@ export class RegistrationGateImpl implements RegistrationGate {
     };
   }
 
-  openWindow(): void {
+  openWindow(trigger?: string): void {
     if (this.currentState !== "closed") return;
     const code = generateRegistrationCode();
     this.currentCode = code;
@@ -69,11 +75,30 @@ export class RegistrationGateImpl implements RegistrationGate {
     this.perSenderCount.clear();
     this.globalCount = 0;
     this.cfg.emitCodeToStderr(code);
+    const detail: Record<string, unknown> = { code_hash: shortHash(code) };
+    if (trigger) detail.trigger = trigger;
     this.cfg.eventBus.emit("registration_event", {
       kind: "window_opened",
-      detail: { code_hash: shortHash(code) },
+      detail,
     });
     this.timer = this.cfg.clock.setTimeout(() => this.handleTimeout(), this.cfg.windowMs);
+  }
+
+  forceReopenForReset(): void {
+    // Cancel any pending registration-window timeout timer
+    if (this.timer) {
+      this.timer.cancel();
+      this.timer = null;
+    }
+    // Cancel waiting_for_reset reminder timer (if active)
+    if (this.waitForResetReminderTimer) {
+      this.waitForResetReminderTimer.cancel();
+      this.waitForResetReminderTimer = null;
+    }
+    // Force closed state regardless of prior state, then re-open via the standard path
+    this.currentState = "closed";
+    this.currentCode = null;
+    this.openWindow("admin_reset");
   }
 
   private handleTimeout(): void {

@@ -14,7 +14,10 @@
 CLI subcommands users invoke (slash commands per claude-code SDK), and the advance-kit
 plugin format compliance glue (plugin.json + marketplace.json + 3 README synchronization).
 It owns the lazy-spawn fallback decision (when user declines launchd takeover) and the
-concurrent lazy-spawn race resolution via M001 file lock.
+concurrent lazy-spawn race resolution via M001 file lock. **(Slice 2)** It also owns
+the daemon-side **control socket** (`<state_dir>/daemon.ctl.sock`) — a separate UDS
+distinct from the MCP socket — that handles `status_request` and `reset_admin_request`
+frames sent by `bin/status-helper.sh` and `bin/reset-admin-helper.sh`.
 
 deployment is the ONLY module that interacts with system-level `launchctl` and the macOS
 `~/Library/LaunchAgents/` directory; daemon-core runtime behavior (M001) is separate.
@@ -137,22 +140,31 @@ output.
 5. If `n`: leaves state dir for reinstall recovery.
 6. Print "Daemon uninstalled. If you had any orphan `bun` processes, run `pkill -9 bun` to clean up."
 
-#### 1.4.3 reset-admin
+#### 1.4.3 reset-admin (Slice 2: in-process re-open, no daemon restart)
 
-**User flow**:
-1. Helper invokes M006 CONTRACT-015 `resetAdmin()` via the daemon's IPC channel — **always via CONTRACT-015**, never via direct admin.json unlink. If daemon is not running, helper starts a short-lived daemon-stub or signals the user to start the daemon first (so audit emission `registration_event: admin_reset` is preserved).
-2. M006.resetAdmin() runs: admin.json unlinked + `registration_event: admin_reset` emitted (audit trail).
-3. Helper signals daemon to stop (via SIGTERM); launchd KeepAlive restarts it; daemon boots into registration mode (admin.json absent).
-4. Print new code displayed at boot (via the launchd stderr log path, also surfaced to claude session if attached).
+**User flow** (Slice 2 design — supersedes the original "kill + KeepAlive restart" flow):
+1. Helper opens unix socket connection to daemon (`<state_dir>/daemon.ctl.sock` — the CONTROL socket, not the MCP socket).
+2. Sends `{kind: "reset_admin_request"}` (LF-terminated JSON).
+3. Daemon-side `ControlSocket` handler:
+   - Calls `M006.AdminStateReset.resetAdmin()` — clears admin.json + clears in-memory allowlist + emits `registration_event: admin_reset` with `prior_admin_hash` (audit).
+   - Calls `M006.RegistrationGate.forceReopenForReset()` (CONTRACT-010 Slice-2 additive method) — transitions gate to `open` from any prior state, cancels both pending timers (window-timeout + waitForResetReminder), resets brute-force counters, emits `registration_event: window_opened` with `detail: {code_hash, trigger: "admin_reset"}`. Daemon STAYS ALIVE.
+   - Returns `{ok: true, result: {cleared, prior_admin_hash, deployment_mode, daemon_pid}}`.
+4. Helper inspects `deployment_mode`:
+   - `launchd`: prints "Admin state cleared. Daemon continues running with a fresh registration window. Code printed in launchd stderr log; check `~/Library/Logs/advance-kit/telegram-channels-pro/daemon.err`." NO daemon kill.
+   - `lazy-spawn`: prints "Admin state cleared. Send any DM to the bot — it will reply with the registration code from the daemon's open log." NO daemon kill.
+
+**Why no daemon restart**: in lazy-spawn mode there is no launchd KeepAlive — killing the daemon would leave it permanently dead until the next claude session triggers a respawn. The in-process `forceReopenForReset` works uniformly across both deployment modes and is unconditionally safer.
 
 #### 1.4.4 status
 
-**User flow**:
-1. Helper opens unix socket connection to daemon (`<state_dir>/daemon.sock`).
-2. Sends a `status_request` frame: `{kind: "status_request"}`.
-3. Daemon-side (via M003 transport, special-cased for status frames OR using a separate CLI path) calls M008 CONTRACT-014 StatusReporter.getSnapshot().
-4. Returns the snapshot as a `status_response` frame.
+**User flow** (Slice 2: control socket path):
+1. Helper opens unix socket connection to daemon (`<state_dir>/daemon.ctl.sock` — control socket; distinct from MCP socket `daemon.sock`).
+2. Sends a `status_request` frame: `{kind: "status_request"}` (LF-terminated JSON).
+3. Daemon-side `ControlSocket` handler calls M008 CONTRACT-014 `StatusReporter.getSnapshot()`.
+4. Returns the snapshot as `{ok: true, result: <StatusSnapshot>}` (LF-terminated JSON).
 5. Helper formats the snapshot as text and prints.
+
+**Why a separate control socket**: the MCP socket (`daemon.sock`) speaks the length-prefixed framing protocol used by claude sessions (M003). Mixing CLI-only one-shot frames into M003's protocol would either expand CONTRACT-006 (M003's surface) with M007-specific concerns or require special-casing inside M003. A separate UDS at `daemon.ctl.sock` keeps M003 transport-pure, owned entirely by M007 (`src/deployment/control-socket.ts`). The control socket uses simpler newline-delimited JSON (no length prefix; one-shot exchanges).
 
 **Output format**:
 ```
@@ -280,10 +292,11 @@ Per advance-kit VERSIONING.md 5-sync-point invariant: all 5 places (plugin.json 
 - Lazy-spawn entry point + concurrent race resolution
 - Plugin format compliance (plugin.json + marketplace.json + 3 READMEs)
 - Rollback documentation authoring
+- (Slice 2) Daemon-side **control socket** (`daemon.ctl.sock`) — frame handlers for `status_request` and `reset_admin_request`
 
 **OUT**:
 - Daemon runtime behavior → MODULE-001
-- Admin state mutation → MODULE-006 (via CONTRACT-015)
+- Admin state mutation → MODULE-006 (via CONTRACT-015 + CONTRACT-010 forceReopenForReset)
 - Status data computation → MODULE-008 (via CONTRACT-014)
 - TG transport / MCP transport → MODULE-002 / MODULE-003
 
@@ -333,6 +346,41 @@ M007 does NOT provide cross-module contracts. Its surface is the user-facing CLI
 ### 2.5 Data Models
 
 Plist file (XML), see §1.4.1 template. Lives at `~/Library/LaunchAgents/com.advance.telegram-channels-pro.plist`.
+
+**Control socket frame schemas (Slice 2)** — newline-delimited JSON over UDS at `<state_dir>/daemon.ctl.sock` (perms 0600). One-shot exchanges (single request line + single response line + close):
+
+```jsonc
+// REQUEST: status
+{"kind":"status_request"}
+
+// RESPONSE: status
+{"ok":true,"result":{
+  "uptime_seconds": 1234,
+  "deployment_mode": "launchd"|"lazy-spawn",
+  "polling_state": "running"|"quarantine"|"paused",
+  "quarantine_active": false,
+  "last_inbound_ts": 1730000000000,
+  "registered_sessions": 2,
+  "pending_approvals": {"current": 1, "max": 50},
+  "admin_source": "env"|"file"|"none"
+}}
+
+// REQUEST: reset-admin
+{"kind":"reset_admin_request"}
+
+// RESPONSE: reset-admin
+{"ok":true,"result":{
+  "cleared": true|false,
+  "prior_admin_hash": "abc123"|null,
+  "deployment_mode": "launchd"|"lazy-spawn",
+  "daemon_pid": 12345
+}}
+
+// ERROR (any kind):
+{"ok":false,"error":"<message>"}
+```
+
+**Stale-socket cleanup at boot**: control socket bind path same pattern as MCP socket — `M001.cleanupStaleSocket(stateDir.controlSocketFile)` is called by `src/daemon/main.ts` before `ControlSocket.start()`.
 
 plugin.json + marketplace.json — JSON files governed by claude-code SDK schemas.
 
@@ -477,14 +525,15 @@ sequenceDiagram
 | `plugins/telegram-channels-pro/commands/status.md` | slash command for status |
 | `plugins/telegram-channels-pro/bin/launchctl-helper.sh` | Install/uninstall + bootstrap/bootout |
 | `plugins/telegram-channels-pro/bin/daemon-spawn.sh` | Lazy-spawn entry |
-| `plugins/telegram-channels-pro/bin/status-helper.sh` | Socket connect + format status |
-| `plugins/telegram-channels-pro/bin/reset-admin-helper.sh` | Calls M006 reset + signals daemon |
+| `plugins/telegram-channels-pro/bin/status-helper.sh` | Connects to control socket + format status |
+| `plugins/telegram-channels-pro/bin/reset-admin-helper.sh` | Connects to control socket + branches by deployment_mode (no daemon kill) |
 | `plugins/telegram-channels-pro/templates/com.advance.telegram-channels-pro.plist.tmpl` | Plist template |
+| **(Slice 2)** `plugins/telegram-channels-pro/src/deployment/control-socket.ts` | Daemon-side ControlSocket: bind UDS + frame dispatch (status / reset_admin) |
+| **(Slice 2)** `plugins/telegram-channels-pro/src/deployment/index.ts` | Module entry exports |
 | `.claude-plugin/marketplace.json` (advance-kit-level update) | Add telegram-channels-pro entry |
 | `README.md` / `README.zh-CN.md` / `README.es.md` (3 files) | Status table row updates |
 | `docs/ROLLBACK.md` | Rollback documentation |
-| `tests/deployment/*.test.ts` | Per-feature tests |
-| `tests/deployment/bin/*.bats` | Shell script tests via bats |
+| `tests/deployment/*.test.ts` | Per-feature tests (using Bun.spawn for shell tests + net.connect for control socket) |
 
 ### 3.3 Test Cases
 
@@ -496,8 +545,8 @@ sequenceDiagram
 | MODULE-007-T04 | Unit | AC-04 | env var captured | set TELEGRAM_BOT_TOKEN before install | plist contains explicit token value | P0 |
 | MODULE-007-T05 | Integration | AC-05 | uninstall path | install + uninstall | launchctl bootout success; plist unlinked | P0 |
 | MODULE-007-T06 | Integration | AC-06 | uninstall state-dir prompt | uninstall + answer "y" to state removal | state dir removed | P0 |
-| MODULE-007-T07 | Integration | AC-07 | reset-admin path | install + register admin + reset-admin | admin.json removed; daemon restart (mock launchd KeepAlive); new code displayed | P0 |
-| MODULE-007-T08 | Integration | AC-08 | status command | daemon running with 2 sessions | output matches §1.4.4 template; uptime / session count correct | P0 |
+| MODULE-007-T07 | Integration | AC-07 | reset-admin via control socket | start ControlSocket; pre-condition gate.state ∈ {"open", "waiting_for_reset", "closed"}; send `{"kind":"reset_admin_request"}` over net.connect to daemon.ctl.sock | response shape `{ok:true, result:{cleared, prior_admin_hash, deployment_mode, daemon_pid}}`; AdminStateReset.resetAdmin invoked; RegistrationGate.forceReopenForReset invoked; gate.state == "open" post-call; admin.json absent; registration_event(window_opened, detail.trigger=="admin_reset") emitted | P0 |
+| MODULE-007-T08 | Integration | AC-08 | status command via control socket | start ControlSocket; daemon running with 2 sessions; send `{"kind":"status_request"}` over net.connect to daemon.ctl.sock | response shape `{ok:true, result:<StatusSnapshot>}` matches CONTRACT-014 with all 8 fields; uptime / session count correct | P0 |
 | MODULE-007-T09 | Integration | AC-09 | concurrent lazy-spawn | spawn 2 daemon processes simultaneously | one wins lock, one exits 0 "attaching"; both claude proxies connect | P0 |
 | MODULE-007-T10 | Unit | AC-10 | plugin.json shape | parse plugin.json | matches expected JSON shape; version 0.1.0; namespace telegram-channels-pro | P0 |
 | MODULE-007-T11 | Unit | AC-11 | marketplace.json shape | parse marketplace.json | telegram-channels-pro entry present; version matches plugin.json | P0 |
@@ -535,6 +584,7 @@ sequenceDiagram
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-15 | /dev Slice 2 begins: 4 slash commands + 4 bin/ helpers + plist template + ROLLBACK.md authored; daemon-side ControlSocket added at `src/deployment/control-socket.ts` (separate UDS at `daemon.ctl.sock`, distinct from MCP socket); reset-admin path rewritten — no daemon kill in either deployment mode (in-process forceReopenForReset via CONTRACT-010) |
 
 ### 3.8 Implementation Notes
 
@@ -543,5 +593,8 @@ sequenceDiagram
 | launchctl wrapper in shell (not TS) | bash is universal on macOS; no Bun deps required for install ceremony | TS scripts | shell is more brittle but install-time only |
 | Plist 0644 (not 0600) | macOS launchd reads plists under user uid; restrictive perms may break load | 0600 | follow macOS conventions; accept same-uid trust exposure (RISK-008 territory; documented) |
 | Lazy-spawn via shell fork (not TS spawnSync) | Decoupled from claude session lifecycle; daemon survives claude exit | TS spawnSync | shell-fork is the launchd-compatible pattern |
-| reset-admin signals daemon stop (not direct kill) | KeepAlive handles restart; clean shutdown preserves pending offset.json flush | SIGKILL | clean is safer; KeepAlive auto-recovers |
+| reset-admin signals daemon stop (not direct kill) | KeepAlive handles restart; clean shutdown preserves pending offset.json flush | SIGKILL | clean is safer; KeepAlive auto-recovers — **superseded in Slice 2 by in-process forceReopenForReset (no daemon kill at all)** |
+| **(Slice 2)** Reset-admin via in-process forceReopenForReset, NOT daemon kill | Lazy-spawn mode has no KeepAlive; killing daemon leaves it dead until next claude spawn. In-process re-open works in both deployment modes; uniformly safer | Branch on deployment_mode and kill only in launchd | Branching adds error-prone two-mode logic; in-process re-open is cleaner |
+| **(Slice 2)** Separate control socket (daemon.ctl.sock) for CLI ingress, NOT extending CONTRACT-006 MCPTransport | Keeps M003 transport-pure for claude sessions; isolates CLI-only frame protocols from MCP protocol; M007 owns the new socket end-to-end | Add status_request / reset_admin_request to CONTRACT-006 | Mixing CLI frames into M003 would expand a contract whose only consumer is M004; cross-cutting CLI concerns belong in M007 |
+| **(Slice 2)** Control socket uses LF-delimited JSON (not length-prefixed framing) | One-shot exchanges (single request + single response + close); length prefix overkill for CLI use | Reuse M003 framing | Simpler implementation; no shared codec dependency |
 | plugin.json + marketplace.json + 3 READMEs as 5 sync points | advance-kit VERSIONING.md invariant; auto-validatable via grep tests | central version source | 5 places is the established convention |

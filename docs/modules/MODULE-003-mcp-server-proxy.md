@@ -568,6 +568,7 @@ sequenceDiagram
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: daemon-side UDS acceptor + framing + deliverToSession/disconnectSession under `plugins/telegram-channels-pro/`. claude-side proxy-client.ts tracked separately (AC-14/15 waived for this slice; need claude live integration). |
+| 2026-05-15 | Slice 2 scope-expansion re-verification: M003 implementation unchanged; included in scope_expansion for CONTRACT-001 additive `controlSocketFile` field — no consumer in M003 references the new field. CONTRACT-006 deliverToSession/disconnectSession surface UNCHANGED (M005 consumes as-is). |
 
 ### 3.8 Implementation Notes
 

@@ -52,6 +52,17 @@ export class AlertDispatcher {
     void this.flushQueue();
   }
 
+  /**
+   * Slice 2: dynamically update the admin chat id (e.g., from M005 AdminChatRegistry
+   * subscribe pattern). Mirrors setTgClient's flushQueue invariant: any alerts
+   * queued while adminChatId was a placeholder MUST flush on first real binding.
+   */
+  setAdminChat(chatId: number): void {
+    if (this.adminChatId === chatId) return;
+    this.adminChatId = chatId;
+    void this.flushQueue();
+  }
+
   feedEvent(eventType: string, payload: unknown): void {
     if (eventType === "quarantine_enter") this.handleQuarantine("enter");
     else if (eventType === "quarantine_exit") this.handleQuarantine("exit");

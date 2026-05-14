@@ -1,7 +1,8 @@
 // Boot orchestrator — wires M001 daemon-core + M002 telegram-client + M003 mcp-server-proxy
-// + M006 admin-auth + M008 observability. See docs/modules/MODULE-001-daemon-core.md §2.7
-// boot sequence and ~/.claude/plans/dev-tgcp-slice-infra.md Step 6 for the rationale of
-// the ordering invariants enforced below.
+// + M004 mcp-tools + M005 routing + M006 admin-auth + M007 deployment (control socket) +
+// M008 observability. See docs/modules/MODULE-001-daemon-core.md §2.7 boot sequence and
+// ~/.claude/plans/dev-tgcp-slice-orchestration.md §4.1 for the rationale of the
+// ordering invariants enforced below.
 
 import * as os from "node:os";
 import { EventBus } from "./event-bus";
@@ -19,6 +20,11 @@ import { OffsetManager } from "../telegram/offset-manager";
 import { PollingLoop } from "../telegram/polling-loop";
 import { MCPDaemonAcceptor } from "../mcp/daemon-acceptor";
 import { resolveAdminBoot } from "../auth/boot-resolver";
+import { AdminStateResetImpl } from "../auth/state-reset";
+import { AdminChatRegistry } from "../routing/admin-chat-registry";
+import { installToolHandlers } from "../tools";
+import { installRouting } from "../routing";
+import { ControlSocket } from "../deployment/control-socket";
 
 export async function main(): Promise<void> {
   const bootTs = Date.now();
@@ -77,13 +83,25 @@ export async function main(): Promise<void> {
   const offsetManager = new OffsetManager(stateDir, eventBus);
   await offsetManager.load();
 
-  // L9: Build TG client with pollingStatus already bound. Bind to M008 so
-  //     AlertDispatcher can deliver alerts from here on.
+  // L8a (Slice 2 / CCD-20): construct AdminChatRegistry eagerly with env value
+  // BEFORE mcpAcceptor.start() at L14 → eliminates the env-parse race for
+  // request_approval issued in the first MCP session.
+  const adminChatRegistry = new AdminChatRegistry(env.TG_ADMIN_CHAT_ID);
+
+  // L9: Build TG client with pollingStatus already bound.
   const apiBase = env.TELEGRAM_API_BASE && env.TELEGRAM_API_BASE.trim().length > 0
     ? env.TELEGRAM_API_BASE
     : "https://api.telegram.org";
   const tgClient = new TelegramAPIClientImpl({ token, eventBus, clock, pollingStatus, apiBase });
-  obs.setTgClient(tgClient);
+
+  // L9a (Slice 2 / CCD-10): bind AlertDispatcher to current admin chat (env-bootstrapped
+  // value if set, else 0 placeholder), AND subscribe AlertDispatcher to live updates
+  // from AdminChatRegistry. The subscribe-fires-current-value pattern keeps the
+  // initial sync atomic with subscription.
+  obs.setTgClient(tgClient, adminChatRegistry.get() ?? 0);
+  adminChatRegistry.subscribe((chatId) => {
+    obs.setAdminChat(chatId ?? 0);
+  });
 
   // L10: Emit daemon_start.
   eventBus.emit("daemon_start", {
@@ -93,8 +111,9 @@ export async function main(): Promise<void> {
     deployment_mode: deploymentMode,
   });
 
-  // L11: Cleanup any stale UDS socket left by prior unclean exit (M001-AC-21).
+  // L11: Cleanup any stale UDS sockets (MCP + control) left by prior unclean exit.
   await cleanupStaleSocket(stateDir.socketFile);
+  await cleanupStaleSocket(stateDir.controlSocketFile);
 
   // L12: Install shutdown handlers BEFORE Watchdog so requestShutdown callback target exists.
   const shutdownCtl = installShutdownHandlers({
@@ -114,12 +133,42 @@ export async function main(): Promise<void> {
   });
   polling.start();
 
-  // L14: UDS acceptor.
+  // L14: UDS acceptor (MCP socket for claude sessions).
   const mcpAcceptor = new MCPDaemonAcceptor({ eventBus, stateDir, clock });
   await mcpAcceptor.start();
 
+  // L14a (Slice 2): wire 5 MCP tool handlers + PendingApprovalRegistry + janitor + snapshot emitter.
+  const toolsCtx = installToolHandlers({
+    acceptor: mcpAcceptor,
+    tg: tgClient,
+    apiBase,
+    token,
+    pollingStatus,
+    eventBus,
+    stateDir,
+    clock,
+    adminChatRegistry,
+  });
+
   // L15: Admin-auth boot resolver (env / file / open-registration).
-  await resolveAdminBoot({ stateDir, env, eventBus, deploymentMode, clock });
+  const adminCtx = await resolveAdminBoot({ stateDir, env, eventBus, deploymentMode, clock });
+
+  // L15a (Slice 2 / CCD-6): construct AdminStateReset; bind admin source on StatusReporter.
+  const adminStateReset = new AdminStateResetImpl(stateDir, adminCtx.allowlist, eventBus);
+  obs.getStatusReporter().setAdminSource(adminCtx.allowlist.source());
+
+  // L15b (Slice 2): wire M005 routing.
+  const routingCtx = installRouting({
+    acceptor: mcpAcceptor,
+    tg: tgClient,
+    eventBus,
+    clock,
+    adminAllowlist: adminCtx.allowlist,
+    registrationGate: adminCtx.registrationGate,
+    statusReporter: obs.getStatusReporter(),
+    pendingRegistry: toolsCtx.getPendingRegistry(),
+    adminChatRegistry,
+  });
 
   // L16: Watchdog probe loop.
   const watchdog = new Watchdog({
@@ -132,5 +181,37 @@ export async function main(): Promise<void> {
   });
   watchdog.start();
 
-  // L17: main returns; daemon stays alive on the event loop.
+  // L17 (Slice 2): ControlSocket — daemon-side handler for status / reset_admin frames.
+  const controlSocket = new ControlSocket({
+    stateDir,
+    eventBus,
+    clock,
+    deploymentMode,
+    getSnapshot: () => obs.getStatusReporter().getSnapshot(),
+    resetAdmin: () => {
+      const result = adminStateReset.resetAdmin();
+      adminCtx.registrationGate.forceReopenForReset();
+      return {
+        cleared: result.cleared,
+        prior_admin_hash: result.prior_admin_hash,
+        deployment_mode: deploymentMode,
+        daemon_pid: process.pid,
+      };
+    },
+  });
+  await controlSocket.start();
+
+  // Hand-off references to shutdown for cleanup wiring (best-effort: subscribe to
+  // daemon_stop and dispose).
+  eventBus.on("daemon_stop", () => {
+    void controlSocket.stop();
+    routingCtx.dispose();
+    toolsCtx.dispose();
+  });
+
+  // Suppress unused warnings — these references are held by the daemon's runtime closure.
+  void watchdog;
+  void polling;
+
+  // L18: main returns; daemon stays alive on the event loop.
 }

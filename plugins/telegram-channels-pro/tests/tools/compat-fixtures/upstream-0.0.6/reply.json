@@ -1,0 +1,8 @@
+{
+  "tool": "reply",
+  "params_required": ["chat_id"],
+  "params_optional": ["text", "reply_to", "reply_markup", "files"],
+  "result_keys_delivered": ["delivered", "message_id"],
+  "result_keys_queued": ["delivered", "queued", "eta_hint"],
+  "result_keys_error": ["delivered", "error"]
+}

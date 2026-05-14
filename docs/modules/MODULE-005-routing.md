@@ -96,18 +96,46 @@ interface SessionEntry {
 }
 ```
 
-**Updates from EventBus events**:
-- `session_connected` → push new entry to head; emit `route_decision: session_added`
-- `session_disconnected` → remove entry; trigger M004.cleanupBySession(session_id); emit `route_decision: session_removed`
+**Updates from EventBus events** (Slice 2: payload shapes match `event-types.ts` EventPayloadMap):
+- `session_connected` → push new entry to head; emit `route_decision: { update_id: -1, target_session: <session_id>, reason: "session_added" }`
+- `session_disconnected` → remove entry; trigger M004.cleanupBySession(session_id, tg); emit `route_decision: { update_id: -1, target_session: <session_id>, reason: "session_removed" }`
 - `tool_call` → update `last_activity_at` of matching session_id; bubble entry to head
 - TG inbound message arrival → does NOT update LRU (per PRD §3.1 routing snapshot rule)
 
+**`update_id: -1` sentinel**: route_decision events not tied to a TG inbound update (session lifecycle) use `update_id: -1`. M008 Subscriber treats negative update_id as "non-update" and logs without offset linkage.
+
 **Capacity guard** (Decision A13):
-- On `session_connected`, check `registry.size() >= 8` before adding. (`>= 8` means the registry
-  already holds 8 entries; this incoming session would be the 9th, so reject.)
-- If over: emit `auth_deny_routing` event with reason='session_capacity_exceeded', call `M003.disconnectSession(session_id, 'capacity_exceeded')`.
+- On `session_connected`, check `registry.size() >= 8` before adding. (`>= 8` means the registry already holds 8 entries; this incoming session would be the 9th, so reject.)
+- If over: emit `auth_deny_routing: { sender_hash: "", reason: "session_capacity_exceeded" }` (sender_hash empty because the caller is a session-init frame from the local UDS, not a TG sender), call `M003.disconnectSession(session_id, 'capacity_exceeded')`.
 
 **Snapshot lookup**: `getFocus()` returns the head entry (most recent activity) at call time. This is the routing-snapshot rule applied per-message.
+
+#### 1.4.1a AdminChatRegistry (Slice 2)
+
+In-process M005-internal helper that resolves "the admin chat" for outbound messages where M004's `request_approval` (and M008's AlertDispatcher via cross-wiring per CCD-10) need a destination. Lives at `src/routing/admin-chat-registry.ts`.
+
+**API**:
+```ts
+export class AdminChatRegistry {
+  constructor(envValue: string | undefined);  // parses env.TG_ADMIN_CHAT_ID eagerly
+  setFromInbound(chat_id: number, chat_type: string): void;  // called by M005 InboundDispatcher post-admin-gate
+  setFromEnvForTest(chat_id: number): void;
+  get(): number | null;
+  subscribe(callback: (chat_id: number | null) => void): () => void;  // fires immediately with current value
+}
+```
+
+**Behavior**:
+- Constructor parses env.TG_ADMIN_CHAT_ID (decimal int); malformed → silently ignored at boot.
+- `setFromInbound` filters on `chat_type === 'private'` — group/channel chats are silently skipped (privilege-leak defense; admin must DM the bot privately).
+- `subscribe` fires the callback immediately with the current value (avoids subscriber-startup race).
+
+**Lifecycle**: in-memory only; lost on daemon restart. User must DM the bot once after restart, OR set TG_ADMIN_CHAT_ID env, OR `request_approval` returns `NoAdminChatConfigured`.
+
+**Cross-module wiring** (per Slice 2 daemon main.ts L8a/L9a):
+- `installToolHandlers` accepts `adminChatRegistry`; M004's request_approval calls `adminChatRegistry.get()`.
+- `installRouting` accepts the same instance; M005's InboundDispatcher calls `setFromInbound(chat_id, chat_type)` on every admin-verified inbound text.
+- M008's AlertDispatcher subscribes via `adminChatRegistry.subscribe(chatId => obs.setAdminChat(chatId ?? 0))` — this binds AlertDispatcher's `adminChatId` to the registry's current value, dynamic update on inbound DM, plus immediate sync at subscribe time.
 
 #### 1.4.2 Inbound text dispatch
 
@@ -117,8 +145,9 @@ interface SessionEntry {
    - true → call `M006.processRegistrationDM(message.from.id, message.text)`; result either consumed (registration in progress — return without further routing) or `not_registration_dm` (drop silently; do NOT fall through to LRU because no admin exists yet).
    - false → proceed to step 3.
 3. Call `M006.isAdmin(message.from.id)`:
-   - false → emit `auth_deny_routing` event (token-bucket rate-limited via M008); drop message.
+   - false → emit `auth_deny_routing: { sender_hash: shortHash(String(msg.from.id)), reason: "inbound_text_deny" }` (token-bucket rate-limited via M008); drop message.
    - true → continue.
+3a. (Slice 2) `adminChatRegistry.setFromInbound(message.chat.id, message.chat.type)` — captures admin chat for downstream `request_approval` + AlertDispatcher routing. Filtered to `chat.type === 'private'` only.
 4. Check if message.text starts with `/session ` / `/list` / `/status` — if so, dispatch to command handler (§1.4.4).
 5. Otherwise: call `registry.getFocus()`:
    - null (no sessions) → call NoSessionReplyThrottle.maybeReply(chat_id, text="No active claude session...")
@@ -133,9 +162,9 @@ interface SessionEntry {
    - false → emit `auth_deny_routing` event (token-bucket rate-limited via M008); **silently drop** the callback (per PRD §3.3 edge case "daemon 静默忽略 callback, pending 保持挂起" — no `answerCallbackQuery` to the attacker, no state leak). pending remains alive for legitimate admin click.
    - true → continue.
 3. Call `M004.lookupByPendingId(callback.data)`:
-   - null → M005 calls `M002.answerCallbackQuery(callback.id, text: "approval expired", show_alert: true)` (PRD §3.3 stale-pending case).
-   - entry → parse option index from callback.data; call `M004.resolveApproval(entry.pending_id, option_label)`. M004 handles answerCallbackQuery internally.
-4. Emit `route_decision: callback_resolved`.
+   - null → M005 calls `M002.answerCallbackQuery({callback_query_id: callback.id, text: "approval expired", show_alert: true})` (PRD §3.3 stale-pending case).
+   - entry → parse option index from callback.data; **await** `M004.resolveApproval(entry.pending_id, option_label, callback.id, tg)`. M004 handles answerCallbackQuery internally; ordering invariant: answerCallbackQuery dispatched BEFORE claude's awaiting Promise resolves.
+4. Emit `route_decision: { update_id: <callback_query.update_id from inbound update>, target_session: <entry.requester_session_id (resolved branch only)>, reason: "callback_resolved" }`.
 
 #### 1.4.4 TG slash commands
 
@@ -191,7 +220,8 @@ Throttle keyed by `chat_id` (admin sender's chat). Single-admin scenario degener
 
 | Requirement | Target | Measurement |
 |-------------|--------|-------------|
-| Inbound dispatch decision latency | < 50 ms | benchmark |
+| Inbound dispatch decision latency (E2E user-facing budget per REQ-020) | < 50 ms | E2E benchmark (production) |
+| Inbound dispatch decision latency (in-process micro-benchmark with mocked M002/M003) | max < 5 ms over 5000 iterations after 200 warm-up | bun test benchmark |
 | Registry add/remove/lookup | O(1) avg | benchmark |
 | LRU bubble-to-head | O(1) | benchmark |
 | Memory per session entry | < 1 KB | benchmark |
@@ -268,12 +298,12 @@ M005 does NOT provide cross-module contracts. Its internal SessionRegistry is in
 
 #### Events/Messages
 
-**Published**:
+**Published** (Slice 2: payloads aligned with `event-types.ts` EventPayloadMap):
 
 | Event Name | Trigger | Payload | Consumer |
 |-----------|---------|---------|----------|
-| `route_decision` | Each dispatch | `{ session_id \| null, kind: 'session_added' \| 'session_removed' \| 'text_delivered' \| 'callback_resolved' \| 'no_session' \| 'command_handled', detail }` | M008 (log) |
-| `auth_deny_routing` | non-admin attempt | `{ from_user_id_hash, kind: 'inbound_text_deny' \| 'callback_deny' \| 'session_capacity_exceeded' }` | M008 (alert via token-bucket) |
+| `route_decision` | Each dispatch | `{ update_id: number; target_session: string \| null; reason: string }` — canonical `reason` values: `"session_added"` / `"session_removed"` / `"text_delivered"` / `"callback_resolved"` / `"no_session"` / `"command_handled"` / `"invalid_shortid"`. `update_id: -1` for non-update events (session lifecycle); else carries the inbound update's update_id. `target_session` is the chosen session_id (or null for no-session/command/invalid-shortid). | M008 (log) |
+| `auth_deny_routing` | non-admin attempt | `{ sender_hash: string; reason: string }` — canonical `reason` values: `"inbound_text_deny"` / `"callback_deny"` / `"session_capacity_exceeded"`. `sender_hash` = `shortHash(String(sender_id))` for admin-gate denials; empty string `""` for capacity-exceeded (caller is local UDS, not TG sender). | M008 (alert via token-bucket) |
 
 **Subscribed**:
 
@@ -300,7 +330,26 @@ interface SessionRegistryEntry {
   registered_at: number;       // ms epoch
   last_activity_at: number;    // bumped by tool_call events
 }
+
+// Slice 2: AdminChatRegistry shape
+interface AdminChatRegistryState {
+  chat_id: number | null;       // captured admin chat (env or first private inbound)
+  // subscribers: callbacks fired on every change AND immediately on subscribe
+}
+
+// NoSessionReplyThrottle shape (per-chat token bucket)
+interface NoSessionReplyEntry {
+  last_consumed_ts: number;     // ms epoch; 5min refill
+}
 ```
+
+**State sources**:
+
+| Surface | Captured From | Lost on |
+|---------|---------------|---------|
+| SessionRegistry entries | `session_connected`/`_disconnected`/`tool_call` events | daemon restart (rebuilt from new connections) |
+| AdminChatRegistry chat_id | env `TG_ADMIN_CHAT_ID` at boot OR first admin-verified private inbound | daemon restart |
+| NoSessionReplyThrottle | per-chat `last_consumed_ts` | daemon restart |
 
 ### 2.6 Database Functions & RPCs
 
@@ -478,13 +527,14 @@ sequenceDiagram
 | File | Role |
 |------|------|
 | `src/routing/session-registry.ts` | LRU ordered list + bump/add/remove |
+| `src/routing/admin-chat-registry.ts` | (Slice 2) AdminChatRegistry: env-bootstrap + private-chat-only inbound capture + subscribe/notify |
 | `src/routing/inbound-dispatcher.ts` | EventBus subscriber + text/callback branch logic |
 | `src/routing/admin-gate.ts` | wrapper calling M006.isAdmin |
 | `src/routing/commands/session.ts` | `/session <shortid>` handler |
 | `src/routing/commands/list.ts` | `/list` handler |
 | `src/routing/commands/status.ts` | `/status` handler (calls M008 StatusReporter) |
 | `src/routing/no-session-throttle.ts` | Per-chat token bucket |
-| `src/routing/capacity-guard.ts` | Decision A13 enforcement |
+| `src/routing/index.ts` | `installRouting(deps)` wiring entry point |
 | `tests/routing/*.test.ts` | Unit + integration |
 
 ### 3.3 Test Cases
@@ -499,7 +549,7 @@ sequenceDiagram
 | MODULE-005-T06 | Unit | AC-06 | tool_call bumps LRU | register 2 sessions B (newer), A (older). emit tool_call(A) | registry head == A | P0 |
 | MODULE-005-T07 | Unit | AC-07 | text doesn't bump LRU | similar setup, emit inbound_update text from admin | registry order unchanged | P0 |
 | MODULE-005-T08 | Integration | AC-08 | callback resolution | request_approval (M004) → admin clicks → callback inbound → resolve | claude awaiting Promise resolves with choice | P0 |
-| MODULE-005-T09 | Unit | AC-09 | non-admin callback | inbound callback_query from non-admin | auth_deny_routing; M002.answerCallbackQuery("Unauthorized") | P0 |
+| MODULE-005-T09 | Unit | AC-09 | non-admin callback | inbound callback_query from non-admin | auth_deny_routing emitted; **silent drop** — no answerCallbackQuery to attacker (per §1.4.3 spec); pendingRegistry NOT consulted | P0 |
 | MODULE-005-T10 | Integration | AC-10 | stale pending click | empty M004 registry + admin clicks | M002.answerCallbackQuery("approval expired", show_alert) | P0 |
 | MODULE-005-T11 | Unit | AC-11 | /session valid | "/session a3f2e1c8" with matching session | session bubbled to head; reply "Switched focus to a3f2e1c8" | P0 |
 | MODULE-005-T12 | Unit | AC-12 | /session invalid | "/session ../etc/passwd" | regex rejects; reply "Invalid shortid format"; registry unchanged | P0 |
@@ -509,7 +559,7 @@ sequenceDiagram
 | MODULE-005-T16 | Unit | AC-16 | /list independent | trigger no-session throttle, then "/list" | /list always replies regardless | P0 |
 | MODULE-005-T17 | Integration | AC-17 | registration window forwarding | M006.isInRegistrationWindow=true; admin DMs "register XYZ" | M006.processRegistrationDM called | P0 |
 | MODULE-005-T18 | Integration | AC-18 | cleanup on disconnect | session A has pending → emit session_disconnected(A) | M004.cleanupBySession(A) called; A's pending resolved with SessionTerminated | P0 |
-| MODULE-005-T19 | Benchmark | AC-19 | dispatch latency P95 | 1000 inbound messages, measure | P95 < 50ms | P1 |
+| MODULE-005-T19 | Benchmark | AC-19 | dispatch latency in-process micro-benchmark | 5000 inbound messages after 200 warm-up; measure max-per-call | max < 5ms (in-process tight bound; production E2E budget per REQ-020 is 50ms but includes Telegram poll cycle) | P1 |
 | MODULE-005-T20 | Integration | AC-20 | stale deliver fallback | A in head, A disconnects between getFocus and deliver | fallback to next entry; if none, no-session reply | P1 |
 
 ### 3.4 Acceptance Criteria Verification
@@ -541,6 +591,7 @@ sequenceDiagram
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-15 | /dev Slice 2 begins: SessionRegistry + InboundDispatcher (text + callback branches) + AdminChatRegistry + commands (/session /list /status) + NoSessionReplyThrottle + capacity guard + pendingRegistry cleanup trigger; event payload shapes aligned to event-types.ts (route_decision uses update_id sentinel -1 for non-update events; auth_deny_routing uses sender_hash field); §1.4.3 spec-vs-test mismatch corrected (silent drop, no answerCallbackQuery to attacker); AC-19 benchmark relaxed to in-process micro-bench (max<5ms vs production E2E budget 50ms); §2.7 mermaid event payloads will be regenerated to match the table (deferred to future /spec rerun) |
 
 ### 3.8 Implementation Notes
 
@@ -551,3 +602,8 @@ sequenceDiagram
 | Capacity guard at session_connected (not pre-accept) | M003 accepts every socket; M005 reacts via event; clean separation | M003 queries M005 before accept | A13 explicit choice — keeps M003 transport-pure |
 | No-session throttle keyed by chat_id | Per-admin scenario degenerates to global throttle; multi-admin scenario (future) naturally extends | global counter only | future-compatible |
 | Pending cleanup via M005 → M004 (not M003 → M004 directly) | M005 owns the cross-event orchestration; M004 is pure storage | M003 directly notifies M004 | Keeps M003 layer-pure; M005 is the natural place to coordinate |
+| AdminChatRegistry in-process derivation (not PRD-formalized) | PRD references "the admin chat" but doesn't formalize resolution; in-process derivation (env bootstrap + first private-DM capture) avoids /prd escalation; restart loss matches existing pending-registry semantics | Persist last admin chat to admin.json; require explicit chat_id config | In-process simplest; group/channel chat_id filtering prevents privilege leak |
+| AdminChatRegistry → AlertDispatcher dynamic binding via subscribe pattern | M008 alerts (REQ-024) need same admin-chat resolution; subscribe-fires-current-value avoids subscriber-startup race | Have M008 read AdminChatRegistry directly | Decoupling: AlertDispatcher doesn't depend on M005's data structure; clean event-flow |
+| route_decision update_id: -1 sentinel for non-update events (session lifecycle) | event-types.ts EventPayloadMap requires `update_id: number`; -1 cleanly distinguishes M005-internal lifecycle events from TG inbound responses | Add separate event types like `session_lifecycle_event` | Adds catalog churn for marginal benefit; sentinel is documented + M008 Subscriber treats negative as non-update |
+| auth_deny_routing sender_hash empty for capacity case | The "sender" of a session_capacity_exceeded denial is a local UDS frame, not a TG sender — empty hash signals "n/a" | Synthetic hash like `"local-uds"` | Keeping it empty makes downstream filtering trivial; M008's redaction logic accepts empty as valid |
+| In-process AC-19 benchmark with max<5ms ceiling (vs production E2E P95<50ms in REQ-020) | With M002+M003 mocked, in-process dispatch should be sub-millisecond; tight 5ms ceiling catches pathological regressions without flake risk | Run real Telegram round-trip in CI | Real-network test is out-of-cycle (manual soak per REQ-017); in-process benchmark guards the algorithmic side only |

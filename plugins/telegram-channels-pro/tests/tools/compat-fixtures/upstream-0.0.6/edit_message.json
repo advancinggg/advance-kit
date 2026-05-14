@@ -1,0 +1,7 @@
+{
+  "tool": "edit_message",
+  "params_required": ["chat_id", "message_id", "text"],
+  "params_optional": [],
+  "result_keys_delivered": ["delivered", "message_id"],
+  "result_keys_error": ["delivered", "error"]
+}

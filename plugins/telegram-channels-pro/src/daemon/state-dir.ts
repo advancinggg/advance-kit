@@ -8,6 +8,7 @@ export interface StateDirSpec {
   readonly root: string;
   readonly lockFile: string;
   readonly socketFile: string;
+  readonly controlSocketFile: string;
   readonly adminFile: string;
   readonly offsetFile: string;
   readonly attachmentDir: string;
@@ -32,6 +33,7 @@ export function resolveStateDir(env: NodeJS.ProcessEnv, homedir: string): StateD
     root,
     lockFile: path.join(root, "daemon.lock"),
     socketFile: path.join(root, "daemon.sock"),
+    controlSocketFile: path.join(root, "daemon.ctl.sock"),
     adminFile: path.join(root, "admin.json"),
     offsetFile: path.join(root, "offset.json"),
     attachmentDir: path.join(root, "attachments"),
@@ -43,6 +45,7 @@ export class StateDirImpl implements StateDir {
   readonly root: string;
   readonly lockFile: string;
   readonly socketFile: string;
+  readonly controlSocketFile: string;
   readonly adminFile: string;
   readonly offsetFile: string;
   readonly attachmentDir: string;
@@ -52,6 +55,7 @@ export class StateDirImpl implements StateDir {
     this.root = spec.root;
     this.lockFile = spec.lockFile;
     this.socketFile = spec.socketFile;
+    this.controlSocketFile = spec.controlSocketFile;
     this.adminFile = spec.adminFile;
     this.offsetFile = spec.offsetFile;
     this.attachmentDir = spec.attachmentDir;
