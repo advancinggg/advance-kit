@@ -457,12 +457,12 @@ stateDiagram-v2
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Allowlist + boot resolver | planned | env/file dispatch |
-| Registration gate FSM | planned | open/closed/waiting |
-| Code generation | planned | crypto.randomBytes uniform |
-| Brute-force counters | planned | per-sender + global |
-| AdminStateReset | planned | CONTRACT-015 |
-| Timeout dispatch | planned | DeploymentMode-aware |
+| Allowlist + boot resolver | in-progress | /dev Slice B (2026-05-14) — env/file dispatch |
+| Registration gate FSM | in-progress | /dev Slice B (2026-05-14) — open/closed/waiting |
+| Code generation | in-progress | /dev Slice B (2026-05-14) — crypto.randomBytes uniform |
+| Brute-force counters | in-progress | /dev Slice B (2026-05-14) — per-sender + global |
+| AdminStateReset | in-progress | /dev Slice B (2026-05-14) — CONTRACT-015 |
+| Timeout dispatch | in-progress | /dev Slice B (2026-05-14) — DeploymentMode-aware |
 
 ### 3.6 Known Gaps & Future Work
 
@@ -474,6 +474,7 @@ stateDiagram-v2
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-14 | /dev Slice B begins: admin-auth (allowlist + registration gate + brute-force counters + AdminStateReset + deployment-mode-aware timeout) under `plugins/telegram-channels-pro/` |
 
 ### 3.8 Implementation Notes
 

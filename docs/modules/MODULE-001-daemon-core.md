@@ -652,11 +652,13 @@ stateDiagram-v2
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| File lock + stale takeover | planned | First /dev task |
-| StateDir initialization | planned | — |
-| EventBus | planned | — |
-| Watchdog | planned | — |
-| Deployment mode detection | planned | — |
+| File lock + stale takeover | in-progress | /dev Slice B (2026-05-14) |
+| StateDir initialization | in-progress | /dev Slice B (2026-05-14) |
+| EventBus | in-progress | /dev Slice B (2026-05-14) |
+| Watchdog | in-progress | /dev Slice B (2026-05-14) |
+| Deployment mode detection | in-progress | /dev Slice B (2026-05-14) |
+| Graceful shutdown + signal handling | in-progress | /dev Slice B (2026-05-14) |
+| Stale socket cleanup (boot) | in-progress | /dev Slice B (2026-05-14) |
 
 ### 3.6 Known Gaps & Future Work
 
@@ -668,6 +670,7 @@ stateDiagram-v2
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-14 | /dev Slice B begins: bringing up StateDir + ProcessLock + EventBus + DeploymentMode + Watchdog + graceful shutdown under `plugins/telegram-channels-pro/` |
 
 ### 3.8 Implementation Notes
 

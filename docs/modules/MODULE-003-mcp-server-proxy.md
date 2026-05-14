@@ -552,10 +552,10 @@ sequenceDiagram
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| UDS acceptor + framing | planned | — |
-| claude-side stdio bridge | planned | — |
-| Tool dispatch | planned | M004 handlers registered |
-| deliverToSession / disconnectSession | planned | — |
+| UDS acceptor + framing | in-progress | /dev Slice B (2026-05-14) — daemon side only |
+| claude-side stdio bridge | not-started | M003-AC-14/15 require claude CLI integration; tracked outside this slice |
+| Tool dispatch | in-progress | /dev Slice B (2026-05-14) — returns `tool_not_registered` (no handlers; M004 handlers come in subsequent task) |
+| deliverToSession / disconnectSession | in-progress | /dev Slice B (2026-05-14) |
 
 ### 3.6 Known Gaps & Future Work
 
@@ -567,6 +567,7 @@ sequenceDiagram
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-14 | /dev Slice B begins: daemon-side UDS acceptor + framing + deliverToSession/disconnectSession under `plugins/telegram-channels-pro/`. claude-side proxy-client.ts tracked separately (AC-14/15 waived for this slice; need claude live integration). |
 
 ### 3.8 Implementation Notes
 

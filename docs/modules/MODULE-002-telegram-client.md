@@ -621,13 +621,14 @@ sequenceDiagram
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Telegram API method wrappers | planned | — |
-| Polling FSM (running/quarantine/paused) | planned | RC#1 fix core |
-| Offset persistence | planned | Atomic write |
-| Fatal window | planned | Sliding 60s, threshold 5 |
-| 409/429 segregation | planned | — |
-| registration_timeout subscription | planned | A14 |
-| polling_status_snapshot publishing | planned | — |
+| Telegram API method wrappers | in-progress | /dev Slice B (2026-05-14) |
+| Polling FSM (running/quarantine/paused) | in-progress | /dev Slice B (2026-05-14) — RC#1 fix core |
+| Offset persistence | in-progress | /dev Slice B (2026-05-14) — atomic write |
+| Fatal window | in-progress | /dev Slice B (2026-05-14) — sliding 60s, threshold 5 |
+| 409/429 segregation | in-progress | /dev Slice B (2026-05-14) |
+| registration_timeout subscription | in-progress | /dev Slice B (2026-05-14) — Decision A14 |
+| polling_status_snapshot publishing | in-progress | /dev Slice B (2026-05-14) |
+| Live-latency NFR measurement (AC-13/14) | not-started | E2E gated by live bot setup; tracked outside this slice |
 
 ### 3.6 Known Gaps & Future Work
 
@@ -639,6 +640,7 @@ sequenceDiagram
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-14 | /dev Slice B begins: telegram-client implementation under `plugins/telegram-channels-pro/` |
 
 ### 3.8 Implementation Notes
 

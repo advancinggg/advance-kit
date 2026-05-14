@@ -551,12 +551,13 @@ stateDiagram-v2
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Subscriber + Logger + Redaction | planned | — |
-| AlertDispatcher 3 categories | planned | — |
-| Crash-restart merge | planned | — |
-| StatusReporter | planned | — |
-| Measurement helper | planned | — |
-| Retention janitor | planned | — |
+| Subscriber + Logger + Redaction | in-progress | /dev Slice B (2026-05-14) — wildcard subscriber with late-binding setter pattern (subscribes before stateDir/tgClient ready) |
+| AlertDispatcher 3 categories | in-progress | /dev Slice B (2026-05-14) — edge / one-shot / token-bucket |
+| Crash-restart merge | in-progress | /dev Slice B (2026-05-14) — 5min default window |
+| StatusReporter | in-progress | /dev Slice B (2026-05-14) — CONTRACT-014; status CLI delivery (AC-14) tracked outside this slice (needs M007) |
+| Measurement helper | in-progress | /dev Slice B (2026-05-14) — passive subscriber to tool_call (M004 not in slice → trivially stationary) |
+| Retention janitor | in-progress | /dev Slice B (2026-05-14) — 14-day file roll-off |
+| drainAlertsToLogOnly (token-missing exit) | in-progress | /dev Slice B (2026-05-14) — boot-error exit-1 path drains queued alerts to JSONL with delivery='aborted' |
 
 ### 3.6 Known Gaps & Future Work
 
@@ -569,6 +570,7 @@ stateDiagram-v2
 | Date | Change |
 |------|--------|
 | 2026-05-12 | Initial creation |
+| 2026-05-14 | /dev Slice B begins: observability subsystem (subscriber, redaction, JSON logger, alert dispatcher with 3 categories + crash-restart merge, StatusReporter, measurement helper, retention janitor) under `plugins/telegram-channels-pro/`. Adds `drainAlertsToLogOnly` exit-path helper for boot-error paths that exit before tgClient is ready. |
 
 ### 3.8 Implementation Notes
 

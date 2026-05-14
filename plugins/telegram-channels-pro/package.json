@@ -1,0 +1,17 @@
+{
+  "name": "@advance-kit/telegram-channels-pro",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram-channels-pro daemon: single-instance Telegram bot daemon + MCP transport for claude sessions. v0.1 infrastructure slice.",
+  "scripts": {
+    "start": "bun run bin/daemon.ts",
+    "test": "bun test",
+    "build": "bun build src/daemon/main.ts --target=bun --outfile=dist/daemon.js",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}
