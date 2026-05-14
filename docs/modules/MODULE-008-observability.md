@@ -157,7 +157,7 @@ interface StatusSnapshot {
   quarantine_active: boolean;
   last_inbound_ts: number | null;
   registered_sessions: number;
-  pending_approvals: { current: number; max: 50 };
+  pending_approvals: { current: number; max: number };  // max defaults to 50; env-overridable via TGCP_PENDING_CAPACITY
   admin_source: 'env' | 'file' | 'none';
 }
 ```
@@ -287,7 +287,7 @@ export interface StatusSnapshot {
   quarantine_active: boolean;
   last_inbound_ts: number | null;
   registered_sessions: number;
-  pending_approvals: { current: number; max: 50 };
+  pending_approvals: { current: number; max: number };  // max defaults to 50; env-overridable via TGCP_PENDING_CAPACITY
   admin_source: 'env' | 'file' | 'none';
 }
 ```
@@ -299,9 +299,11 @@ export interface StatusSnapshot {
   via `adminChatRegistry.subscribe(chatId => obs.setAdminChat(chatId ?? 0))` so
   AlertDispatcher's destination chat tracks the live AdminChatRegistry value.
 - `AlertDispatcher.setAdminChat(chatId: number): void` — internal to AlertDispatcher.
-  Updates `this.adminChatId`; mirrors `setTgClient`'s `void this.flushQueue()`
-  invariant — any alerts queued while adminChatId was a placeholder (0) flush
-  immediately on first real chat-id binding.
+  Updates `this.adminChatId` ONLY when the new value differs from the cached value
+  (no-op short-circuit on equal value); on actual change, triggers `void this.flushQueue()`
+  so any alerts queued while adminChatId was a placeholder (typically 0 at boot,
+  before AdminChatRegistry captures the first private admin DM) flush immediately
+  upon first real chat-id binding.
 
 These are intra-M008 (not cross-module CONTRACT surfaces; do not appear in
 ARCHITECTURE.md §6.1). They exist to bridge the M005 AdminChatRegistry pattern

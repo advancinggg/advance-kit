@@ -92,32 +92,32 @@ deployment is the ONLY module that interacts with system-level `launchctl` and t
      - If success: print "Daemon enabled. To uninstall: `/telegram-channels-pro:uninstall-daemon`".
 3. Helper also validates TELEGRAM_BOT_TOKEN env var is set; warns if missing.
 
-**plist template** (key fields):
+**plist template** (rendered from `templates/com.advance.telegram-channels-pro.plist.tmpl` with `{{LABEL}}` / `{{BUN_BIN}}` / `{{DAEMON_BIN}}` / `{{LOG_DIR}}` / `{{TG_TOKEN}}` / `{{HOME_DIR}}` placeholders replaced at install time by `bin/launchctl-helper.sh`):
 
 ```xml
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.advance.telegram-channels-pro</string>
+  <string>{{LABEL}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/bun</string>
-    <string>/path/to/plugins/telegram-channels-pro/dist/daemon-main.js</string>
+    <string>{{BUN_BIN}}</string>
+    <string>{{DAEMON_BIN}}</string>     <!-- resolves to bin/daemon.ts (Bun shebang TS entry, NOT a built dist/ bundle) -->
   </array>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>~/Library/Logs/advance-kit/telegram-channels-pro/daemon.out</string>
+  <string>{{LOG_DIR}}/daemon.out</string>
   <key>StandardErrorPath</key>
-  <string>~/Library/Logs/advance-kit/telegram-channels-pro/daemon.err</string>
+  <string>{{LOG_DIR}}/daemon.err</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>TELEGRAM_BOT_TOKEN</key>
-    <string>(set via user's `launchctl setenv` or shell rc)</string>
+    <string>{{TG_TOKEN}}</string>      <!-- captured by install script from current shell env (RISK-001) -->
     <key>HOME</key>
-    <string>(macOS auto-inherits)</string>
+    <string>{{HOME_DIR}}</string>
     <key>PATH</key>
     <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
   </dict>
@@ -277,6 +277,8 @@ Per advance-kit VERSIONING.md 5-sync-point invariant: all 5 places (plugin.json 
 ### 1.7 Security Requirements
 
 - Plist contents include TELEGRAM_BOT_TOKEN — file should be 0644 (default LaunchAgents perms) since macOS launchd reads it under user uid. **NOTE**: this is a documented same-uid trust exposure (RISK-008 territory: if user grants directory access to a 3rd party, they can read the plist). Mitigation: document in install output, recommend users keep `~/Library/LaunchAgents/` access tight.
+- **(Slice 2)** Control socket auth: `daemon.ctl.sock` is chmod 0600 — same-uid trust model identical to the plist. The implementation **hard-fails** the bind if `chmod 0600` returns an error (audit Round 1 fix), so a control socket is NEVER served at default umask perms. A local user with the same uid as the daemon CAN issue `reset_admin_request` over the socket — this is acceptable per the single-user single-machine assumption (REQ-029). Multi-user / multi-uid scenarios are out of scope (PRD OUT-002, v0.3+).
+- ControlSocket buffer + idle bounds: 16 KB max input, 10 sec idle timeout per connection (audit Round 1 W1 fix). Frames larger than 16 KB are rejected with `{"ok":false,"error":"input_too_large"}`; idle connections are auto-closed.
 - Slash commands are invoked by claude; the bin/*.sh scripts SHOULD validate they're being called from this plugin's context (presence of plugin-specific env or argv signature) before running launchctl operations.
 - `pkill -9 bun` migration warning is documentation only; the plugin does NOT auto-execute pkill.
 
@@ -361,7 +363,7 @@ Plist file (XML), see §1.4.1 template. Lives at `~/Library/LaunchAgents/com.adv
   "quarantine_active": false,
   "last_inbound_ts": 1730000000000,
   "registered_sessions": 2,
-  "pending_approvals": {"current": 1, "max": 50},
+  "pending_approvals": {"current": 1, "max": <number>},  // max defaults to 50; env-overridable via TGCP_PENDING_CAPACITY
   "admin_source": "env"|"file"|"none"
 }}
 
@@ -426,15 +428,15 @@ sequenceDiagram
     actor U as User
     participant CMD as status slash cmd
     participant SH as bin/status-helper.sh
-    participant SK as daemon.sock
+    participant SK as daemon.ctl.sock (control socket)
     participant SR as M008 StatusReporter
 
     U->>CMD: invoke
     CMD->>SH: status
-    SH->>SK: connect + send status_request frame
+    SH->>SK: connect + send {"kind":"status_request"}\n
     SK->>SR: getSnapshot()
     SR-->>SK: snapshot
-    SK-->>SH: status_response frame
+    SK-->>SH: {"ok":true,"result":<snapshot>}\n
     SH->>U: formatted output
 ```
 
@@ -527,6 +529,7 @@ sequenceDiagram
 | `plugins/telegram-channels-pro/bin/daemon-spawn.sh` | Lazy-spawn entry |
 | `plugins/telegram-channels-pro/bin/status-helper.sh` | Connects to control socket + format status |
 | `plugins/telegram-channels-pro/bin/reset-admin-helper.sh` | Connects to control socket + branches by deployment_mode (no daemon kill) |
+| `plugins/telegram-channels-pro/bin/daemon.ts` | Daemon entry (Bun shebang TS — invoked by launchd via the plist's ProgramArguments AND by lazy-spawn fork). Ships unbuilt; Bun executes the .ts file directly. |
 | `plugins/telegram-channels-pro/templates/com.advance.telegram-channels-pro.plist.tmpl` | Plist template |
 | **(Slice 2)** `plugins/telegram-channels-pro/src/deployment/control-socket.ts` | Daemon-side ControlSocket: bind UDS + frame dispatch (status / reset_admin) |
 | **(Slice 2)** `plugins/telegram-channels-pro/src/deployment/index.ts` | Module entry exports |

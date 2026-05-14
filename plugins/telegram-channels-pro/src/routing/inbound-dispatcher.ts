@@ -151,7 +151,11 @@ export class InboundDispatcher {
   }
 
   private async dispatchToFocus(updateId: number, chatId: number, msg: TgMessage): Promise<void> {
-    while (true) {
+    // Cap iterations defensively (audit Round 1 W2): with capacity 8, we'd never
+    // need more than 8 iterations even if every session is stale; 16 leaves
+    // room for reasonable headroom and prevents any infinite-loop bug.
+    const MAX_FALLBACK_ITERATIONS = 16;
+    for (let i = 0; i < MAX_FALLBACK_ITERATIONS; i++) {
       const focus = this.cfg.sessionRegistry.getFocus();
       if (!focus) {
         // No sessions — throttled no-session reply
@@ -185,6 +189,17 @@ export class InboundDispatcher {
       this.cfg.sessionRegistry.removeStale(focus.session_id);
       // loop continues with next focus
     }
+    // Cap exceeded — emit log + no_session
+    this.cfg.eventBus.emit("log_emit", {
+      level: "WARN",
+      event_type: "dispatch_fallback_cap_exceeded",
+      fields: { update_id: updateId, max_iterations: MAX_FALLBACK_ITERATIONS },
+    });
+    this.cfg.eventBus.emit("route_decision", {
+      update_id: updateId,
+      target_session: null,
+      reason: "no_session",
+    });
   }
 
   private async handleCallback(updateId: number, cb: TgCallbackQuery): Promise<void> {
@@ -213,15 +228,35 @@ export class InboundDispatcher {
       } catch {
         /* best-effort */
       }
+      // Distinct reason vs callback_resolved (audit Round 1 Doc-C2)
       this.cfg.eventBus.emit("route_decision", {
         update_id: updateId,
         target_session: null,
-        reason: "callback_resolved",
+        reason: "callback_stale",
+      });
+      return;
+    }
+    // Validate option_index bounded to options array (audit Round 1 W5 / adversarial)
+    const optionLabel = entry.callback_data_map.get(callbackData);
+    if (optionLabel === undefined) {
+      // Crafted callback_data with valid pending_id but bogus index → treat as stale
+      try {
+        await this.cfg.tg.answerCallbackQuery({
+          callback_query_id: cb.id,
+          text: "invalid option",
+          show_alert: true,
+        });
+      } catch {
+        /* best-effort */
+      }
+      this.cfg.eventBus.emit("route_decision", {
+        update_id: updateId,
+        target_session: null,
+        reason: "callback_invalid_option",
       });
       return;
     }
     // Resolve via M004 — ordering invariant: M004 dispatches answerCallbackQuery before resolving Promise
-    const optionLabel = entry.callback_data_map.get(callbackData) ?? "";
     await this.cfg.pendingRegistry.resolveApproval(
       entry.pending_id,
       optionLabel,

@@ -162,9 +162,12 @@ export class AdminChatRegistry {
    - false → emit `auth_deny_routing` event (token-bucket rate-limited via M008); **silently drop** the callback (per PRD §3.3 edge case "daemon 静默忽略 callback, pending 保持挂起" — no `answerCallbackQuery` to the attacker, no state leak). pending remains alive for legitimate admin click.
    - true → continue.
 3. Call `M004.lookupByPendingId(callback.data)`:
-   - null → M005 calls `M002.answerCallbackQuery({callback_query_id: callback.id, text: "approval expired", show_alert: true})` (PRD §3.3 stale-pending case).
-   - entry → parse option index from callback.data; **await** `M004.resolveApproval(entry.pending_id, option_label, callback.id, tg)`. M004 handles answerCallbackQuery internally; ordering invariant: answerCallbackQuery dispatched BEFORE claude's awaiting Promise resolves.
-4. Emit `route_decision: { update_id: <callback_query.update_id from inbound update>, target_session: <entry.requester_session_id (resolved branch only)>, reason: "callback_resolved" }`.
+   - null → M005 calls `M002.answerCallbackQuery({callback_query_id: callback.id, text: "approval expired", show_alert: true})` (PRD §3.3 stale-pending case); emit `route_decision: { reason: "callback_stale", target_session: null }`.
+   - entry → parse option index from callback.data via `entry.callback_data_map.get(callback.data)`; if `undefined` (crafted out-of-range index), reply "invalid option" via `answerCallbackQuery` and emit `route_decision: { reason: "callback_invalid_option", target_session: null }`. If valid, **await** `M004.resolveApproval(entry.pending_id, option_label, callback.id, tg)`. M004 handles answerCallbackQuery internally; ordering invariant: answerCallbackQuery dispatched BEFORE claude's awaiting Promise resolves.
+4. Emit `route_decision`:
+   - resolved branch: `{ update_id, target_session: entry.requester_session_id, reason: "callback_resolved" }`
+   - stale branch: `{ update_id, target_session: null, reason: "callback_stale" }`
+   - invalid-option branch: `{ update_id, target_session: null, reason: "callback_invalid_option" }`
 
 #### 1.4.4 TG slash commands
 
@@ -302,7 +305,7 @@ M005 does NOT provide cross-module contracts. Its internal SessionRegistry is in
 
 | Event Name | Trigger | Payload | Consumer |
 |-----------|---------|---------|----------|
-| `route_decision` | Each dispatch | `{ update_id: number; target_session: string \| null; reason: string }` — canonical `reason` values: `"session_added"` / `"session_removed"` / `"text_delivered"` / `"callback_resolved"` / `"no_session"` / `"command_handled"` / `"invalid_shortid"`. `update_id: -1` for non-update events (session lifecycle); else carries the inbound update's update_id. `target_session` is the chosen session_id (or null for no-session/command/invalid-shortid). | M008 (log) |
+| `route_decision` | Each dispatch | `{ update_id: number; target_session: string \| null; reason: string }` — canonical `reason` values: `"session_added"` / `"session_removed"` / `"text_delivered"` / `"callback_resolved"` (admin clicked, valid pending) / `"callback_stale"` (admin clicked, pending lost — post-crash) / `"callback_invalid_option"` (admin clicked, invalid option_index in callback_data) / `"no_session"` / `"command_handled"` / `"invalid_shortid"`. `update_id: -1` for non-update events (session lifecycle); else carries the inbound update's update_id. `target_session` is the chosen session_id (or null for no-session/command/invalid-shortid/callback_stale). | M008 (log) |
 | `auth_deny_routing` | non-admin attempt | `{ sender_hash: string; reason: string }` — canonical `reason` values: `"inbound_text_deny"` / `"callback_deny"` / `"session_capacity_exceeded"`. `sender_hash` = `shortHash(String(sender_id))` for admin-gate denials; empty string `""` for capacity-exceeded (caller is local UDS, not TG sender). | M008 (alert via token-bucket) |
 
 **Subscribed**:
@@ -528,8 +531,7 @@ sequenceDiagram
 |------|------|
 | `src/routing/session-registry.ts` | LRU ordered list + bump/add/remove |
 | `src/routing/admin-chat-registry.ts` | (Slice 2) AdminChatRegistry: env-bootstrap + private-chat-only inbound capture + subscribe/notify |
-| `src/routing/inbound-dispatcher.ts` | EventBus subscriber + text/callback branch logic |
-| `src/routing/admin-gate.ts` | wrapper calling M006.isAdmin |
+| `src/routing/inbound-dispatcher.ts` | EventBus subscriber + text/callback branch logic; admin-gate (M006.isAdmin call) is inlined here, not a separate file |
 | `src/routing/commands/session.ts` | `/session <shortid>` handler |
 | `src/routing/commands/list.ts` | `/list` handler |
 | `src/routing/commands/status.ts` | `/status` handler (calls M008 StatusReporter) |

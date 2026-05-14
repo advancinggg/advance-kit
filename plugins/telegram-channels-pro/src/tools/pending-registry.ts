@@ -98,8 +98,18 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
     // Dismiss the inline-button spinner BEFORE resolving the Promise (ordering invariant).
     try {
       await tg.answerCallbackQuery({ callback_query_id });
-    } catch {
-      // Best-effort — answerCallbackQuery is non-critical for resolution; log via error path
+    } catch (err) {
+      // Best-effort — answerCallbackQuery is non-critical for resolution.
+      // Log via M008 so a permanent auth failure surfaces (per audit Round 1 W4).
+      this.cfg.eventBus.emit("log_emit", {
+        level: "WARN",
+        event_type: "answer_callback_query_failed",
+        fields: {
+          callback_query_id,
+          pending_id,
+          error: String((err as Error)?.message ?? err),
+        },
+      });
     }
     entry.resolver(choice);
     this.entries.delete(pending_id);
@@ -138,8 +148,9 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
       }
       this.entries.delete(pid);
       cleaned += 1;
-      this.emitSnapshot();
     }
+    // Single snapshot per cleanup batch (audit Round 1 W3 fix — was per-entry)
+    if (cleaned > 0) this.emitSnapshot();
     return { cleaned };
   }
 

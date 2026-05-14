@@ -150,7 +150,7 @@ Calls M002 `editMessageText`.
 2. Check PendingApprovalRegistry capacity — if size >= 50, return `{ok: false, error: "CapacityExceededError"}` immediately.
 3. Allocate `pending_id` (random 16-byte hex).
 4. Construct callback_data per-option: `cb_<pending_id>_<option_index>` (within Telegram's 64-byte limit).
-5. Build inline_keyboard: each row has buttons for each option with their callback_data.
+5. Build inline_keyboard: each option becomes a single-button row (one row per option; matches the §3.8 single-row UX cap).
 6. Call M002 sendMessage to admin chat (resolved in step 0) with text + inline_keyboard. Receive `message_id`.
 7. Store `{pending_id, requester_session_id, chat_id (admin chat from step 0), callback_data_map, message_id, options, created_at}` in registry.
 8. Create a Promise<string> (the await target) and store its resolver in registry alongside.
@@ -381,6 +381,7 @@ interface PendingEntry {
   pending_id: string;             // 16-byte hex random
   requester_session_id: string;   // who awaits
   message_id: number;             // for cleanup edit
+  chat_id: number;                // (Slice 2) admin chat (resolved at add() time via M005.AdminChatRegistry)
   callback_data_map: Map<string, string>;  // cb_xxx_N → option label
   options: string[];
   created_at: number;             // ms epoch

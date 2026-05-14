@@ -351,6 +351,7 @@ export interface EventBus {
 }
 type EventTypeKey =
   | 'inbound_update' | 'quarantine_enter' | 'quarantine_exit' | 'polling_health'
+  | 'polling_event' | 'polling_status_snapshot'
   | 'session_connected' | 'session_disconnected' | 'frame_invalid'
   | 'tool_call' | 'tool_result' | 'pending_capacity_snapshot'
   | 'route_decision' | 'auth_deny_routing'
@@ -358,6 +359,7 @@ type EventTypeKey =
   | 'daemon_start' | 'daemon_stop' | 'lock_event' | 'watchdog_signal'
   | 'state_dir_perms_anomaly' | 'cli_command' | 'subscriber_queue_drop'
   | 'log_emit' | 'alert_emit';
+// Canonical count: 26 event types (kept in sync with src/daemon/event-types.ts ALL_EVENT_TYPES).
 type EventPayloadMap = { /* per-type payload shapes — see event-types.ts */ };
 type Unsubscribe = () => void;
 ```

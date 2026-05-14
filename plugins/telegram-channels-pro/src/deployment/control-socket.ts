@@ -64,7 +64,12 @@ export class ControlSocket {
     try {
       fs.chmodSync(socketPath, 0o600);
     } catch (err) {
-      process.stderr.write(`control-socket: chmod 0600 failed for ${socketPath}: ${String(err)}\n`);
+      // SECURITY: chmod 0600 is the only access control on this socket.
+      // If chmod fails (e.g. unusual filesystem perms), refuse to serve so
+      // local users without same-uid cannot issue reset_admin_request.
+      process.stderr.write(`control-socket: chmod 0600 failed for ${socketPath}: ${String(err)} — refusing to serve\n`);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      throw new Error(`control-socket: chmod 0600 failed: ${String(err)}`);
     }
     this.server = server;
   }
@@ -79,6 +84,11 @@ export class ControlSocket {
   private handleConnection(sock: net.Socket): void {
     let buf = "";
     let closed = false;
+    let dispatched = false;
+    // Cap incoming buffer at 16 KB; CLI frames are tiny (<200 bytes typical).
+    const MAX_BUF_BYTES = 16 * 1024;
+    // Idle timeout: 10 sec — CLI is meant to send a single line then close.
+    const IDLE_TIMEOUT_MS = 10_000;
     const close = (): void => {
       if (closed) return;
       closed = true;
@@ -89,12 +99,21 @@ export class ControlSocket {
       }
     };
     sock.setEncoding("utf-8");
+    sock.setTimeout(IDLE_TIMEOUT_MS, () => close());
     sock.on("data", (chunk: string) => {
+      if (dispatched) return; // ignore additional bytes after the first request
       buf += chunk;
+      if (buf.length > MAX_BUF_BYTES) {
+        try {
+          sock.write(JSON.stringify({ ok: false, error: "input_too_large" }) + "\n");
+        } catch { /* ignore */ }
+        close();
+        return;
+      }
       const nlIdx = buf.indexOf("\n");
       if (nlIdx < 0) return; // wait for full line
       const line = buf.slice(0, nlIdx);
-      buf = buf.slice(nlIdx + 1);
+      dispatched = true;
       this.dispatchRequest(line)
         .then((response) => {
           try {
