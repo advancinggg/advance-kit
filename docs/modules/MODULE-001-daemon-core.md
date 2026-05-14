@@ -580,7 +580,7 @@ stateDiagram-v2
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| Not Started | 0% | 2026-05-12 |
+| In Progress | 90% | 2026-05-14 |
 
 ### 3.2 File Structure
 
@@ -628,27 +628,27 @@ stateDiagram-v2
 
 | AC ID | Active | Status | Verified By Task | Date |
 |-------|--------|--------|-----------------|------|
-| MODULE-001-AC-01 | Y | untested | — | — |
-| MODULE-001-AC-02 | Y | untested | — | — |
-| MODULE-001-AC-03 | Y | untested | — | — |
-| MODULE-001-AC-04 | Y | untested | — | — |
-| MODULE-001-AC-05 | Y | untested | — | — |
-| MODULE-001-AC-06 | Y | untested | — | — |
-| MODULE-001-AC-07 | Y | untested | — | — |
-| MODULE-001-AC-08 | Y | untested | — | — |
-| MODULE-001-AC-09 | Y | untested | — | — |
-| MODULE-001-AC-10 | Y | untested | — | — |
-| MODULE-001-AC-11 | Y | untested | — | — |
-| MODULE-001-AC-12 | Y | untested | — | — |
-| MODULE-001-AC-13 | Y | untested | — | — |
-| MODULE-001-AC-14 | Y | untested | — | — |
+| MODULE-001-AC-01 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-02 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-03 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-04 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-05 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-06 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-07 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-08 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-09 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-10 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-11 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-12 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-13 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-14 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-001-AC-15 | Y | untested | — | — |
 | MODULE-001-AC-16 | Y | untested | — | — |
-| MODULE-001-AC-17 | Y | untested | — | — |
-| MODULE-001-AC-18 | Y | untested | — | — |
-| MODULE-001-AC-19 | Y | untested | — | — |
-| MODULE-001-AC-20 | Y | untested | — | — |
-| MODULE-001-AC-21 | Y | untested | — | — |
+| MODULE-001-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-20 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-001-AC-21 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 
 ### 3.5 Feature Implementation Record
 
