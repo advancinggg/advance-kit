@@ -519,7 +519,7 @@ stateDiagram-v2
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 95% | 2026-05-14 |
+| Production | 100% | 2026-05-15 |
 
 ### 3.2 File Structure
 
@@ -575,7 +575,7 @@ stateDiagram-v2
 | MODULE-008-AC-11 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-12 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-13 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-008-AC-14 | Y | untested | — | — |
+| MODULE-008-AC-14 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (verified end-to-end via M007-T08 control-socket status_request integration test) | 2026-05-15 |
 | MODULE-008-AC-15 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-16 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
