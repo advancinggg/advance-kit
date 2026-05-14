@@ -137,11 +137,30 @@ export async function releaseDaemonLock(handle: LockHandle): Promise<void> {
   } catch {
     /* ignore */
   }
+  // Adversarial fix: verify the lock file still records OUR pid before unlinking.
+  // If a stale-takeover replaced our lock with another daemon's (extremely narrow race
+  // when our shutdown is delayed past the new daemon's acquisition), we must NOT delete
+  // the successor's lock file.
+  let shouldUnlink = false;
+  try {
+    const content = fs.readFileSync(handle.path, "utf8");
+    const firstLine = content.split("\n")[0] ?? "";
+    const recordedPid = parseInt(firstLine, 10);
+    if (Number.isFinite(recordedPid) && recordedPid === process.pid) shouldUnlink = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // already gone
+    // Read error — be conservative and skip unlink.
+    process.stderr.write(`process-lock: lock read failed during release: ${String(err)}\n`);
+    return;
+  }
+  if (!shouldUnlink) {
+    process.stderr.write(`process-lock: lock at ${handle.path} no longer records our pid; skipping unlink\n`);
+    return;
+  }
   try {
     fs.unlinkSync(handle.path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      // Best-effort: log but don't throw on cleanup.
       process.stderr.write(`process-lock: failed to unlink ${handle.path}: ${String(err)}\n`);
     }
   }

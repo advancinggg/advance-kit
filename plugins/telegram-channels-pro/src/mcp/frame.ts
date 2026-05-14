@@ -32,8 +32,16 @@ export class FrameDecoder {
 
   push(chunk: Uint8Array): DecodeStepResult {
     this.lastByteAt = Date.now();
+    // Adversarial fix: hard ceiling on buffered bytes BEFORE concatenation. Even with
+    // the same-uid trust boundary, refuse to grow the read buffer past 4 + maxFrameBytes;
+    // a peer that floods us with bytes ahead of the length header is rejected.
+    const projectedSize = this.buffer.byteLength + chunk.byteLength;
+    if (projectedSize > 4 + this.maxFrameBytes) {
+      // We don't even bother concatenating; signal oversize and drop the connection.
+      return { frames: [], invalid: { kind: "oversize", detail: `buffered ${projectedSize} bytes > 4 + max ${this.maxFrameBytes}` } };
+    }
     // Concatenate.
-    const merged = new Uint8Array(this.buffer.byteLength + chunk.byteLength);
+    const merged = new Uint8Array(projectedSize);
     merged.set(this.buffer, 0);
     merged.set(chunk, this.buffer.byteLength);
     this.buffer = merged;
