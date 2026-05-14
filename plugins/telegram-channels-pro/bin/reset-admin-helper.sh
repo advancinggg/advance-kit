@@ -15,34 +15,38 @@ if [ ! -S "$CTL_SOCK" ]; then
   exit 1
 fi
 
+# Pass paths via env (NOT shell-interpolated) per adversarial R1 #1 fix.
 BUN_BIN="${TGCP_BUN_BIN:-$(command -v bun || echo /opt/homebrew/bin/bun)}"
-"$BUN_BIN" -e "
-const sock = await Bun.connect({ unix: '$CTL_SOCK', socket: { data() {}, error() {} } });
-sock.write(JSON.stringify({ kind: 'reset_admin_request' }) + '\n');
+TGCP_CTL_SOCK="$CTL_SOCK" TGCP_LOG_DIR="$LOG_DIR" "$BUN_BIN" -e '
+const ctlSock = process.env.TGCP_CTL_SOCK;
+const logDir = process.env.TGCP_LOG_DIR ?? "(unknown log dir)";
+if (!ctlSock) { console.error("missing TGCP_CTL_SOCK env"); process.exit(1); }
+const sock = await Bun.connect({ unix: ctlSock, socket: { data() {}, error() {} } });
+sock.write(JSON.stringify({ kind: "reset_admin_request" }) + "\n");
 const reader = new ReadableStream({
   start(controller) {
     sock.data = (s, data) => controller.enqueue(data);
     sock.close = () => controller.close();
   },
 }).getReader();
-let buf = '';
+let buf = "";
 while (true) {
   const { value, done } = await reader.read();
   if (done) break;
   buf += value;
-  if (buf.includes('\n')) break;
+  if (buf.includes("\n")) break;
 }
 sock.end();
-const line = buf.split('\n')[0];
+const line = buf.split("\n")[0];
 let resp;
-try { resp = JSON.parse(line); } catch { console.error('malformed response'); process.exit(1); }
-if (!resp.ok) { console.error('daemon error:', resp.error); process.exit(1); }
+try { resp = JSON.parse(line); } catch { console.error("malformed response"); process.exit(1); }
+if (!resp.ok) { console.error("daemon error:", resp.error); process.exit(1); }
 const r = resp.result;
-console.log('Admin state cleared (cleared=' + r.cleared + ', prior_admin_hash=' + (r.prior_admin_hash ?? 'none') + ').');
-console.log('Daemon (pid ' + r.daemon_pid + ', mode=' + r.deployment_mode + ') continues running with a fresh registration window.');
-if (r.deployment_mode === 'launchd') {
-  console.log('Code printed in launchd stderr log; check $LOG_DIR/daemon.err.');
+console.log("Admin state cleared (cleared=" + r.cleared + ", prior_admin_hash=" + (r.prior_admin_hash ?? "none") + ").");
+console.log("Daemon (pid " + r.daemon_pid + ", mode=" + r.deployment_mode + ") continues running with a fresh registration window.");
+if (r.deployment_mode === "launchd") {
+  console.log("Code printed in launchd stderr log; check " + logDir + "/daemon.err.");
 } else {
-  console.log('Send any DM to the bot — it will reply with the registration code (also printed at $LOG_DIR/daemon.err).');
+  console.log("Send any DM to the bot — it will reply with the registration code (also printed at " + logDir + "/daemon.err).");
 }
-"
+'

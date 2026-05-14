@@ -227,12 +227,13 @@ describe("MODULE-005-AC-08/09/10: callback dispatch", () => {
   test("MODULE-005-T08 — admin callback resolves pending; promise resolves with choice", async () => {
     const h = await makeHarness({ adminUserIds: [99] });
     cleanups.push(h.cleanup);
+    const pid = "a".repeat(32);
     const r = h.pendingReg.add({
-      pending_id: "abc123",
+      pending_id: pid,
       requester_session_id: "S",
       message_id: 100,
       chat_id: 555,
-      callback_data_map: new Map([["cb_abc123_0", "Yes"]]),
+      callback_data_map: new Map([[`cb_${pid}_0`, "Yes"]]),
       options: ["Yes"],
       created_at: 0,
     });
@@ -243,7 +244,7 @@ describe("MODULE-005-AC-08/09/10: callback dispatch", () => {
       payload: {
         id: "cbq42",
         from: { id: 99 },
-        data: "cb_abc123_0",
+        data: `cb_${pid}_0`,
       },
     });
     const choice = await r.promise;

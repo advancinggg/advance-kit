@@ -39,19 +39,20 @@ describe("PendingApprovalRegistry — CONTRACT-011", () => {
     const bus = new EventBus();
     const reg = new PendingApprovalRegistryImpl({ eventBus: bus, clock: fakeClock(0) });
     const { tg, calls } = makeMockTg();
+    const pid = "a".repeat(32);
     const res = reg.add({
-      pending_id: "abc123",
+      pending_id: pid,
       requester_session_id: "sess1",
       message_id: 100,
       chat_id: 555,
-      callback_data_map: new Map([["cb_abc123_0", "Approve"], ["cb_abc123_1", "Reject"]]),
+      callback_data_map: new Map([[`cb_${pid}_0`, "Approve"], [`cb_${pid}_1`, "Reject"]]),
       options: ["Approve", "Reject"],
       created_at: 0,
     });
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error();
     const promise = res.promise;
-    await reg.resolveApproval("abc123", "Approve", "cbq42", tg);
+    await reg.resolveApproval(pid, "Approve", "cbq42", tg);
     const choice = await promise;
     expect(choice).toBe("Approve");
     expect(calls.answer).toEqual([{ callback_query_id: "cbq42", text: undefined, show_alert: undefined }]);
@@ -90,17 +91,18 @@ describe("PendingApprovalRegistry — CONTRACT-011", () => {
   test("MODULE-004-T11/12 (AC-09) — lookupByPendingId parses callback_data; miss returns null", () => {
     const bus = new EventBus();
     const reg = new PendingApprovalRegistryImpl({ eventBus: bus, clock: fakeClock(0) });
+    const pid = "b".repeat(32);
     reg.add({
-      pending_id: "abc",
+      pending_id: pid,
       requester_session_id: "s",
       message_id: 1,
       chat_id: 1,
-      callback_data_map: new Map([["cb_abc_0", "A"]]),
+      callback_data_map: new Map([[`cb_${pid}_0`, "A"]]),
       options: ["A"],
       created_at: 0,
     });
-    expect(reg.lookupByPendingId("cb_abc_0")?.pending_id).toBe("abc");
-    expect(reg.lookupByPendingId("cb_unknown_0")).toBeNull();
+    expect(reg.lookupByPendingId(`cb_${pid}_0`)?.pending_id).toBe(pid);
+    expect(reg.lookupByPendingId(`cb_${"c".repeat(32)}_0`)).toBeNull();
     expect(reg.lookupByPendingId("malformed")).toBeNull();
   });
 

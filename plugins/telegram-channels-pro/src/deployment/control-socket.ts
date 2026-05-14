@@ -48,25 +48,35 @@ export class ControlSocket {
     if (this.server) return;
     const socketPath = this.cfg.stateDir.controlSocketFile;
     const server = net.createServer((sock) => this.handleConnection(sock));
-    await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error) => {
-        server.off("listening", onListening);
-        reject(err);
-      };
-      const onListening = () => {
-        server.off("error", onError);
-        resolve();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(socketPath);
-    });
+    // SECURITY: tighten umask BEFORE bind so the UDS is created at 0600 rather
+    // than 0755 (default umask) — prevents the bind→chmod race where a same-uid
+    // (or any-uid depending on umask) attacker could connect during the
+    // microsecond window between `server.listen` and `fs.chmodSync` and issue
+    // reset_admin_request without authentication (adversarial R1 #3).
+    const prevUmask = process.umask(0o077);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          server.off("listening", onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(socketPath);
+      });
+    } finally {
+      process.umask(prevUmask);
+    }
+    // Defense-in-depth: chmod again to assert 0600 (handles the case where the
+    // OS ignored the umask, or where the FS doesn't honor unix-style perms).
     try {
       fs.chmodSync(socketPath, 0o600);
     } catch (err) {
-      // SECURITY: chmod 0600 is the only access control on this socket.
-      // If chmod fails (e.g. unusual filesystem perms), refuse to serve so
-      // local users without same-uid cannot issue reset_admin_request.
+      // SECURITY: if even the post-bind chmod fails, refuse to serve.
       process.stderr.write(`control-socket: chmod 0600 failed for ${socketPath}: ${String(err)} — refusing to serve\n`);
       await new Promise<void>((resolve) => server.close(() => resolve()));
       throw new Error(`control-socket: chmod 0600 failed: ${String(err)}`);

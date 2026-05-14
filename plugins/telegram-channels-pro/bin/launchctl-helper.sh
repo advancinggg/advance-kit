@@ -79,14 +79,33 @@ cmd_install() {
   fi
   mkdir -p "$(dirname "$PLIST_PATH")"
   mkdir -p "$LOG_DIR"
-  # Render template
+  # XML-escape function for sed substitution values (adversarial R1 #2 fix)
+  # Replaces &, <, >, ", ' with XML entities so substituted values cannot
+  # break out of <string>...</string> elements and inject arbitrary plist
+  # directives (which launchd would then execute on next reboot).
+  xml_escape() {
+    # shellcheck disable=SC2001
+    printf '%s' "$1" | sed \
+      -e 's/&/\&amp;/g' \
+      -e 's/</\&lt;/g' \
+      -e 's/>/\&gt;/g' \
+      -e 's/"/\&quot;/g' \
+      -e "s/'/\&apos;/g"
+  }
+  ESC_LABEL=$(xml_escape "$LABEL")
+  ESC_BUN_BIN=$(xml_escape "$BUN_BIN")
+  ESC_DAEMON_BIN=$(xml_escape "$DAEMON_BIN")
+  ESC_LOG_DIR=$(xml_escape "$LOG_DIR")
+  ESC_TG_TOKEN=$(xml_escape "$tg_token")
+  ESC_HOME_DIR=$(xml_escape "$HOME_DIR")
+  # Use a delimiter unlikely in any escaped value (#) to avoid sed-delimiter conflicts.
   sed \
-    -e "s|{{LABEL}}|$LABEL|g" \
-    -e "s|{{BUN_BIN}}|$BUN_BIN|g" \
-    -e "s|{{DAEMON_BIN}}|$DAEMON_BIN|g" \
-    -e "s|{{LOG_DIR}}|$LOG_DIR|g" \
-    -e "s|{{TG_TOKEN}}|$tg_token|g" \
-    -e "s|{{HOME_DIR}}|$HOME_DIR|g" \
+    -e "s#{{LABEL}}#$ESC_LABEL#g" \
+    -e "s#{{BUN_BIN}}#$ESC_BUN_BIN#g" \
+    -e "s#{{DAEMON_BIN}}#$ESC_DAEMON_BIN#g" \
+    -e "s#{{LOG_DIR}}#$ESC_LOG_DIR#g" \
+    -e "s#{{TG_TOKEN}}#$ESC_TG_TOKEN#g" \
+    -e "s#{{HOME_DIR}}#$ESC_HOME_DIR#g" \
     "$TEMPLATE" > "$PLIST_PATH"
   chmod 0644 "$PLIST_PATH"
   if "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null; then

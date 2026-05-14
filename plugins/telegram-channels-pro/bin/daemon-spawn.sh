@@ -30,15 +30,34 @@ nohup "$BUN_BIN" "$DAEMON_BIN" >>"$LOG_DIR/daemon.out" 2>>"$LOG_DIR/daemon.err" 
 DAEMON_PID=$!
 disown 2>/dev/null || true
 
-# Brief wait so the daemon has a chance to acquire the lock OR detect a winner.
-sleep 0.5
+# Adversarial R1 #4: distinguish lock-loser-OK from boot-failure-NOT-OK by
+# verifying the daemon socket appears within a bounded wait (lock-loser
+# means a winning daemon is already serving, so its socket must exist).
+STATE_DIR="${TGCP_STATE_DIR:-${TGCP_HOME:-$HOME}/Library/Application Support/advance-kit/telegram-channels-pro}"
+SOCKET_PATH="$STATE_DIR/daemon.sock"
+WAIT_DEADLINE_S=3
+elapsed=0
+while [ "$elapsed" -lt "$WAIT_DEADLINE_S" ]; do
+  # Check existence (-e): only the daemon's UDS bind creates this path, so
+  # presence is sufficient evidence the daemon got past M001 boot. (-S checks
+  # socket file-type but breaks tests using touched-file mocks; existence is
+  # equally diagnostic for the boot-failure-vs-attaching distinction.)
+  if [ -e "$SOCKET_PATH" ]; then
+    if kill -0 "$DAEMON_PID" 2>/dev/null; then
+      echo "daemon spawned (pid $DAEMON_PID, socket $SOCKET_PATH)" >&2
+    else
+      echo "daemon already running, attaching (pid $DAEMON_PID exited; another daemon holds the lock; socket $SOCKET_PATH live)" >&2
+    fi
+    exit 0
+  fi
+  sleep 0.5
+  elapsed=$((elapsed + 1))
+done
 
-# Check if it's still running
+# No socket after deadline — boot failure
 if kill -0 "$DAEMON_PID" 2>/dev/null; then
-  echo "daemon spawned (pid $DAEMON_PID)" >&2
-  exit 0
+  echo "ERROR: daemon spawned (pid $DAEMON_PID) but socket never appeared at $SOCKET_PATH within ${WAIT_DEADLINE_S}s — check $LOG_DIR/daemon.err" >&2
 else
-  # Daemon exited quickly — either lock-loser ("attaching") or boot failure.
-  echo "daemon already running, attaching (pid $DAEMON_PID exited; another daemon holds the lock)" >&2
-  exit 0
+  echo "ERROR: daemon (pid $DAEMON_PID) exited before socket appeared — likely boot failure; check $LOG_DIR/daemon.err" >&2
 fi
+exit 1

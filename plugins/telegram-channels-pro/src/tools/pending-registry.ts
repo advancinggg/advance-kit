@@ -80,8 +80,10 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
   }
 
   lookupByPendingId(callback_data: string): PendingEntry | null {
-    // callback_data format: cb_<pending_id>_<option_index>
-    const match = /^cb_([0-9a-f]+)_(\d+)$/.exec(callback_data);
+    // callback_data format: cb_<32-char-hex pending_id>_<1-3 digit option_index>
+    // Adversarial R1 W4: bound pending_id length to exactly 32 (16-byte hex)
+    // and option_index to 1-3 digits (max 999) to defeat probing patterns.
+    const match = /^cb_([0-9a-f]{32})_(\d{1,3})$/.exec(callback_data);
     if (!match) return null;
     const pid = match[1]!;
     return this.entries.get(pid) ?? null;
@@ -130,13 +132,16 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
     }
     for (const pid of toRemove) {
       const entry = this.entries.get(pid)!;
+      // Adversarial R1 W1: delete entry FIRST so a racing callback lookup can't
+      // resolve a Promise we just rejected (audit trail integrity).
+      this.entries.delete(pid);
       // Reject the awaiting Promise
       try {
         entry.rejecter(new Error("session_terminated"));
       } catch {
         /* ignore */
       }
-      // Edit the inline-button message to indicate cancellation
+      // Edit the inline-button message to indicate cancellation (best-effort)
       try {
         await tg.editMessageText({
           chat_id: entry.chat_id,
@@ -146,7 +151,6 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
       } catch {
         /* best-effort */
       }
-      this.entries.delete(pid);
       cleaned += 1;
     }
     // Single snapshot per cleanup batch (audit Round 1 W3 fix — was per-entry)
