@@ -474,15 +474,15 @@ stateDiagram-v2
 | MODULE-006-AC-09 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-10 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-11 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-006-AC-12 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-006-AC-13 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-006-AC-12 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (re-verify; Slice B initial) | 2026-05-15 |
+| MODULE-006-AC-13 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (re-verify; Slice B initial) | 2026-05-15 |
 | MODULE-006-AC-14 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-15 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-16 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-006-AC-20 | Y | untested | — | — |
+| MODULE-006-AC-20 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 
 ### 3.5 Feature Implementation Record
 

@@ -523,7 +523,7 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| Not Started | 0% | 2026-05-12 |
+| Production | 100% | 2026-05-15 |
 
 ### 3.2 File Structure
 
@@ -568,9 +568,26 @@ sequenceDiagram
 
 | AC ID | Active | Status | Verified By Task | Date |
 |-------|--------|--------|-----------------|------|
-| MODULE-005-AC-01 through AC-20 | Y | untested | — | — |
-
-(20 rows abbreviated for brevity; all Active=Y, Status=untested initially.)
+| MODULE-005-AC-01 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-02 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-03 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-04 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-05 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-06 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-07 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-08 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-09 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-10 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-11 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-12 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-13 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-14 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-15 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-16 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-17 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-19 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-20 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 
 ### 3.5 Feature Implementation Record
 

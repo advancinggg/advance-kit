@@ -563,7 +563,7 @@ stateDiagram-v2
 | AC ID | Active | Status | Verified By Task | Date |
 |-------|--------|--------|-----------------|------|
 | MODULE-008-AC-01 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-008-AC-02 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-008-AC-02 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (re-verify; Slice B initial) | 2026-05-15 |
 | MODULE-008-AC-03 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-04 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-05 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
@@ -579,7 +579,7 @@ stateDiagram-v2
 | MODULE-008-AC-15 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-16 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-008-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-008-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (re-verify; Slice B initial) | 2026-05-15 |
 | MODULE-008-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 
 ### 3.5 Feature Implementation Record
