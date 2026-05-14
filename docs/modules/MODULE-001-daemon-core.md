@@ -461,9 +461,11 @@ stateDiagram-v2
 |-----------|-----------|------------------|-------------------|
 | `E_STATE_DIR_PERMS` | StateDirPermsRefused | State dir exists with wrong perms AND owner mismatch | Refuse boot; stderr message with chmod command suggestion; exit 1 |
 | `E_LOCK_HELD_LIVE` | LockHeldByLiveDaemon | Lock acquisition failed AND PID is live + binary matches | Clean exit (0) with stderr "daemon already running" |
+| `E_LOCK_HELD_WRONG_BINARY` | LockHeldByWrongBinary | Lock acquisition failed AND PID is live BUT command does not contain daemon-binary tokens | Refuse takeover; stderr explains the suspicious PID + command; exit 1 |
 | `E_LOCK_RETRY` | LockRetryExhausted | 3 stale-takeover attempts all failed | Refuse boot; stderr; exit 1 |
 | `E_BUN_VERSION` | UnsupportedBunVersion | `Bun.version` < 1.1 | Refuse boot; stderr explicit version requirement; exit 1 |
 | `E_HOMEDIR` | NoHomeDir | `os.homedir()` empty / inaccessible | Refuse boot; stderr; exit 1 |
+| `E_BOT_TOKEN_MISSING` | BotTokenMissing | `TELEGRAM_BOT_TOKEN` env var unset at boot | Refuse boot; release lock; stderr; exit 1 |
 
 **Error Propagation**: daemon-core errors are boot-fatal — no event propagation needed because they abort before EventBus is up. After EventBus init, errors are emitted as events (e.g. `watchdog_signal`) and consumers handle.
 

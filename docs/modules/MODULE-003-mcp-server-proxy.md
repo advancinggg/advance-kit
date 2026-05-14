@@ -498,7 +498,7 @@ sequenceDiagram
 | File | Role |
 |------|------|
 | `src/mcp/daemon-acceptor.ts` | Bun.listen UDS server; per-connection FSM |
-| `src/mcp/proxy-client.ts` | claude-side stdio→UDS bridge |
+| `src/mcp/proxy-client.ts` | claude-side stdio→UDS bridge — not built in this slice (per `waived_scope` AC-14/AC-15; ships in subsequent task) |
 | `src/mcp/frame.ts` | encodeFrame / FrameDecoder |
 | `src/mcp/frame-types.ts` | session_init / tool_call / tool_result / inbound_push / disconnect_farewell schemas |
 | `src/mcp/session-map.ts` | session_id ↔ socket in-memory map |

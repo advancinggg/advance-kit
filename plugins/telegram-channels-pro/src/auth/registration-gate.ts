@@ -47,6 +47,7 @@ export class RegistrationGateImpl implements RegistrationGate {
   private currentState: RegistrationState = "closed";
   private currentCode: string | null = null;
   private timer: TimerHandle | null = null;
+  private waitForResetReminderTimer: TimerHandle | null = null;
   private perSenderCount = new Map<number, number>();
   private globalCount = 0;
 
@@ -85,9 +86,27 @@ export class RegistrationGateImpl implements RegistrationGate {
     } else {
       this.cfg.eventBus.emit("registration_event", { kind: "timeout_launchd" });
       this.cfg.eventBus.emit("registration_timeout", { ts: this.cfg.clock.now() });
+      this.cfg.eventBus.emit("registration_event", { kind: "waiting_for_reset" });
       this.currentState = "waiting_for_reset";
       this.currentCode = null;
+      // MODULE-006 §1.4.4 step 3: stderr periodic hint every 5min while waiting_for_reset.
+      this.scheduleWaitForResetReminder();
     }
+  }
+
+  private scheduleWaitForResetReminder(): void {
+    if (this.waitForResetReminderTimer) return;
+    const fire = (): void => {
+      if (this.currentState !== "waiting_for_reset") {
+        this.waitForResetReminderTimer = null;
+        return;
+      }
+      process.stderr.write(
+        "telegram-channels-pro: registration timed out; run `reset-admin` to retry\n",
+      );
+      this.waitForResetReminderTimer = this.cfg.clock.setTimeout(fire, 5 * 60_000);
+    };
+    this.waitForResetReminderTimer = this.cfg.clock.setTimeout(fire, 5 * 60_000);
   }
 
   forceTimeoutForTest(): void {
@@ -176,12 +195,18 @@ export class RegistrationGateImpl implements RegistrationGate {
     this.currentState = "waiting_for_reset";
     this.currentCode = null;
     this.cfg.eventBus.emit("registration_event", { kind: "window_closed_brute_force" });
+    // MODULE-006 §1.4.3: in launchd mode global-trip also emits waiting_for_reset.
+    this.cfg.eventBus.emit("registration_event", { kind: "waiting_for_reset" });
   }
 
   stop(): void {
     if (this.timer) {
       this.timer.cancel();
       this.timer = null;
+    }
+    if (this.waitForResetReminderTimer) {
+      this.waitForResetReminderTimer.cancel();
+      this.waitForResetReminderTimer = null;
     }
   }
 }

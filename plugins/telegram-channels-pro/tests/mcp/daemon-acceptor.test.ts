@@ -376,11 +376,11 @@ describe("MODULE-003-AC-16: per-frame read timeout", () => {
 });
 
 describe("MODULE-003-AC-17: same-uid trust documented in MODULE-003 §1.7", () => {
-  test("MODULE-003-T17 — MODULE-003 doc references RISK-012 + same-uid trust boundary", () => {
-    const doc = fs.readFileSync(
-      "/Users/advance/advance-kit/advance-kit/docs/modules/MODULE-003-mcp-server-proxy.md",
-      "utf8",
-    );
+  test("MODULE-003-T17 — MODULE-003 doc references RISK-012 + same-uid trust boundary", async () => {
+    const path = await import("node:path");
+    // Resolve repo-relative doc path from this test file, avoiding machine-specific absolutes.
+    const docPath = path.resolve(__dirname, "../../../../docs/modules/MODULE-003-mcp-server-proxy.md");
+    const doc = fs.readFileSync(docPath, "utf8");
     expect(doc).toContain("same-uid");
     expect(doc).toContain("RISK-012");
   });

@@ -563,7 +563,7 @@ sequenceDiagram
 | `src/telegram/fatal-window.ts` | Sliding window data structure |
 | `src/telegram/error-classify.ts` | 409 / 429 / 5xx / network classifier |
 | `tests/telegram/*.test.ts` | Unit + integration tests |
-| `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification |
+| `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification — partially covered by `tests/telegram/methods.test.ts` (shape check of all 6 wrappers); full upstream-0.0.6 JSON-Schema validation ships in subsequent task |
 
 ### 3.3 Test Cases
 

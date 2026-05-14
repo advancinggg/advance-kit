@@ -335,7 +335,7 @@ export class MCPDaemonAcceptor {
     } catch {
       /* ignore */
     }
-    setTimeout(() => {
+    this.cfg.clock.setTimeout(() => {
       try {
         entry.socket.destroy();
       } catch {
