@@ -38,9 +38,13 @@ export class SessionRegistry {
   private unsubs: Array<() => void> = [];
 
   constructor(cfg: SessionRegistryConfig) {
+    // Explicit assignment — same constructor-spread anti-pattern fix as
+    // PendingApprovalRegistry / SnapshotEmitter / AttachmentJanitor.
     this.cfg = {
-      capacity: DEFAULT_CAPACITY,
-      ...cfg,
+      eventBus: cfg.eventBus,
+      clock: cfg.clock,
+      capacity: cfg.capacity ?? DEFAULT_CAPACITY,
+      disconnectSession: cfg.disconnectSession,
     };
   }
 

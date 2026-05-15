@@ -37,7 +37,7 @@
     {
       "name": "telegram-channels-pro",
       "description": "Telegram-channels-pro daemon: single-instance Telegram bot daemon + Unix-socket MCP transport for claude sessions, sliding-window quarantine reliability (RC#1 fix), watchdog (orphan/stuck/idle), first-run admin registration window, structured JSON logs with redaction. v0.1 infrastructure slice \u2014 daemon-core + telegram-client + mcp-server-proxy (daemon side) + admin-auth + observability. M004 mcp-tools, M005 routing, M007 deployment ship in a subsequent release.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "author": {
         "name": "Advance Studio"
       },

@@ -49,9 +49,15 @@ export class PendingApprovalRegistryImpl implements PendingApprovalRegistry {
   private cfg: Required<PendingApprovalRegistryConfig>;
 
   constructor(cfg: PendingApprovalRegistryConfig) {
+    // Explicit assignment — spread `...cfg` after defaults overrides
+    // capacity:DEFAULT with undefined when cfg.capacity is omitted
+    // (tools/index.ts passes args.pendingCapacity which is undefined unless
+    // user sets TGCP_PENDING_CAPACITY). Same anti-pattern fixed in
+    // SnapshotEmitter and AttachmentJanitor.
     this.cfg = {
-      capacity: DEFAULT_CAPACITY,
-      ...cfg,
+      eventBus: cfg.eventBus,
+      clock: cfg.clock,
+      capacity: cfg.capacity ?? DEFAULT_CAPACITY,
     };
   }
 

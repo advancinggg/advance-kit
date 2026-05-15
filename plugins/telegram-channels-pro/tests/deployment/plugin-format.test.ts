@@ -14,7 +14,7 @@ describe("MODULE-007-AC-10: plugin.json shape", () => {
     const raw = fs.readFileSync(PLUGIN_JSON, "utf-8");
     const json = JSON.parse(raw) as { name: string; version: string; description: string; author: { name: string } };
     expect(json.name).toBe("telegram-channels-pro");
-    expect(json.version).toBe("0.1.1");
+    expect(json.version).toBe("0.1.2");
     expect(typeof json.description).toBe("string");
     expect(json.description.length).toBeGreaterThan(0);
     expect(json.author?.name).toBe("Advance Studio");
@@ -27,7 +27,7 @@ describe("MODULE-007-AC-11: marketplace.json entry", () => {
     const market = JSON.parse(raw) as { plugins: Array<{ name: string; version: string }> };
     const entry = market.plugins.find((p) => p.name === "telegram-channels-pro");
     expect(entry).toBeDefined();
-    expect(entry!.version).toBe("0.1.1");
+    expect(entry!.version).toBe("0.1.2");
     const pluginJson = JSON.parse(fs.readFileSync(PLUGIN_JSON, "utf-8")) as { version: string };
     expect(entry!.version).toBe(pluginJson.version);
   });
@@ -36,16 +36,16 @@ describe("MODULE-007-AC-11: marketplace.json entry", () => {
 describe("MODULE-007-AC-12: 5-sync-point version agreement", () => {
   test("MODULE-007-T12 — version 0.1.0 appears in plugin.json + marketplace.json + 3 READMEs (telegram-channels-pro row)", () => {
     const pluginJson = JSON.parse(fs.readFileSync(PLUGIN_JSON, "utf-8")) as { version: string };
-    expect(pluginJson.version).toBe("0.1.1");
+    expect(pluginJson.version).toBe("0.1.2");
     const marketplace = JSON.parse(fs.readFileSync(MARKETPLACE_JSON, "utf-8")) as {
       plugins: Array<{ name: string; version: string }>;
     };
     const tgcp = marketplace.plugins.find((p) => p.name === "telegram-channels-pro");
-    expect(tgcp?.version).toBe("0.1.1");
+    expect(tgcp?.version).toBe("0.1.2");
     // README rows: must contain `telegram-channels-pro` AND `0.1.0` on the same line
     const checkReadme = (filePath: string): boolean => {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n");
-      return lines.some((l) => l.includes("telegram-channels-pro") && l.includes("0.1.1"));
+      return lines.some((l) => l.includes("telegram-channels-pro") && l.includes("0.1.2"));
     };
     expect(checkReadme(README_EN)).toBe(true);
     expect(checkReadme(README_ZH)).toBe(true);
