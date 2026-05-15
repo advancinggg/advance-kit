@@ -661,8 +661,8 @@ stateDiagram-v2
 | MODULE-001-AC-12 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-001-AC-13 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-001-AC-14 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-001-AC-15 | Y | untested | — | — |
-| MODULE-001-AC-16 | Y | untested | — | — |
+| MODULE-001-AC-15 | Y | untested | harness shipped (bin/soak-monitor.sh + soak-analyze.ts + docs/SOAK.md); awaiting 72h execution | — |
+| MODULE-001-AC-16 | Y | untested | harness shipped (bin/soak-monitor.sh + soak-analyze.ts + docs/SOAK.md); awaiting 72h execution | — |
 | MODULE-001-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-001-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-001-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
