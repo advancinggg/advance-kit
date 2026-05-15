@@ -1,7 +1,7 @@
 # Glossary
 
 > Created: 2026-05-12 (/prd bootstrap)
-> Last updated: 2026-05-12
+> Last updated: 2026-05-15
 
 ---
 
@@ -61,6 +61,12 @@
 **Related**: daemon
 **Source**: /prd brainstorm Q6 + /prd Round 1 review
 
+### channel notification
+**Definition**: telegram-channels-pro daemon 把入站 Telegram 消息推送到 claude 会话的标准机制——通过 MCP `notifications/claude/channel` 协议把消息封装为结构化 `<channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">` 标签注入到 model 的 LLM 决策回路；与 Anthropic 官方 external_plugins/telegram (0.0.6) 行为完全对齐。区别于 MCP 日志通道（log channel）—— 后者不进入 model prompt input 决策。Daemon 仅在 chat.type === private 时触发 channel notification（group/supergroup/channel 类型 inbound 一律静默丢弃，见 PRD §4.6 chat-type 限定 AC）。
+**Synonyms**: channel push, inbound notification, claude/channel notification
+**Related**: daemon, focus session, LRU routing, routing snapshot rule
+**Source**: /prd amendment 2026-05-15 (Round 1 fix: added message_id attr + chat.type private restriction)
+
 ## Technical concepts
 
 (Populated by `/spec §2.6` MODULE-generation append step.)
@@ -82,3 +88,5 @@
 | 2026-05-12 | focus session | Related extended (LRU routing, routing snapshot rule) | /prd Round 1 review |
 | 2026-05-12 | approval request | definition extended (callback auth invariant) | /prd Round 1 review |
 | 2026-05-12 | registration window | definition extended (code-match TOFU mitigation) | /prd Round 1 review |
+| 2026-05-15 | channel notification | created | /prd amendment 2026-05-15 |
+| 2026-05-15 | channel notification | definition extended (added message_id attr + chat.type private restriction) | /prd amendment Round 1 fix |
