@@ -13,5 +13,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

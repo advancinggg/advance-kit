@@ -491,14 +491,16 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 88% | 2026-05-14 |
+| Production | 100% | 2026-05-15 |
 
 ### 3.2 File Structure
 
 | File | Role |
 |------|------|
 | `src/mcp/daemon-acceptor.ts` | Bun.listen UDS server; per-connection FSM |
-| `src/mcp/proxy-client.ts` | claude-side stdio→UDS bridge — not built in this slice (per `waived_scope` AC-14/AC-15; ships in subsequent task) |
+| `src/mcp/proxy-client.ts` | claude-side stdio→UDS bridge using `@modelcontextprotocol/sdk` — registers 5 tool handlers (reply / react / edit_message / download_attachment / request_approval), encodes tool_call frames to daemon UDS + awaits tool_result by request_id, lazy-spawns daemon via `bin/daemon-spawn.sh` on ECONNREFUSED |
+| `bin/proxy-client.ts` | Bun shebang entry; invoked by claude-code per `.mcp.json` `mcpServers` config |
+| `.mcp.json` | claude-code MCP server registration: spawns `bun run ${CLAUDE_PLUGIN_ROOT}/bin/proxy-client.ts` per session |
 | `src/mcp/frame.ts` | encodeFrame / FrameDecoder |
 | `src/mcp/frame-types.ts` | session_init / tool_call / tool_result / inbound_push / disconnect_farewell schemas |
 | `src/mcp/session-map.ts` | session_id ↔ socket in-memory map |
@@ -543,8 +545,8 @@ sequenceDiagram
 | MODULE-003-AC-11 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-003-AC-12 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-003-AC-13 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-003-AC-14 | Y | untested | — | — |
-| MODULE-003-AC-15 | Y | untested | — | — |
+| MODULE-003-AC-14 | Y | passed | dev-tgcp-proxy-client-step2 | 2026-05-15 |
+| MODULE-003-AC-15 | Y | passed | dev-tgcp-proxy-client-step2 | 2026-05-15 |
 | MODULE-003-AC-16 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-003-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 
@@ -569,6 +571,7 @@ sequenceDiagram
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: daemon-side UDS acceptor + framing + deliverToSession/disconnectSession under `plugins/telegram-channels-pro/`. claude-side proxy-client.ts tracked separately (AC-14/15 waived for this slice; need claude live integration). |
 | 2026-05-15 | Slice 2 scope-expansion re-verification: M003 implementation unchanged; included in scope_expansion for CONTRACT-001 additive `controlSocketFile` field — no consumer in M003 references the new field. CONTRACT-006 deliverToSession/disconnectSession surface UNCHANGED (M005 consumes as-is). |
+| 2026-05-15 | Step 2 (post-Slice 2 closure): claude-side proxy-client.ts implemented using `@modelcontextprotocol/sdk` v1.29.0; bin/proxy-client.ts entry + .mcp.json registration; AC-14 (5 tool handlers via MCP SDK) + AC-15 (proxy reload → session_disconnected then session_connected with NEW session_id) verified by 3 new integration tests in tests/mcp/proxy-client.test.ts. M003 reaches Production 100% (17/17 ACs). |
 
 ### 3.8 Implementation Notes
 

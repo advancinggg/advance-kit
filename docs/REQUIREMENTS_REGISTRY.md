@@ -17,7 +17,7 @@ Status: Draft → Spec'd → Implemented → Verified | Partial
 | REQ-002 | Y | PRD.md | §3.2 | Task completion push: outbound `reply` from any registered session to admin chat | Feature | MODULE-004 | Verified | 2026-05-15 |
 | REQ-003 | Y | PRD.md | §3.3 | Approval round-trip: claude `request_approval` blocks until admin inline-button click | Feature | MODULE-004, MODULE-005 | Verified | 2026-05-15 |
 | REQ-004 | Y | PRD.md | §4.1 | Daemon process architecture: single-instance, sole token holder, in-memory state, SIGTERM graceful shutdown | Feature | MODULE-001 | Verified | 2026-05-14 |
-| REQ-005 | Y | PRD.md | §4.2 | Bot polling reliability: indefinite exp-backoff retry + sliding-window quarantine; 409/429 segregated from fatal counter | Feature | MODULE-002 | Partial | 2026-05-14 |
+| REQ-005 | Y | PRD.md | §4.2 | Bot polling reliability: indefinite exp-backoff retry + sliding-window quarantine; 409/429 segregated from fatal counter | Feature | MODULE-002 | Verified | 2026-05-15 |
 | REQ-006 | Y | PRD.md | §4.3 | Self-aware lifecycle: file lock + PID/binary-identity validation; second instance exits cleanly; never SIGTERMs other processes | Feature | MODULE-001, MODULE-003 | Verified | 2026-05-14 |
 | REQ-007 | Y | PRD.md | §4.4 | Watchdog: orphan/stuck/idle detection with severity-graded observability (failures alert, voluntary idle stays quiet) | Feature | MODULE-001 | Verified | 2026-05-14 |
 | REQ-008 | Y | PRD.md | §4.5 | MCP tool compatibility: reply / react / edit_message / download_attachment external behavior matches upstream 0.0.6 (JSON schema validation in M1) | Feature | MODULE-002, MODULE-004 | Verified | 2026-05-15 |
