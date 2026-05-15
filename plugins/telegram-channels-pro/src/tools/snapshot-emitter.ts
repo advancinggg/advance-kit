@@ -21,9 +21,15 @@ export class SnapshotEmitter {
   private timer: TimerHandle | null = null;
 
   constructor(cfg: SnapshotEmitterConfig) {
+    // Explicit assignment — DO NOT use spread `...cfg` after defaults: when
+    // cfg.intervalMs is undefined the spread overwrites the default with
+    // undefined → setTimeout fires immediately every tick → log storm
+    // (caught running v0.1.0 in production: ~30 snapshots / 35ms).
     this.cfg = {
-      intervalMs: DEFAULT_SNAPSHOT_INTERVAL_MS,
-      ...cfg,
+      registry: cfg.registry,
+      eventBus: cfg.eventBus,
+      clock: cfg.clock,
+      intervalMs: cfg.intervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS,
     };
   }
 
