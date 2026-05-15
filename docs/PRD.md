@@ -120,9 +120,10 @@ TG 的价值在于"我不在键盘前也能用 claude"，但每隔几小时要�
    路径（不会以为掉了）。claude 在 LLM 决策回路看到结构化的 `<channel source="telegram"
    chat_id="..." message_id="..." user="..." ts="...">{消息文本}</channel>` 标签——格式
    与上游 `external_plugins/telegram` (0.0.6) 一致；详见 §4.9。
-5. claude 决定回复，调 MCP `reply` (或 `react` / `edit_message` 任一 outbound 工具)
-   把回复内容发回。daemon 调 Telegram API；任一 outbound 触发后立即停止 typing 提示
-   (与 §4.9 typing AC 一致——三个 outbound 工具都是 typing-stop trigger)。
+5. claude 决定回复，调 MCP `reply` (或 `react` / `edit_message` / `request_approval`
+   任一 outbound 工具) 把回复内容发回。daemon 调 Telegram API；任一 outbound 触发后
+   立即停止 typing 提示 (与 §4.9 typing AC 一致——四个 outbound 工具都是 typing-stop
+   trigger; request_approval 也算因为它是 model 对 inbound 的 visible 响应)。
 6. 用户在 TG 看到回复。
 
 **Routing snapshot rule（确定性规则）**：
@@ -133,6 +134,12 @@ TG 的价值在于"我不在键盘前也能用 claude"，但每隔几小时要�
   snapshot。
 - 多条消息密集到达：每条独立按各自接收时刻 snapshot 决策。如果 focus 会话期间调过 `reply`，
   下一条消息可能走到新的 LRU 头。这是确定性的、可预测的。
+- **`/session` UX 注意 (override 不是 sticky)**：用户 `/session <shortid>` 显式切换后,
+  如果其他 session 在切换后期间调过 reply / react / edit_message / request_approval
+  任一 outbound, LRU 时间戳会被该其他 session 更新, 下一条入站可能 silently 走到那个
+  新 LRU 头——`/session` 切换是 'one-shot snapshot at 当时', 不是 'sticky lock until next
+  /session'。这与 routing snapshot rule 一致 (LRU 永远胜出), 但用户需理解此行为以避免
+  "我刚 /session 到 X session, 为什么下一条没去 X" 的困惑。重新切回需再发 `/session X`。
 
 **Edge cases**：
 - 没有任何会话注册（且 sender 是 admin）：daemon 在 TG 回复 "No active claude session.
@@ -214,7 +221,10 @@ create` 等），希望先得到用户确认。
   message_id ↔ pending 的持久映射，**原 inline-button 消息保留在 TG 中不被 daemon 主动
   编辑**；用户再次点击该按钮时，daemon 因找不到匹配 pending → 通过 TG callback answer
   返回一个轻量"approval expired"弹窗提示（弹窗文本仅通用提示，不含 pending-id 或
-  requester 元数据），按钮无害保留可重复点击。
+  requester 元数据），按钮无害保留可重复点击。**Popup 节流 (info-leak 防护)**：同一
+  `callback_query.data` (button id) 5 分钟内只回一次 popup; 后续重复点击 daemon 静默
+  接受 callback 但不回 popup; 防止用户/攻击者通过反复点击 + 观察 popup 频率推断
+  daemon crash 时间窗或 pending 状态 (与 §1.1 "失败可观测但不暴露探测" 原则一致)。
 - requester 会话先于 daemon 退出（daemon 仍存活）：daemon 内存里 pending map 仍持有
   message_id ↔ pending 映射（in-memory 但**未** crash），所以 daemon 可以主动 edit TG 原
   按钮消息为 "approval cancelled (session ended)" + 清理 pending。**两个 crash 路径的关键
@@ -315,7 +325,11 @@ create` 等），希望先得到用户确认。
   protection 等级，目录路径具体由 /spec 锁定，需在同一 protected directory 下）；
   **附件文件本身 0600**, 防止同 uid 的本地恶意进程通过 ls / read 看到附件内容 (附件可能
   含用户上传的代码 / secret / 路径)。Daemon 周期清理（TTL 1-24 小时由 /spec 决定）；
-  外部行为与官方等价。
+  外部行为与官方等价。**文件名 sanitization (path-traversal / shell-metachar 防护)**:
+  TG 上传文件名 (uploader-controlled) 不直接落地为本地文件名 — daemon 以 random hash
+  + sanitized 扩展名 (`^[a-zA-Z0-9]{1,8}$` 否则丢弃) 命名落地文件; 上游 0.0.6 已内置等价
+  防护 (delimiter 等), tgcp 沿用; 防 attacker 通过 `../../etc/passwd` / shell-metachar
+  注入达成 path traversal 或后续 shell 误用。
 - **request_approval**（新增）：能力 = 发出带 inline-button 选项的消息 + 同步 await 用户
   点击结果。返回值至少包含用户选择的选项标签字符串（完整返回 schema 由 /spec 锁定）。
   安全要求：daemon **必须**验证 callback_query 的 chat type === private + 发送人 user_id
@@ -335,6 +349,14 @@ create` 等），希望先得到用户确认。
   （`capabilities.experimental` 声明 / inbound `notifications/claude/channel` / system
   instructions）。`request_approval` 不切换为 `notifications/claude/channel/permission_request`
   机制——bespoke MCP 工具路径保留，理由见 §4.9 + §7 explicitly out of scope。
+- **Outbound chat-type defense in depth (security)**: 对 `reply` / `react` /
+  `edit_message` / `request_approval` 4 个出向 TG 工具, daemon-side 验证调用方传入的
+  `chat_id` 对应 chat type === private (daemon 维护一个 chat_id → chat_type 缓存,
+  由 inbound 流量 / pending_approval 创建时自然填充, 缓存 TTL 由 /spec 决定); 非
+  private chat type 的 chat_id 拒绝 outbound 调用并返回 `InvalidChatTypeError` 给
+  requester。与 §4.6 inbound chat-type 限定 形成 defense-in-depth, 防 model 误用
+  chat_id (e.g. hallucinated id 或从 §3.3 Edge cases "text-typed approval" 上下文
+  picked up wrong id) 把 claude 输出送进 group / channel 泄漏。
 
 ### 4.6 Per-session opt-in + LRU routing
 
@@ -363,6 +385,11 @@ create` 等），希望先得到用户确认。
   ——**不**输出项目路径以避免雇主 / 内部仓库名等敏感信息泄漏；空列表回复 "No sessions
   registered. Start with `claude --channels plugin:telegram-channels-pro@advance-kit`." **该回复不受 §3.1 "no session
   入站文本节流" 限制——`/list` 是 admin 主动查询，独立计数器，不共享节流名额。**
+  **Branch 名 trade-off (UX vs leakage)**: branch 字段保留是 session 自识别价值 ↔ 项目
+  路径已 redact; admin 应避免使用泄漏雇主 / 客户名 / 内部代号的 branch 名 (e.g.
+  `acme-customer-prod-fix` 是风险, 改为 `prod-fix` 更安全); /list 限定 private DM
+  admin 可见 + redaction 不覆盖 branch 是已接受设计 trade-off (与 §1.1 "失败可观测"
+  原则不冲突 — branch 是 admin 自我管理的 user-content)。
 - 用户在 TG 发 `/status`：daemon 返回自身健康摘要（uptime、polling 状态、quarantine？、
   最近一次入站时间、注册会话数）。
 - 审批回调（callback_query）按 pending-id 精确路由到 requester 会话，**不**走 LRU。
@@ -383,6 +410,14 @@ DM 即注册。
 
 **Acceptance criteria**：
 - 如果环境变量 `TELEGRAM_AUTHORIZED_USERS` 设置 → 直接用，跳过注册流程。
+- **Multi-admin 语义注解 (clarify §2 single-user 假设 + 上游 env var plural-named 命名)**:
+  `TELEGRAM_AUTHORIZED_USERS` 接受 comma-separated user IDs (上游兼容). v0.2 §2
+  single-user 硬约束意味着实际 only 1 个 admin user_id 配置才是支持用法。多 admin
+  配置 (多 user_id) 技术上不被 daemon 拒绝, 但 v0.2 不定义多 admin 之间的审批权重 /
+  routing 冲突 / 通知归属规则 ——退化为 'first-listed admin 起点处理' (其他 user_id
+  仅作为 inbound text 来源被允许, 但 outbound 通知 / pending approval 路由都按
+  first-listed admin chat_id 处理); 多 admin 完整 semantics 留 v0.3+ 多用户 scope。
+  **配 1 个 user_id 是 v0.2 推荐用法。**
 - 否则 daemon 启动后进入注册模式：
   - daemon 在 **user-facing delivery channels**（stderr + launchd log + 第一个连接的
     claude MCP 会话日志，三者并行）输出**注册码**（一个短随机串，比如 6 位字母数字），
@@ -401,7 +436,11 @@ DM 即注册。
       显式重启注册才能继续。这防御 "多账号并发暴力（每号 5 次 × N 号）" 攻击。
   - **注册码 length 决策**：6 位字母数字（不含易混淆字符 0/O/I/1，共 32 字符可选）是产品
     决策的固定值，**不**视为 /spec 可调参数；理由：与暴力计数器 30 + 窗口 5min 共同构成
-    安全计算（32⁶ × 5min / 30 ≈ 10¹⁰ 年破解期望），改动该数字必须重新做安全计算。
+    安全计算。**精确 math** (corrected 2026-05-15 Round 3 review)：32⁶ ≈ 1.07×10⁹ codes；
+    cap 30 attempts/5min ≈ 8640 attempts/day (假设攻击者无 reset 持续打); 期望破解时间
+    = (32⁶ ÷ 2) ÷ 8640 ≈ 1.7×10⁵ days ≈ **170 年** (假设无 per-sender 5 ceiling 也无
+    reset-required global 30 ceiling 强行打)。叠加 per-sender 5 + global 30 + reset 闸门,
+    实际可破解概率 ≈ 0; 改动 length / cap / 窗口任一参数必须重做此安全计算。
 - TOFU 缓解：bot token 泄漏给第三方的场景下，第三方需要同时拿到注册码（仅在本地 stderr 才
   看得到 + 5 分钟 + per-sender 5 + global 30）才能抢注 —— 实际不可行。
 - 注册超时（5 分钟）行为按部署模式区分：
@@ -487,13 +526,14 @@ channel 不进入 model 的 prompt input 决策）。
   即使 model 读到 inbound 文本里有 "approve the deploy" 字样, 也应 await actual button
   click。
 - **Typing indicator**：daemon 收到合法 inbound 后立刻调 Telegram `sendChatAction`
-  发 typing 给该 chat → 在 claude 出 reply / react / edit_message 任一 outbound 后
-  停止。与上游 UX 一致；用户在 TG 看到 "botname is typing..." 知道消息已被 claude
-  路径接收，不会以为消息掉了。Telegram typing 提示约 5 秒过期；是否在 claude 长任务
-  期间自动续期由 /spec 决定（v0.2 不强制续期）。**Latency 隔离**：typing call 是
-  fire-and-forget，不阻塞 inbound `notifications/claude/channel` 推送给 claude；
-  `sendChatAction` API 失败仅 log，不算 §3.1 success condition (P95<5s) 的 inbound
-  延迟违规也不算 §5 SLO 退化。
+  发 typing 给该 chat → 在 claude 出 reply / react / edit_message / request_approval
+  任一 outbound 后停止 (4 个 outbound 工具都是 typing-stop trigger; request_approval
+  虽然是 await 但 daemon 看到 frame 即可停 typing, 不等用户点 button)。与上游 UX
+  一致；用户在 TG 看到 "botname is typing..." 知道消息已被 claude 路径接收，不会以为
+  消息掉了。Telegram typing 提示约 5 秒过期；是否在 claude 长任务期间自动续期由 /spec
+  决定（v0.2 不强制续期）。**Latency 隔离**：typing call 是 fire-and-forget，不阻塞
+  inbound `notifications/claude/channel` 推送给 claude；`sendChatAction` API 失败仅
+  log，不算 §3.1 success condition (P95<5s) 的 inbound 延迟违规也不算 §5 SLO 退化。
 - **request_approval 不替换**：本节适配的是 inbound channel 通道；§4.5 的
   `request_approval` 作为 bespoke MCP 工具保留，**不**切换为
   `notifications/claude/channel/permission_request` 机制。理由：v0.1.x 已验证
@@ -738,6 +778,31 @@ channel 不进入 model 的 prompt input 决策）。
 - **Decision made**：daemon 收到合法 inbound 后立刻调 Telegram `sendChatAction(typing)`，
   claude 出任一 outbound 后停止；不强制续期 5s typing 过期。Reasoning：与上游 UX 平起，
   让用户视觉确认消息进了 claude 路径。decided 2026-05-15 amendment Q3。
+- **Decision deferred to /spec (with bounds)**: daemon-side 区分 'spurious MCP 重连
+  事件' (counted toward §5 SLO) vs scripted reconnect (excluded — `/reload-plugins` /
+  SIGTERM / KeepAlive) 的具体机制。Bounds: 必须 deterministic 信号 (handshake / sequence
+  number / 显式 flag); 禁止 heuristic timing (e.g., 'reconnect within 100ms' 会让攻击者
+  把 spurious 隐藏在 category-a). 推荐机制: claude-side proxy 在 `/reload-plugins` 触发
+  disconnect 前发一个 `reload_handshake` MCP frame, daemon 识别后将后续 reconnect 标记
+  为 scripted; 缺 handshake 的 reconnect = spurious. /spec 锁定 handshake 协议形态 +
+  category (b)/(c) (SIGTERM / KeepAlive) 的等价识别机制. flagged 2026-05-15 amendment
+  Round 3 review (Claude-W2)。
+- **Decision deferred to /spec (with bounds)**: daemon 的 quarantine outbound replay
+  queue drain 机制——quarantine 结束 + queued 消息开始重发时, 如何把
+  `{delivered: true|false}` 最终结果通知原 requester claude session? Bounds: 通知必须
+  eventually 到达 claude (不能 silently drop); 推荐 mechanism = MCP `notifications/...`
+  push 回 requester session (经原 MCP connection); eta_hint 更新机制 (push every
+  quarantine-end transition vs claude-pull on next reply call) /spec 决定具体形态.
+  flagged 2026-05-15 amendment Round 3 review (Claude-W4)。
+- **Decision deferred to /spec (with bounds)**: §5 zero-loss test (864 messages / 72h
+  / 3 sessions / 432 reconnects + shortid 变化) 测试协议细节 — 如何 dynamically track
+  per-session message receipt 跨 reload-plugins 引起的 shortid 改变? Bounds: 必须
+  verify '所有 864 messages 到达 SOME registered session OR 收到 no-session reply'
+  (sequence_id 无空洞), 不要求按 specific shortid 匹配 (shortid 会变, sequence_id 不变).
+  推荐机制: monitor script 订阅 daemon 结构化 log stream (event_type=inbound_routed),
+  匹配 sequence_id ↔ delivered_session_shortid; reload-plugin 引起的 shortid 变化对
+  monitor 透明 (monitor 外部独立). /spec 锁定 test harness 实现细节. flagged
+  2026-05-15 amendment Round 3 review (Claude-W6)。
 - **Risk**：Telegram getUpdates 429（Too Many Requests）在 daemon 化后理论上不应再触发，但
   实际可能因 bot 在多个 chat 里被广播触发；需要 /spec Phase 1 把 429 单独分类为 rate-limit
   路径（按 retry-after 退避，不计入 fatal 阈值）。flagged 2026-05-12 PRD draft。
@@ -776,6 +841,7 @@ channel 不进入 model 的 prompt input 决策）。
 | 2026-05-15 | 1.6 | v0.2 channels-integration amendment: §3.1 Step 4 rewrite for `notifications/claude/channel` push + structured `<channel>` tag + Telegram typing indicator; §4.5 cross-ref to §4.9 + explicit "no permission_request swap" rationale; new §4.9 "Claude Code channel-protocol adoption" feature spec (capabilities.experimental + notifications/claude/channel + system instructions + typing indicator + multi-session transparency + behavior-parity AC); §7 add 1 in-scope bullet (channel adoption) + 2 out-of-scope bullets (no permission_request swap, no pairing-code flow); §8 + 3 Decisions made entries (Q1 Strict bridge / Q2 functional+behavior parity / Q3 typing indicator) + Assumption text aligned to official `plugin:telegram@claude-plugins-official` form; flag-spelling correction `claude --channels telegram` → `claude --channels plugin:telegram-channels-pro@advance-kit` (5 occurrences across §3.1 / §4.6 / §5). | /prd amendment session 2026-05-15 (dual-evaluator) |
 | 2026-05-15 | 1.7 | v0.2 amendment Round 1 dual-evaluator batch fix: §3.1 step 2 + §3.3 step 4 add chat.type === private security check (CC1 from Codex — group/supergroup/channel inbound silently dropped, prevents bot-in-group leakage); §4.6 add chat-type 限定 AC + /session 严格匹配模式 (`^/session [a-f0-9]{1,12}$`) clarification (CC1 + W1); §4.9 capability decl drop `claude/channel/permission` (C4 — bespoke request_approval kept, avoid false-advertise unimplemented capability); §4.9 system instructions enrich prompt-injection trigger phrase list as illustrative non-exhaustive (W7) + slash-prefix semantics ruling (W1); §4.9 typing AC add fire-and-forget + failure-mode SLO isolation (W4); §4.9 + §7 rename `PendingApprovalRegistry` → `pending-approval state 管理` (C3 — strip internal class name); §7 in-scope drop `claude/channel/permission` mention (C4 cross-impact); §7 out-of-scope rename `M004 spec` → `现有 approval feature 的契约层 spec` (C1) + `tgcp REQ-011/014` → `当前 first-run 注册码窗口 + 双重计数器` (C2); §7 rollback add (d) channel-protocol regression in-version downgrade (W5); §7.1 M4 row append A/B gate (W3); §8 Assumption Q-tag clarify flag-spelling vs amendment Q3 (C5); §8 + 2 Risks (CC platform tag transformation + prompt-injection moving target). WW2 (GLOSSARY skeleton placeholder) accepted as false positive — bootstrap baseline. | /prd amendment Round 1 dual-evaluator (Claude auditor + codex exec); merged 14 substantive findings (6 Critical / 8 Warning, batch-accept) |
 | 2026-05-15 | 1.8 | v0.2 amendment Round 2 dual-evaluator batch fix: §4.7 + §5 redaction 双 stream 解耦 (C1 from Codex — registration code stays plaintext in user-facing delivery channels [stderr/launchd/MCP-session-log], redacted only in structured JSON event log; two-stream invariant explicit); §3.1 step 5 typing-stop trigger 与 §4.9 对齐 (W1 — reply/react/edit_message 任一 outbound 都停 typing); §5 stability SLO 增加 "spurious MCP 重连事件" 定义 (W2 — 区分 scripted reload-plugins / SIGTERM / KeepAlive 重启 vs 真异常断连); §3.2 quarantine outbound replay queue bound + crash semantics (W3 — 50-cap, in-memory, lost on restart); §3.3 Edge cases + §4.9 system instructions add "text-typed 'approve' 不算 approval" 双向 ruling (W4 — 防 prompt-injection 越过 button 鉴权); §4.5 request_approval add chat.type === private callback check + TG 侧 capacity-full admin 告警 (W5); §4.6 add shortid uniqueness invariant AC (WW1 from Codex); §4.5 download_attachment 加 0700 directory + 0600 file 权限要求 (WW2 from Codex); §5 alerting 详化 auth-reject silent-drop + aggregated alert 双层策略 (WW3 from Codex — clarify §1.1 "失败可观测" 与 silent-drop 的 tension)。 | /prd amendment Round 2 dual-evaluator; merged 9 substantive findings (1 Critical / 8 Warning, batch-accept) |
+| 2026-05-15 | 1.9 | v0.2 amendment Round 3 dual-evaluator selective fix + /spec deferrals (8 fix / 3 defer): §4.7 brute-force math 修正 (Claude-W1 — 32^6 ÷ 2 ÷ 8640 ≈ 170 年, was 10^10 typo; 加 per-sender 5 + global 30 + reset 闸门 实际可破解概率 ≈ 0); §3.1 step 5 + §4.9 typing-stop 加 request_approval 为第 4 个 outbound trigger (Claude-W3); §3.3 approval-expired popup 加 5 分钟 throttle (Claude-W5 — info-leak 防护, 与 §1.1 "失败可观测但不暴露探测" 一致); §3.1 routing snapshot rule 加 /session UX one-shot snapshot 注解 (Claude-W7); §4.5 download_attachment 加 文件名 sanitization (random hash + sanitized ext, Claude-W8); §4.5 加 Outbound chat-type defense-in-depth bullet (4 outbound 工具 chat_id → chat_type === private 验证, Codex-W1); §4.6 /list 加 Branch trade-off 显式 doc (UX vs leakage, Codex-W2); §4.7 加 multi-admin 语义注解 (v0.2 退化为 first-listed admin, plural env var 兼容上游, Codex-W3); §8 新增 3 'Decision deferred to /spec (with bounds)' entries: spurious 重连 handshake 协议 (Claude-W2) / quarantine queue drain notification 路径 (Claude-W4) / zero-loss test multi-session shortid tracking harness (Claude-W6) — 三者均带明确 bounds + 推荐机制留 /spec 实现。Codex Round 3 first attempt stalled (0 bytes after 46min) → killed and retried with medium reasoning_effort + 5min timeout, retry succeeded with 3 findings (codex_consecutive_failures reset to 0)。 | /prd amendment Round 3 dual-evaluator (Claude auditor + codex exec retry); merged 11 substantive findings (0 Critical / 11 Warning, batch-accept 8 + defer 3) |
 
 ---
 
