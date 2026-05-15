@@ -150,7 +150,7 @@ Luego añade a `~/.claude/settings.json`:
 | `dev` | `2.8.2` | Estable — flujo /dev + /spec + /prd con evaluadores duales, progreso MODULE por AC, ADR system y /dev paralelo por worktree. Incluye skills `dev` / `spec` / `prd` + statusline opcional. **Más reciente:** 2.8.0 /dev paralelo por worktree (4 subcomandos `worktree-*`; `/spec` + `/prd` mantienen single-flight). **Anterior:** 2.5.0 ADR system, 2.6.0 disciplina de alcance /prd, 2.7.0 alineación upstream. |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
-| `telegram-channels-pro` | `0.1.2` | v0.1 completo (solo macOS) — 8 módulos: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 herramientas MCP) + routing (LRU + control de admin + comandos slash) + deployment (CLI launchd + socket de control + ROLLBACK.md). |
+| `telegram-channels-pro` | `0.1.3` | v0.1 completo (solo macOS) — 8 módulos: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 herramientas MCP) + routing (LRU + control de admin + comandos slash) + deployment (CLI launchd + socket de control + ROLLBACK.md). |
 
 ## Contacto
 

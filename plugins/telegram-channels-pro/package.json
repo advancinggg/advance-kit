@@ -1,6 +1,6 @@
 {
   "name": "@advance-kit/telegram-channels-pro",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "Telegram-channels-pro daemon: single-instance Telegram bot daemon + MCP transport for claude sessions. v0.1 infrastructure slice.",

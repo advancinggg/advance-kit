@@ -154,12 +154,12 @@ describe("MODULE-005-AC-04/05: inbound text dispatch + admin gate", () => {
     h.bus.emit("inbound_update", {
       update_id: 42,
       type: "message",
-      payload: {
+      payload: { message: {
         message_id: 1,
         from: { id: 99 },
         chat: { id: 555, type: "private" },
         text: "hello",
-      },
+      } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.acceptorStub.delivered.length).toBe(1);
@@ -175,7 +175,7 @@ describe("MODULE-005-AC-04/05: inbound text dispatch + admin gate", () => {
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "message",
-      payload: { message_id: 1, from: { id: 7 }, chat: { id: 555, type: "private" }, text: "hi" },
+      payload: { message: { message_id: 1, from: { id: 7 }, chat: { id: 555, type: "private" }, text: "hi" } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.acceptorStub.delivered.length).toBe(0);
@@ -192,7 +192,7 @@ describe("MODULE-005-AC-15/16: no-session throttle + /list independence", () => 
       h.bus.emit("inbound_update", {
         update_id: i,
         type: "message",
-        payload: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `hi-${i}` },
+        payload: { message: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `hi-${i}` } },
       });
     }
     await new Promise((r) => setTimeout(r, 30));
@@ -207,7 +207,7 @@ describe("MODULE-005-AC-15/16: no-session throttle + /list independence", () => 
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "message",
-      payload: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "hi" },
+      payload: { message: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "hi" } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.tgCalls.send.length).toBe(1); // no-session reply consumed
@@ -215,7 +215,7 @@ describe("MODULE-005-AC-15/16: no-session throttle + /list independence", () => 
     h.bus.emit("inbound_update", {
       update_id: 2,
       type: "message",
-      payload: { message_id: 2, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "/list" },
+      payload: { message: { message_id: 2, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "/list" } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.tgCalls.send.length).toBe(2);
@@ -241,11 +241,11 @@ describe("MODULE-005-AC-08/09/10: callback dispatch", () => {
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "callback_query",
-      payload: {
+      payload: { callback_query: {
         id: "cbq42",
         from: { id: 99 },
         data: `cb_${pid}_0`,
-      },
+      } },
     });
     const choice = await r.promise;
     expect(choice).toBe("Yes");
@@ -262,7 +262,7 @@ describe("MODULE-005-AC-08/09/10: callback dispatch", () => {
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "callback_query",
-      payload: { id: "cbq", from: { id: 7 }, data: "cb_abc_0" },
+      payload: { callback_query: { id: "cbq", from: { id: 7 }, data: "cb_abc_0" } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.tgCalls.answer.length).toBe(0); // SILENT drop
@@ -276,7 +276,7 @@ describe("MODULE-005-AC-08/09/10: callback dispatch", () => {
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "callback_query",
-      payload: { id: "cbq", from: { id: 99 }, data: "cb_unknown_0" },
+      payload: { callback_query: { id: "cbq", from: { id: 99 }, data: "cb_unknown_0" } },
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(h.tgCalls.answer.length).toBe(1);
@@ -324,7 +324,7 @@ describe("MODULE-005-AC-20: stale-deliver fallback", () => {
     h.bus.emit("inbound_update", {
       update_id: 5,
       type: "message",
-      payload: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "hi" },
+      payload: { message: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: "hi" } },
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(h.acceptorStub.delivered.length).toBe(2);
@@ -343,7 +343,7 @@ describe("MODULE-005-AC-17: registration window forwarding", () => {
     h.bus.emit("inbound_update", {
       update_id: 1,
       type: "message",
-      payload: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `register ${code}` },
+      payload: { message: { message_id: 1, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `register ${code}` } },
     });
     await new Promise((r) => setTimeout(r, 10));
     // Successful registration — gate transitions to closed
@@ -364,7 +364,7 @@ describe("MODULE-005-AC-19: dispatch latency micro-benchmark (AC-19)", () => {
       h.bus.emit("inbound_update", {
         update_id: i,
         type: "message",
-        payload: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `m${i}` },
+        payload: { message: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `m${i}` } },
       });
     }
     await new Promise((r) => setTimeout(r, 50));
@@ -374,7 +374,7 @@ describe("MODULE-005-AC-19: dispatch latency micro-benchmark (AC-19)", () => {
       h.bus.emit("inbound_update", {
         update_id: 1000 + i,
         type: "message",
-        payload: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `m${i}` },
+        payload: { message: { message_id: i, from: { id: 99 }, chat: { id: 555, type: "private" }, text: `m${i}` } },
       });
       const elapsed = performance.now() - t;
       if (elapsed > maxMs) maxMs = elapsed;

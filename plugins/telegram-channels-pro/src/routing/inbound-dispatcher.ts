@@ -75,10 +75,17 @@ export class InboundDispatcher {
   private async handleInbound(payload: unknown): Promise<void> {
     const p = payload as { update_id?: number; type: "message" | "callback_query"; payload: unknown };
     const updateId = typeof p.update_id === "number" ? p.update_id : 0;
+    // M002 emits payload as the WHOLE TG update object: { update_id, message?,
+    // callback_query? }. Extract the inner part based on type.
+    const update = p.payload as { message?: TgMessage; callback_query?: TgCallbackQuery };
     if (p.type === "message") {
-      await this.handleText(updateId, p.payload as TgMessage);
+      const msg = update.message;
+      if (!msg) return; // malformed — type says message but no message field
+      await this.handleText(updateId, msg);
     } else if (p.type === "callback_query") {
-      await this.handleCallback(updateId, p.payload as TgCallbackQuery);
+      const cb = update.callback_query;
+      if (!cb) return;
+      await this.handleCallback(updateId, cb);
     }
   }
 

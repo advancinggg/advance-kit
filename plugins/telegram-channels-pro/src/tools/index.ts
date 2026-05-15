@@ -90,66 +90,38 @@ export function installToolHandlers(args: InstallToolHandlersArgs): ToolsCtx {
     fetchFn: args.fetchFn,
   };
 
-  // Wrap each tool to match MCPDaemonAcceptor.ToolHandler signature
-  args.acceptor.registerToolHandler("reply", async (sessionId, frame: ToolCallFrame) => {
-    args.eventBus.emit("tool_call", { session_id: sessionId, request_id: frame.request_id, tool: "reply" });
-    const start = args.clock.now();
+  // Wrap each tool to match MCPDaemonAcceptor.ToolHandler signature.
+  // NOTE: do NOT emit tool_call / tool_result here — MCPDaemonAcceptor
+  // already emits both events around the wrapped handler invocation
+  // (see daemon-acceptor.ts dispatchToolCall). Per-handler emits would
+  // duplicate every event in the JSONL log.
+  args.acceptor.registerToolHandler("reply", async (_sessionId, frame: ToolCallFrame) => {
     const r = await reply(frame.params as ReplyParams, replyCtx);
-    args.eventBus.emit("tool_result", {
-      session_id: sessionId,
-      request_id: frame.request_id,
-      ok: r.delivered === true,
-    });
-    void start;
     return { ok: r.delivered === true, result: r };
   });
 
-  args.acceptor.registerToolHandler("react", async (sessionId, frame: ToolCallFrame) => {
-    args.eventBus.emit("tool_call", { session_id: sessionId, request_id: frame.request_id, tool: "react" });
+  args.acceptor.registerToolHandler("react", async (_sessionId, frame: ToolCallFrame) => {
     const r = await react(frame.params as ReactParams, reactCtx);
-    args.eventBus.emit("tool_result", {
-      session_id: sessionId,
-      request_id: frame.request_id,
-      ok: r.ok,
-    });
     return { ok: r.ok, result: r };
   });
 
-  args.acceptor.registerToolHandler("edit_message", async (sessionId, frame: ToolCallFrame) => {
-    args.eventBus.emit("tool_call", { session_id: sessionId, request_id: frame.request_id, tool: "edit_message" });
+  args.acceptor.registerToolHandler("edit_message", async (_sessionId, frame: ToolCallFrame) => {
     const r = await editMessage(frame.params as EditMessageParams, { tg: args.tg });
-    args.eventBus.emit("tool_result", {
-      session_id: sessionId,
-      request_id: frame.request_id,
-      ok: r.delivered === true,
-    });
     return { ok: r.delivered === true, result: r };
   });
 
-  args.acceptor.registerToolHandler("download_attachment", async (sessionId, frame: ToolCallFrame) => {
-    args.eventBus.emit("tool_call", { session_id: sessionId, request_id: frame.request_id, tool: "download_attachment" });
+  args.acceptor.registerToolHandler("download_attachment", async (_sessionId, frame: ToolCallFrame) => {
     const r = await downloadAttachment(frame.params as DownloadAttachmentParams, downloadCtx);
-    args.eventBus.emit("tool_result", {
-      session_id: sessionId,
-      request_id: frame.request_id,
-      ok: r.ok,
-    });
     return { ok: r.ok, result: r };
   });
 
   args.acceptor.registerToolHandler("request_approval", async (sessionId, frame: ToolCallFrame) => {
-    args.eventBus.emit("tool_call", { session_id: sessionId, request_id: frame.request_id, tool: "request_approval" });
     const r = await requestApproval(frame.params as RequestApprovalParams, {
       tg: args.tg,
       registry,
       adminChatRegistry: args.adminChatRegistry,
       clock: args.clock,
       requesterSessionId: sessionId,
-    });
-    args.eventBus.emit("tool_result", {
-      session_id: sessionId,
-      request_id: frame.request_id,
-      ok: r.ok,
     });
     return { ok: r.ok, result: r };
   });
