@@ -354,9 +354,16 @@ create` 等），希望先得到用户确认。
   `chat_id` 对应 chat type === private (daemon 维护一个 chat_id → chat_type 缓存,
   由 inbound 流量 / pending_approval 创建时自然填充, 缓存 TTL 由 /spec 决定); 非
   private chat type 的 chat_id 拒绝 outbound 调用并返回 `InvalidChatTypeError` 给
-  requester。与 §4.6 inbound chat-type 限定 形成 defense-in-depth, 防 model 误用
-  chat_id (e.g. hallucinated id 或从 §3.3 Edge cases "text-typed approval" 上下文
-  picked up wrong id) 把 claude 输出送进 group / channel 泄漏。
+  requester。**Cache cold-start 桥接 (Flow B startup-without-inbound)**: 当 daemon
+  首次启动后没收到任何 inbound 时缓存为空; 此时 §3.2 Flow B (claude proactive task
+  completion push) 调用 reply 给 admin chat_id, daemon **lazy-fetch via Telegram
+  `getChat` API** (一次性查询 + 写入缓存): type === private → 放行 + 缓存; 非 private
+  → 拒绝 + 返回 InvalidChatTypeError; lazy-fetch 失败 (网络 / 401 / 429 等) → 拒绝
+  outbound + log + 不缓存 (下次再 lazy-fetch)。这让 cold-start Flow B 不会 silently
+  失败, 同时保留 defense-in-depth 语义。与 §4.6 inbound chat-type 限定 形成
+  defense-in-depth, 防 model 误用 chat_id (e.g. hallucinated id 或从 §3.3 Edge
+  cases "text-typed approval" 上下文 picked up wrong id) 把 claude 输出送进 group
+  / channel 泄漏。
 
 ### 4.6 Per-session opt-in + LRU routing
 
@@ -453,6 +460,27 @@ DM 即注册。
     KeepAlive 重启与注册码轮换互相踩。
 - 已注册后想换 admin：用户通过 plugin 子命令 `reset-admin`，删除 admin 状态文件，下次启动
   重新进入注册模式。
+- **Admin 状态文件权限 (clarify on-disk artifact 权限位)**: 持久化 admin user_id 的状态
+  文件 owner 0600 (与 §4.3 lock file / §4.5 download_attachment file 同级), 与 lock
+  file / unix socket / download_attachment 临时目录 colocated 在同一 0700 protected
+  directory 下 (路径具体由 /spec 锁定); 防同 uid 之外的 local 进程读取 admin user_id
+  (虽然 v0.2 单 uid 假设, 但与 §1.1 design 一致——文件权限不依赖单 uid 假设, 防御
+  纵深保留)。
+- **Multi-admin alert 路由退化 (clarify v1.9 multi-admin annotation 在告警维度)**:
+  §5 + §4.4 + §4.5 + §4.7 中所有 "TG 通知 admin" / "TG 给 admin" 的告警 (quarantine
+  state-change / watchdog failure / capacity-full / auth-reject burst aggregated /
+  rollback-needed 等) 在 multi-admin 配置下也按 'first-listed admin' 退化——仅
+  first-listed admin user_id 收告警, 一致于 outbound 通知 / pending approval routing
+  的 first-listed 退化语义。其他 admin user_ids 仅作 inbound text source 被允许, 不
+  收 ops 告警。配 1 个 user_id 是 v0.2 推荐, 多 admin 完整 ops semantics 留 v0.3+。
+- **launchd wait-for-reset 提示三流投递 (parity with §4.7 注册码 user-facing delivery)**:
+  launchd 模式注册超时进入 wait-for-reset 后, "registration timed out; run reset-admin
+  to retry" 提示**不仅**周期 stderr 输出每 5 分钟一次, 还需 (a) 写入 macOS Notification
+  Center 一次 (one-time on entry, 用 `osascript -e` 或等价 native API), (b) 任何 claude
+  session 尝试 MCP handshake 时 daemon 返回带提示的 disconnect_reason — 用户在 claude
+  终端可见 "daemon waiting for reset; run plugin reset-admin"。三流并行确保 admin 不
+  陷入 stderr-only 静默等待 (admin 通常不会 tail launchd log)。具体投递 API + 节流
+  (notification 不刷屏) 由 /spec 决定。
 
 ### 4.8 launchd integration
 
@@ -842,6 +870,7 @@ channel 不进入 model 的 prompt input 决策）。
 | 2026-05-15 | 1.7 | v0.2 amendment Round 1 dual-evaluator batch fix: §3.1 step 2 + §3.3 step 4 add chat.type === private security check (CC1 from Codex — group/supergroup/channel inbound silently dropped, prevents bot-in-group leakage); §4.6 add chat-type 限定 AC + /session 严格匹配模式 (`^/session [a-f0-9]{1,12}$`) clarification (CC1 + W1); §4.9 capability decl drop `claude/channel/permission` (C4 — bespoke request_approval kept, avoid false-advertise unimplemented capability); §4.9 system instructions enrich prompt-injection trigger phrase list as illustrative non-exhaustive (W7) + slash-prefix semantics ruling (W1); §4.9 typing AC add fire-and-forget + failure-mode SLO isolation (W4); §4.9 + §7 rename `PendingApprovalRegistry` → `pending-approval state 管理` (C3 — strip internal class name); §7 in-scope drop `claude/channel/permission` mention (C4 cross-impact); §7 out-of-scope rename `M004 spec` → `现有 approval feature 的契约层 spec` (C1) + `tgcp REQ-011/014` → `当前 first-run 注册码窗口 + 双重计数器` (C2); §7 rollback add (d) channel-protocol regression in-version downgrade (W5); §7.1 M4 row append A/B gate (W3); §8 Assumption Q-tag clarify flag-spelling vs amendment Q3 (C5); §8 + 2 Risks (CC platform tag transformation + prompt-injection moving target). WW2 (GLOSSARY skeleton placeholder) accepted as false positive — bootstrap baseline. | /prd amendment Round 1 dual-evaluator (Claude auditor + codex exec); merged 14 substantive findings (6 Critical / 8 Warning, batch-accept) |
 | 2026-05-15 | 1.8 | v0.2 amendment Round 2 dual-evaluator batch fix: §4.7 + §5 redaction 双 stream 解耦 (C1 from Codex — registration code stays plaintext in user-facing delivery channels [stderr/launchd/MCP-session-log], redacted only in structured JSON event log; two-stream invariant explicit); §3.1 step 5 typing-stop trigger 与 §4.9 对齐 (W1 — reply/react/edit_message 任一 outbound 都停 typing); §5 stability SLO 增加 "spurious MCP 重连事件" 定义 (W2 — 区分 scripted reload-plugins / SIGTERM / KeepAlive 重启 vs 真异常断连); §3.2 quarantine outbound replay queue bound + crash semantics (W3 — 50-cap, in-memory, lost on restart); §3.3 Edge cases + §4.9 system instructions add "text-typed 'approve' 不算 approval" 双向 ruling (W4 — 防 prompt-injection 越过 button 鉴权); §4.5 request_approval add chat.type === private callback check + TG 侧 capacity-full admin 告警 (W5); §4.6 add shortid uniqueness invariant AC (WW1 from Codex); §4.5 download_attachment 加 0700 directory + 0600 file 权限要求 (WW2 from Codex); §5 alerting 详化 auth-reject silent-drop + aggregated alert 双层策略 (WW3 from Codex — clarify §1.1 "失败可观测" 与 silent-drop 的 tension)。 | /prd amendment Round 2 dual-evaluator; merged 9 substantive findings (1 Critical / 8 Warning, batch-accept) |
 | 2026-05-15 | 1.9 | v0.2 amendment Round 3 dual-evaluator selective fix + /spec deferrals (8 fix / 3 defer): §4.7 brute-force math 修正 (Claude-W1 — 32^6 ÷ 2 ÷ 8640 ≈ 170 年, was 10^10 typo; 加 per-sender 5 + global 30 + reset 闸门 实际可破解概率 ≈ 0); §3.1 step 5 + §4.9 typing-stop 加 request_approval 为第 4 个 outbound trigger (Claude-W3); §3.3 approval-expired popup 加 5 分钟 throttle (Claude-W5 — info-leak 防护, 与 §1.1 "失败可观测但不暴露探测" 一致); §3.1 routing snapshot rule 加 /session UX one-shot snapshot 注解 (Claude-W7); §4.5 download_attachment 加 文件名 sanitization (random hash + sanitized ext, Claude-W8); §4.5 加 Outbound chat-type defense-in-depth bullet (4 outbound 工具 chat_id → chat_type === private 验证, Codex-W1); §4.6 /list 加 Branch trade-off 显式 doc (UX vs leakage, Codex-W2); §4.7 加 multi-admin 语义注解 (v0.2 退化为 first-listed admin, plural env var 兼容上游, Codex-W3); §8 新增 3 'Decision deferred to /spec (with bounds)' entries: spurious 重连 handshake 协议 (Claude-W2) / quarantine queue drain notification 路径 (Claude-W4) / zero-loss test multi-session shortid tracking harness (Claude-W6) — 三者均带明确 bounds + 推荐机制留 /spec 实现。Codex Round 3 first attempt stalled (0 bytes after 46min) → killed and retried with medium reasoning_effort + 5min timeout, retry succeeded with 3 findings (codex_consecutive_failures reset to 0)。 | /prd amendment Round 3 dual-evaluator (Claude auditor + codex exec retry); merged 11 substantive findings (0 Critical / 11 Warning, batch-accept 8 + defer 3) |
+| 2026-05-15 | 2.0 | v0.2 amendment Round 4 Claude-only batch fix (4 NEW findings, all Warnings — saturation visibility, no Critical found by either evaluator since Round 2): §4.5 outbound chat-type cache cold-start lazy-fetch via getChat 桥接 (W1 — Flow B startup-without-inbound 不再 silently 失败); §4.7 admin 状态文件 0600 + protected dir colocation (W2 — sibling files 权限位完整性); §4.7 multi-admin alert 路由退化注解 (W3 — clarify v1.9 multi-admin annotation 在告警维度也按 first-listed); §4.7 launchd wait-for-reset 提示三流投递 — stderr + macOS Notification + MCP handshake disconnect_reason (W4 — admin 不再陷入 stderr-only 静默等待)。Codex Round 4 first attempt + retry 均 stalled (consistent codex CLI / OpenAI API instability for this PRD's prompt size); codex_consecutive_failures = 1; Round 4 STEP 2 merged Claude-only per Sync Protocol Rule 3。 | /prd amendment Round 4 Claude auditor only (codex absent); 4 substantive findings batch-accept |
 
 ---
 
