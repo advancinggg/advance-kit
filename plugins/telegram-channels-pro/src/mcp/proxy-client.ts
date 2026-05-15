@@ -195,7 +195,7 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
   const server = new Server(
     {
       name: "telegram-channels-pro",
-      version: "0.1.0",
+      version: "0.1.1",
     },
     {
       capabilities: { tools: {} },
