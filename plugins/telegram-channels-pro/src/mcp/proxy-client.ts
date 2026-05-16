@@ -41,10 +41,26 @@ import type {
 
 // REQ-045 — stable proxy identifier derived from CLAUDE_PROJECT_PATH. Survives
 // /reload-plugins because claude-code does not restart its session on plugin reload.
-export const PROXY_ID: string = createHash("sha256")
-  .update(process.env.CLAUDE_PROJECT_PATH ?? "")
-  .digest("hex")
-  .slice(0, 16);
+//
+// Adversarial review hardening: when CLAUDE_PROJECT_PATH is empty/unset (e.g., manual
+// proxy launch, legacy plugin install, test harness without env set), sha256("") returns
+// the constant `e3b0c44298fc1c14`. Two such proxies would share a PROXY_ID and collide in
+// `scriptedReconnectMap`, silently turning each other's spurious-reconnect events into
+// scripted-reload-handshake misclassifications (degrades REQ-017 SLO accuracy).
+// Mitigation: fall back to a per-process random 16-hex-char identifier when the env var
+// is empty, and emit a stderr warning so misconfiguration is visible.
+export const PROXY_ID: string = (() => {
+  const projectPath = process.env.CLAUDE_PROJECT_PATH;
+  if (projectPath && projectPath.length > 0) {
+    return createHash("sha256").update(projectPath).digest("hex").slice(0, 16);
+  }
+  // Defensive fallback — per-process unique ID; loses cross-reload identity but avoids
+  // collisions across concurrent empty-env proxies.
+  process.stderr.write(
+    "proxy-client: CLAUDE_PROJECT_PATH is empty/unset; PROXY_ID using per-process random fallback (REQ-045 reload-handshake degraded for this process)\n",
+  );
+  return randomBytes(8).toString("hex");
+})();
 
 // REQ-033 AC-21 — locked 3-pillar system prompt verbatim from MODULE-003 §2.7.
 export const PILLAR_PROMPT = `You are operating inside the telegram-channels-pro (tgcp) plugin. Inbound

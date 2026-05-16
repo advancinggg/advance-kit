@@ -80,25 +80,65 @@ export class StateDirImpl implements StateDir {
   getPostBootShutdownContext(): "sigterm" | "keepalive" | "none" {
     if (this.shutdownContextResolved !== null) {
       // One-shot consumed: subsequent calls in the same daemon process return 'none'.
+      // (Documented limitation: in launchd KeepAlive restarts with multiple parallel
+      // claude reconnects, only the first session_init learns the cause — REQ-017 SLO
+      // accepts the N-1 overcount within RISK-012 same-uid trust model.)
       return "none";
     }
     let result: "sigterm" | "keepalive" | "none";
     try {
       // Check for last_shutdown.json marker (SIGTERM-written by shutdown.ts).
-      const _content = fs.readFileSync(this.lastShutdownFile, "utf8");
-      // Best-effort parse (don't fail if content is malformed — just trust the file's presence).
-      try { JSON.parse(_content); } catch { /* ignore */ }
+      const content = fs.readFileSync(this.lastShutdownFile, "utf8");
+      // Adversarial-review hardening: validate JSON structure to reject empty/garbage
+      // files pre-placed by a same-uid process trying to coerce sigterm classification.
+      let valid = false;
+      try {
+        const parsed = JSON.parse(content) as unknown;
+        if (
+          parsed !== null &&
+          typeof parsed === "object" &&
+          (parsed as { reason?: unknown }).reason === "sigterm"
+        ) {
+          valid = true;
+        }
+      } catch {
+        /* malformed JSON */
+      }
       try { fs.unlinkSync(this.lastShutdownFile); } catch { /* best-effort */ }
-      result = "sigterm";
+      if (valid) {
+        result = "sigterm";
+      } else {
+        // Marker file existed but didn't validate — emit observability event and
+        // treat as no-marker (fall through to XPC check below).
+        this.eventBus.emit("log_emit", {
+          level: "WARN",
+          event_type: "post_boot_marker_invalid",
+          fields: { path: this.lastShutdownFile, reason: "malformed_or_unexpected_content" },
+        });
+        // Re-evaluate via the no-marker branch logic.
+        if (process.env.XPC_SERVICE_NAME) {
+          result = "keepalive";
+        } else {
+          result = "none";
+        }
+      }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        // Unexpected error (perm denied, etc.) → treat as 'none' to avoid blocking boot.
-        result = "none";
-      } else if (process.env.XPC_SERVICE_NAME) {
-        // No SIGTERM marker + launchd-spawned process (XPC_SERVICE_NAME set by launchd) → KeepAlive restart.
-        result = "keepalive";
+      if (code === "ENOENT") {
+        // Normal case: no marker file. Fall back to launchd KeepAlive detection.
+        if (process.env.XPC_SERVICE_NAME) {
+          result = "keepalive";
+        } else {
+          result = "none";
+        }
       } else {
+        // Unexpected errno (EACCES, EIO, etc.) — surface via observability event;
+        // do not silently swallow.
+        this.eventBus.emit("log_emit", {
+          level: "WARN",
+          event_type: "post_boot_marker_read_error",
+          fields: { path: this.lastShutdownFile, code: code ?? "unknown" },
+        });
         result = "none";
       }
     }

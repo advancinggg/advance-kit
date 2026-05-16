@@ -96,12 +96,16 @@ export function isChannelNotificationFrame(x: unknown): x is ChannelNotification
 }
 
 export function isWillReconnectFrame(x: unknown): x is WillReconnectFrame {
-  return (
-    typeof x === "object" &&
-    x !== null &&
-    (x as { kind?: unknown }).kind === "will_reconnect" &&
-    typeof (x as { proxy_id?: unknown }).proxy_id === "string"
-  );
+  if (typeof x !== "object" || x === null) return false;
+  if ((x as { kind?: unknown }).kind !== "will_reconnect") return false;
+  const proxy_id = (x as { proxy_id?: unknown }).proxy_id;
+  if (typeof proxy_id !== "string") return false;
+  // Adversarial-review hardening: bound proxy_id length to avoid same-uid memory-
+  // amplification attacks where a rogue process floods will_reconnect frames with
+  // MiB-scale strings. PROXY_ID is always 16-char hex by construction, so 256 is
+  // generous slack for protocol evolution while denying amplification.
+  if (proxy_id.length === 0 || proxy_id.length > 256) return false;
+  return true;
 }
 
 export function isQuarantineReplyResolvedFrame(x: unknown): x is QuarantineReplyResolvedNotificationFrame {

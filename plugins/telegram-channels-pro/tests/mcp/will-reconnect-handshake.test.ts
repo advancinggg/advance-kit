@@ -29,13 +29,19 @@ function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void> {
 
 describe("MODULE-003-AC-23: tgcp/proxy/will_reconnect handshake (REQ-045 + Decision A22)", () => {
   test("MODULE-003-T23a — proxy-side wire format: PROXY_ID = sha256(CLAUDE_PROJECT_PATH).slice(0,16) + SIGTERM handler emits will_reconnect frame", async () => {
-    // PROXY_ID formula verification.
-    const expectedProxyId = createHash("sha256")
-      .update(process.env.CLAUDE_PROJECT_PATH ?? "")
-      .digest("hex")
-      .slice(0, 16);
+    // PROXY_ID formula verification (with empty-env fallback per adversarial-review hardening).
+    const projectPath = process.env.CLAUDE_PROJECT_PATH;
     const { PROXY_ID } = await import("../../src/mcp/proxy-client");
-    expect(PROXY_ID).toBe(expectedProxyId);
+    if (projectPath && projectPath.length > 0) {
+      const expectedProxyId = createHash("sha256")
+        .update(projectPath)
+        .digest("hex")
+        .slice(0, 16);
+      expect(PROXY_ID).toBe(expectedProxyId);
+    } else {
+      // Empty-env fallback: per-process random 16-hex-char identifier.
+      // We can only assert the shape, not the value.
+    }
     expect(PROXY_ID).toMatch(/^[0-9a-f]{16}$/);
 
     // Source-contract: proxy-client.ts SIGTERM handler emits WillReconnectFrame with proxy_id + reason.
