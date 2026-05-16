@@ -357,16 +357,20 @@ export interface EventBus {
   // bounded-queue per subscriber semantics; overflow drops oldest + emits subscriber_queue_drop
 }
 type EventTypeKey =
-  | 'inbound_update' | 'quarantine_enter' | 'quarantine_exit' | 'polling_health'
-  | 'polling_event' | 'polling_status_snapshot'
-  | 'session_connected' | 'session_disconnected' | 'frame_invalid'
+  | 'inbound_update' | 'quarantine_enter' | 'quarantine_exit' | 'quarantine_replay_resolved'
+  | 'polling_health' | 'polling_event' | 'polling_status_snapshot'
+  | 'session_connected' | 'session_disconnected' | 'mcp_reconnect_classified' | 'frame_invalid'
   | 'tool_call' | 'tool_result' | 'pending_capacity_snapshot'
   | 'route_decision' | 'auth_deny_routing'
   | 'auth_deny_registration' | 'registration_event' | 'registration_timeout'
   | 'daemon_start' | 'daemon_stop' | 'lock_event' | 'watchdog_signal'
   | 'state_dir_perms_anomaly' | 'cli_command' | 'subscriber_queue_drop'
-  | 'log_emit' | 'alert_emit';
-// Canonical count: 26 event types (kept in sync with src/daemon/event-types.ts ALL_EVENT_TYPES).
+  | 'log_emit' | 'alert_emit' | 'channel_notification_emitted';
+// Canonical count: 29 event types in current source (26 original + 3 v1.1.0 channel-protocol slice
+// additions). ARCH §6.1 CONTRACT-003 lists 34 as the v1.1.0 target — 5 remaining
+// (auth_reject_aggregated, chat_type_lookup, outbound_chat_type_denied, chat_type_inbound_denied,
+// popup_throttled) are pending future REQ-034/035/038/039/043 slices.
+// Kept in sync with src/daemon/event-types.ts ALL_EVENT_TYPES.
 type EventPayloadMap = { /* per-type payload shapes — see event-types.ts */ };
 type Unsubscribe = () => void;
 ```

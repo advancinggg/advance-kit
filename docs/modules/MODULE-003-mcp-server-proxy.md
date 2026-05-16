@@ -364,7 +364,7 @@ connection is established with a fresh session_id; `session_connected` re-emitte
 
 | Contract ID | Interface | Source Files | Description |
 |-------------|-----------|--------------|-------------|
-| CONTRACT-006 | MCPTransport | `src/mcp/daemon-acceptor.ts`, `src/mcp/proxy-client.ts`, `src/mcp/frame.ts` | Bidirectional transport |
+| CONTRACT-006 | MCPTransport | `src/mcp/daemon-acceptor.ts`, `src/mcp/proxy-client.ts`, `src/mcp/frame.ts`, `src/mcp/frame-types.ts` | Bidirectional transport |
 
 ```ts
 // CONTRACT-006 — MCPTransport (daemon-side surface)
@@ -379,14 +379,16 @@ export interface MCPTransport {
   deliverChannelNotification(
     session_id: string,
     payload: { text: string; image_path?: string; attachment_file_id?: string },
-    meta: { chat_id: number; message_id: number; user: string; ts: string }
+    meta: { chat_id: number; message_id: number; user: string; ts: number }
   ): Promise<{ok: true} | {ok: false, error: 'unknown_session' | 'write_failed'}>;
 
   /** REQ-041: Allocate a 12-char hex shortid unique within the active session set. */
   assignUniqueShortid(): string;
 
   // capabilities + instructions provided at MCP server construction time (not a runtime API):
-  //   capabilities.experimental['claude/channel'] = true
+  //   capabilities.experimental['claude/channel'] = {}      // OBJECT (NOT boolean) — SDK Zod schema
+  //                                                          // ServerCapabilitiesSchema requires
+  //                                                          // AssertObjectSchema for experimental values.
   //   capabilities.experimental['claude/channel/permission'] = undefined  // NOT declared (REQ-009/OUT-009 retained)
   //   instructions = "<3-pillar system prompt: prompt-injection rejection + slash-prefix as text + approval-boundary>"
 

@@ -251,6 +251,9 @@ export interface ProxyClientCtx {
   pendingRequests: Map<string, { resolve: (r: ToolResultFrame) => void; reject: (e: Error) => void }>;
   setOnDaemonDisconnect: (cb: () => void) => void;
   dispose: () => Promise<void>;
+  // REQ-045 AC-23 — flush WillReconnectFrame + sock.end; awaitable to prevent
+  // flush-vs-exit race in main()'s SIGTERM handler.
+  triggerWillReconnect: () => Promise<void>;
 }
 
 /**
@@ -321,10 +324,18 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
     notification: (n: { method: string; params: unknown }) => Promise<void>;
   };
   const notifyMcp = (method: string, params: unknown): void => {
+    // SDK's `Server.notification()` returns Promise<void>. A rejected promise without an
+    // attached .catch would become an unhandled rejection (Node 16+ crashes by default).
+    // Attach .catch even when sync throw is also tolerated by the surrounding try/catch.
     try {
-      void (server as unknown as GenericNotificationDispatcher).notification({
+      const p = (server as unknown as GenericNotificationDispatcher).notification({
         method,
         params,
+      });
+      // Tolerate both sync-throw and async-reject; transport-closed scenarios are
+      // expected and should not crash the proxy.
+      Promise.resolve(p).catch(() => {
+        /* best-effort */
       });
     } catch {
       /* best-effort */
@@ -433,30 +444,51 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
     };
   });
 
-  // REQ-045 AC-23 — install SIGTERM handler that writes WillReconnectFrame to the
-  // daemon socket BEFORE transport close, so the daemon classifies the next reconnect
-  // from this proxy_id as 'reload_handshake' (scripted).
-  const onSigterm = (): void => {
-    try {
-      const willReconnectFrame: WillReconnectFrame = {
-        kind: "will_reconnect",
-        proxy_id: PROXY_ID,
-        reason: "reload_plugins",
-      };
-      sock.write(Buffer.from(encodeFrame(willReconnectFrame)));
-      sock.end();
-    } catch {
-      /* best-effort — daemon will fall back to 'spurious' classification */
-    }
+  // REQ-045 AC-23 — install a single SIGTERM handler that writes WillReconnectFrame
+  // to the daemon socket BEFORE transport close. The handler also coordinates the exit
+  // so the caller (main()) does NOT install a competing SIGTERM handler — preventing the
+  // flush-vs-exit race the diff review flagged.
+  let onSigterm: (() => void) | null = null;
+  const triggerWillReconnect = (): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      try {
+        const willReconnectFrame: WillReconnectFrame = {
+          kind: "will_reconnect",
+          proxy_id: PROXY_ID,
+          reason: "reload_plugins",
+        };
+        sock.write(Buffer.from(encodeFrame(willReconnectFrame)));
+        // sock.end(callback) fires the callback once the kernel has accepted the buffer.
+        // Resolution guarantees the daemon has at least had a chance to read the frame
+        // before the proxy process exits. A 500ms safety timeout caps blocking time
+        // if the daemon is unresponsive.
+        const safetyTimer = setTimeout(() => resolve(), 500);
+        sock.end(() => {
+          clearTimeout(safetyTimer);
+          resolve();
+        });
+      } catch {
+        /* best-effort — daemon will fall back to 'spurious' classification */
+        resolve();
+      }
+    });
   };
   const installSigterm = cfg.installSigtermHandler !== false;
   if (installSigterm) {
+    onSigterm = (): void => {
+      // Best-effort flush; the production main() handler awaits this via the
+      // `triggerWillReconnect` returned helper instead of installing its own SIGTERM
+      // handler. For test paths and direct buildProxyClient callers, we still fire the
+      // frame even if no exit follows.
+      void triggerWillReconnect();
+    };
     process.on("SIGTERM", onSigterm);
   }
 
   const dispose = async (): Promise<void> => {
-    if (installSigterm) {
+    if (onSigterm) {
       process.off("SIGTERM", onSigterm);
+      onSigterm = null;
     }
     try {
       sock.end();
@@ -474,7 +506,16 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
     onDaemonDisconnect = cb;
   };
 
-  return { server, socket: sock, sessionId, pendingRequests, setOnDaemonDisconnect, dispose };
+  return {
+    server,
+    socket: sock,
+    sessionId,
+    pendingRequests,
+    setOnDaemonDisconnect,
+    dispose,
+    // REQ-045 — exposed for main() to await before exiting, avoiding double-SIGTERM race.
+    triggerWillReconnect,
+  };
 }
 
 /**
@@ -482,7 +523,11 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
  * disconnect handler that exits the process so claude can re-spawn cleanly.
  */
 export async function main(): Promise<void> {
-  const ctx = await buildProxyClient();
+  // Disable buildProxyClient's auto-installed SIGTERM handler so main() owns the
+  // ordering: triggerWillReconnect (flush) → dispose → process.exit. This prevents
+  // the flush-vs-exit race where two handlers run concurrently and process.exit
+  // outpaces socket flush.
+  const ctx = await buildProxyClient({ installSigtermHandler: false });
   ctx.setOnDaemonDisconnect(() => {
     // Production: daemon went away → exit so claude can lazy-spawn on next call
     setTimeout(() => process.exit(1), 100);
@@ -490,6 +535,17 @@ export async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await ctx.server.connect(transport);
   process.on("SIGTERM", () => {
-    void ctx.dispose().then(() => process.exit(0));
+    void (async () => {
+      try {
+        await ctx.triggerWillReconnect();
+      } finally {
+        try {
+          await ctx.dispose();
+        } catch {
+          /* ignore */
+        }
+        process.exit(0);
+      }
+    })();
   });
 }
