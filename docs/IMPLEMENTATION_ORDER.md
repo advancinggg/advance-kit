@@ -2,6 +2,7 @@
 
 > Project: telegram-channels-pro
 > Generated: 2026-05-12
+> Updated: 2026-05-16 (/spec update v1.1.0 — v0.2 channels-integration amendment)
 > Total Modules: 8
 
 ---
@@ -22,17 +23,24 @@ graph LR
     M002 --> M008
     M003 --> M004
     M003 --> M005
-    M003 --> M007
     M004 --> M005
-    M006 --> M004
     M006 --> M005
     M006 --> M007
+    M006 --> M008
     M008 --> M005
     M008 --> M007
 ```
 
 `X --> Y` means X is a dependency of Y (Y calls X's contracts; pub/sub flow via EventBus
 encodes only as dep on M001).
+
+**v1.1.0 graph changes** (matches ARCHITECTURE.md §4 mermaid post-Round-1 audit fix):
+- **REMOVED** phantom edge `M003 → M007` — M007 has no contract dependency on M003 per ARCH §4.1 rationale (audit fix Round 1 Critical D1).
+- **ADDED** edge `M006 → M008` — M008 calls CONTRACT-009 `firstListedAdminUserId()` for routing TG admin alerts to first-listed admin under multi-admin first-listed degradation (REQ-046; audit fix Round 1 Critical D2).
+- M004 row corrected: M004 does NOT depend on M006 (Decision A11 — callback admin verify is M005's responsibility; M004 receives pre-verified lookup); the pre-v1.1.0 graph erroneously showed `M006 → M004` which has been removed.
+
+**Topological sort remains** `M001 → {M002, M003, M006} → {M004, M008} → M007 → M005`
+(L0: M001; L1: M002, M003, M006; L2: M004, M008; L3: M007; L4: M005).
 
 ## Implementation Phases
 

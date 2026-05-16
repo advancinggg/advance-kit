@@ -2,6 +2,7 @@
 
 > Status: Draft
 > Created: 2026-05-12
+> Updated: 2026-05-16 (v1.1.0 — v0.2 channels-integration amendment)
 > Architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -16,9 +17,31 @@ exposes `isAdmin(tg_user_id)` query to consumers (M004, M005), and implements th
 deployment-mode-aware registration timeout (launchd: wait-for-reset; lazy-spawn: exit).
 Brute-force defense uses dual counters: per-sender (5 attempts) and global (30 attempts).
 
+**v1.1.0 additions (REQ-014 math correction + REQ-046 first-listed degradation + REQ-047
+wait-for-reset multi-stream + REQ-044 redaction two-stream + REQ-016/042 perms reaffirm)**:
+- Brute-force math corrected: 32^6 ≈ 1.07×10^9; cap 30 attempts/5min ≈ 8640/day; expected
+  break time = (32^6 ÷ 2) ÷ 8640 ≈ **170 years** (was incorrectly "10^10 years" pre-v1.1.0).
+  Combined with per-sender 5 + reset-required ceiling → effective break probability ≈ 0.
+- `TELEGRAM_AUTHORIZED_USERS` parsed as comma-separated user_ids (upstream-0.0.6 plural
+  format compat); CONTRACT-009 v1.1.0 additive `firstListedAdminUserId()` returns first
+  listed for outbound/alert routing under multi-admin first-listed degradation (REQ-046);
+  v0.2 recommended `n=1`.
+- CONTRACT-010 v1.1.0 additive `isWaitForReset(): boolean` for REQ-047 wait-for-reset
+  handshake disconnect gate (M005 queries on session_connected events).
+- launchd wait-for-reset multi-stream delivery (REQ-047): (a) stderr periodic 5min,
+  (b) one-shot macOS Notification Center via osascript shell-out (Bun child-process,
+  fail-soft), (c) MCP handshake disconnect_reason carried by M005's invocation of
+  `M003.disconnectSession(id, "registration timed out; run reset-admin to retry")`.
+- Two-stream redaction invariant (REQ-044): registration code PLAINTEXT in user-facing
+  delivery channels (stderr + launchd log + first MCP session log); REDACTED to a hash
+  in JSON event log via M008's redaction list.
+- admin.json 0600 + colocated in 0700 protected directory (REQ-016 + REQ-042 cross-link).
+
 **Serves PRD topics**:
 - `docs/PRD.md` (REQ-011 first-run registration, REQ-013 admin allowlist data, REQ-014
-  brute-force defense, REQ-029 single-user single-machine constraint)
+  brute-force defense — math correction, REQ-016 admin state file perms, REQ-029
+  single-user single-machine constraint, REQ-044 redaction two-stream invariant, REQ-046
+  multi-admin first-listed degradation, REQ-047 launchd wait-for-reset multi-stream delivery)
 
 ### 1.2 Architecture Overview
 
@@ -241,6 +264,12 @@ reset-admin is meant to be followed by daemon restart so the next boot re-enters
 export interface AdminAllowlist {
   isAdmin(tg_user_id: number): boolean;
   source(): 'env' | 'file' | 'none';
+
+  // v1.1.0 additive (REQ-046) — first-listed admin user_id for outbound notifications +
+  // ops alerts under multi-admin first-listed degradation. v0.2 recommended n=1; with
+  // multi-admin config, first-listed is the sole ops-alert target while inbound from any
+  // listed user_id is allowed.
+  firstListedAdminUserId(): number;
 }
 
 // CONTRACT-010
@@ -255,6 +284,13 @@ export type RegistrationResult =
 export interface RegistrationGate {
   isInRegistrationWindow(): boolean;
   processRegistrationDM(sender_user_id: number, text: string): RegistrationResult;
+
+  // v1.1.0 additive (REQ-047) — wait-for-reset state query. Returns true iff registration
+  // window has timed out in launchd mode AND no `forceReopenForReset()` has been called
+  // since. M005 queries this on every session_connected event to invoke the wait-for-reset
+  // disconnect handshake via M003 (passing the literal hint string "registration timed
+  // out; run reset-admin to retry" to the claude session terminal).
+  isWaitForReset(): boolean;
   /**
    * Slice 2 additive: in-process reset-and-reopen for M007 reset-admin CLI.
    * Transitions gate to `open` from ANY prior state (open / waiting_for_reset / closed).
@@ -483,6 +519,14 @@ stateDiagram-v2
 | MODULE-006-AC-18 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-006-AC-20 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-006-AC-21 | Y | untested | — | — |
+| MODULE-006-AC-22 | Y | untested | — | — |
+| MODULE-006-AC-23 | Y | untested | — | — |
+| MODULE-006-AC-24 | Y | untested | — | — |
+| MODULE-006-AC-25 | Y | untested | — | — |
+| MODULE-006-AC-26 | Y | untested | — | — |
+| MODULE-006-AC-27 | Y | untested | — | — |
+| MODULE-006-AC-28 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -497,8 +541,9 @@ stateDiagram-v2
 
 ### 3.6 Known Gaps & Future Work
 
-- env var TELEGRAM_AUTHORIZED_USERS accepts JSON array; future v0.3+ may allow comma-separated strings for shell-friendliness.
-- Multi-admin via env var supported but PRD §6 single-user assumption means it's not the primary path.
+- env var TELEGRAM_AUTHORIZED_USERS accepts JSON array OR (v1.1.0) comma-separated strings (upstream-0.0.6 plural format compat — REQ-046 added comma-separated parsing).
+- Multi-admin via env var supported but PRD §6 single-user assumption + REQ-046 first-listed degradation means it's not the primary path; v0.2 recommended `n=1`. Per AC-22/23 v1.1.0: with n>1, inbound from any listed user_id is allowed but outbound/alerts target first-listed only.
+- macOS Notification Center delivery (REQ-047 stream b) is fail-soft — osascript shell-out failure logged at DEBUG. v0.3+ may add native NSUserNotification binding for better reliability and removal of the shell-out dependency.
 
 ### 3.7 Change History
 
@@ -506,6 +551,7 @@ stateDiagram-v2
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: admin-auth (allowlist + registration gate + brute-force counters + AdminStateReset + deployment-mode-aware timeout) under `plugins/telegram-channels-pro/` |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 8 new ACs (AC-21..AC-28): brute-force math correction (170yr — REQ-014; doc-only AC verifying the number); CONTRACT-009 ext `firstListedAdminUserId()` for REQ-046 multi-admin first-listed degradation; CONTRACT-010 ext `isWaitForReset()` for REQ-047 handshake disconnect gate; launchd wait-for-reset 3-stream delivery (REQ-047: stderr periodic + macOS Notification Center one-shot + MCP handshake disconnect via M005); REQ-016 + REQ-042 admin.json perms reaffirmation; REQ-044 two-stream redaction invariant. 20 existing ACs preserved. |
 | 2026-05-15 | Slice 2 additive: `forceReopenForReset()` added to CONTRACT-010 RegistrationGate interface for M007's reset-admin in-process re-open path; new AC-20 + T20; existing 19 AC tests unchanged |
 
 ### 3.8 Implementation Notes

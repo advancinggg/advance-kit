@@ -2,6 +2,7 @@
 
 > Status: Draft
 > Created: 2026-05-12
+> Updated: 2026-05-16 (v1.1.0 — v0.2 channels-integration amendment)
 > Architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -19,9 +20,34 @@ The 4 upstream-compatible tools' input/output JSON schemas validate against upst
 0.0.6 schemas (verified by a compat-test suite at M1 milestone) so users migrating from
 upstream have zero claude-prompt rewrites. `request_approval` is the v0.2 addition.
 
+**v1.1.0 additions (REQ-035 outbound chat-type DiD + REQ-042 attachment hardening +
+REQ-038 capacity-full alert + REQ-039 popup throttle + REQ-036 text-typed-approval
+boundary)**:
+- Every outbound tool (reply/react/edit_message/request_approval) wraps its TG call
+  with a CONTRACT-016 ChatTypeCache `getChatType(chat_id) === 'private'` check;
+  non-private → `InvalidChatTypeError` returned to claude. Cold-start path triggers
+  M002's lazy-fetch via Telegram `getChat` API.
+- `download_attachment` writes to 0700 directory + 0600 file (REQ-016 + REQ-042
+  colocation); on-disk filename is `<random-16-hex>.<sanitized-ext>` where ext matches
+  `^[a-zA-Z0-9]{1,8}$` else extension is dropped (rejects TG-uploader path-traversal /
+  shell-metachar). Janitor TTL bound to **4 hours** (mid-range of PRD §8 1-24h /spec
+  bound — A8 implicit decision).
+- When pending count hits 50 (REQ-009 cap trip), M004 emits one-time TG admin alert
+  "Approval queue full (50 pending) — claude tool calls failing. Complete or cancel
+  pending approvals." with 5-min throttle (REQ-038).
+- PendingApprovalRegistry adds popup throttle state (CONTRACT-011 v1.1.0 additive
+  `recordPopupThrottle(callback_data, ts)` + `shouldEmitPopup(callback_data): boolean`
+  per REQ-039 — info-leak defense against repeated-click probing).
+- Architectural enforcement of REQ-036 text-typed-approval-not-approval: M004 state
+  machine has **NO API path** from inbound text to pending resolution. Only callback_query
+  advances pending. Double-layer defense with system instructions in MODULE-003 §2.7.
+
 **Serves PRD topics**:
 - `docs/PRD.md` (REQ-002 push tool, REQ-003 approval tool, REQ-008 4-tool compat,
-  REQ-009 request_approval, REQ-022 pending capacity)
+  REQ-009 request_approval, REQ-022 pending capacity, REQ-035 outbound chat-type DiD,
+  REQ-036 text-typed-approval architectural enforcement, REQ-038 capacity-full TG admin
+  alert, REQ-039 popup throttle, REQ-042 download_attachment file system protection +
+  filename sanitization, REQ-016 perms cross-link)
 
 ### 1.2 Architecture Overview
 
@@ -42,7 +68,7 @@ upstream have zero claude-prompt rewrites. `request_approval` is the v0.2 additi
 │  ┌────────────────────────┐   ┌────────────────────────┐               │
 │  │ AttachmentJanitor      │   │ ToolSchemaValidator     │              │
 │  │ - sweep attachments/   │   │ (compat-suite hook)     │              │
-│  │ - TTL 1-24h            │   │                         │              │
+│  │ - TTL 4h (v1.1.0)      │   │                         │              │
 │  └────────────────────────┘   └────────────────────────┘               │
 └────────────────────────────────────────────────────────────────────────┘
         │ registers via CONTRACT-006     │ AdminAllowlist (CONTRACT-009)
@@ -65,7 +91,7 @@ upstream have zero claude-prompt rewrites. `request_approval` is the v0.2 additi
 | PendingApprovalRegistry | P0 | Planned | CONTRACT-011; in-memory Map; ordered by creation |
 | Capacity check (>50 = CapacityExceededError) | P0 | Planned | REQ-022 |
 | cleanupBySession | P0 | Planned | Called by M005 on session_disconnected; resolves pending awaits with session_terminated error + edits TG button to "approval cancelled" |
-| Attachment temp dir janitor | P1 | Planned | Periodic sweep of `<state_dir>/attachments/`; TTL 1-24h (PRD §8 bound) |
+| Attachment temp dir janitor | P1 | Planned | Periodic sweep of `<state_dir>/attachments/`; v1.1.0 TTL 4h default (1-24h range — PRD §8 bound) |
 | Compat schema validator | P1 | Planned | M1 milestone test suite; validates 4 tool I/O against upstream 0.0.6 schemas |
 | `pending_capacity_snapshot` event emit | P1 | Planned | Periodic (30s) for M008 status cache |
 
@@ -123,12 +149,12 @@ Calls M002 `editMessageText`.
 **Flow**:
 1. Call M002 `getFile(file_id)` to obtain Telegram's file path.
 2. HTTPS GET the file content from `https://api.telegram.org/file/bot{token}/{file_path}`.
-3. Compute target path: `<state_dir>/attachments/<random_8_hex>.<original_ext>`.
+3. **v1.1.0** Compute target path: `<state_dir>/attachments/<random-16-hex>.<sanitized-ext>` where `random-16-hex` = `crypto.randomBytes(8).toString('hex')` (16 hex chars), and `sanitized-ext` is derived from the TG-uploader filename by extracting the last `.` segment + validating against `^[a-zA-Z0-9]{1,8}$`; non-matching → extension dropped (file has no extension). TG-supplied filename is otherwise DISCARDED — never used as on-disk filename (prevents path traversal / shell-metachar / NUL byte injection per REQ-042 AC-23/24).
 4. Write content to target path, 0600 perms.
 5. Return `{path: target_path, size_bytes, mime_type}`.
 6. Schedule janitor cleanup at `now + TTL`.
 
-**TTL**: configurable via `TGCP_ATTACHMENT_TTL_HOURS` env, default 6h (within PRD §8 bound 1-24h).
+**TTL**: configurable via `TGCP_ATTACHMENT_TTL_HOURS` env, default **4h** (within PRD §8 bound 1-24h; v1.1.0 /spec lock per Decision A8 implicit binding — was 6h pre-v1.1.0; AC-25 supersedes AC-15 default).
 
 #### 1.4.5 `request_approval` tool
 
@@ -151,6 +177,7 @@ Calls M002 `editMessageText`.
 3. Allocate `pending_id` (random 16-byte hex).
 4. Construct callback_data per-option: `cb_<pending_id>_<option_index>` (within Telegram's 64-byte limit).
 5. Build inline_keyboard: each option becomes a single-button row (one row per option; matches the §3.8 single-row UX cap).
+5b. **v1.1.0 (REQ-035 outbound chat-type DiD)** — call `chatTypeCache.getChatType(chat_id)`; if result !== 'private' (e.g., misconfigured `TG_ADMIN_CHAT_ID` pointing at a group, or AdminChatRegistry poisoned), return `{ok: false, error: 'InvalidChatTypeError'}` to caller + emit `outbound_chat_type_denied`. This gates request_approval just like the 3 other outbound tools (AC-20).
 6. Call M002 sendMessage to admin chat (resolved in step 0) with text + inline_keyboard. Receive `message_id`.
 7. Store `{pending_id, requester_session_id, chat_id (admin chat from step 0), callback_data_map, message_id, options, created_at}` in registry.
 8. Create a Promise<string> (the await target) and store its resolver in registry alongside.
@@ -254,11 +281,21 @@ Background `setInterval` (every 5 min):
 | MODULE-004-AC-12 | REQ-009 / PRD §3.3 | — | Stale button click after daemon restart → lookupByPendingId miss → M005 calls M002 answerCallbackQuery with "approval expired" | integration test |
 | MODULE-004-AC-13 | Decision A12 | CONTRACT-003 | `pending_capacity_snapshot` event emitted every 30s with {current, max, oldest_age_ms} | unit test |
 | MODULE-004-AC-14 | Decision A12 | CONTRACT-003 | `pending_capacity_snapshot` event emitted on every add/resolve/cleanup (immediate, not waiting for 30s tick) | unit test |
-| MODULE-004-AC-15 | REQ-008 / Decision A8 | CONTRACT-001 | Attachment janitor unlinks files older than configured TTL (default 6h, range 1-24h) | integration test |
+| MODULE-004-AC-15 | REQ-008 / Decision A8 | CONTRACT-001 | Attachment janitor unlinks files older than configured TTL (v1.1.0 default 4h, range 1-24h — superseded default value; behavioral contract unchanged) | integration test |
 | MODULE-004-AC-16 | REQ-008 | CONTRACT-001 | Attachment files written with 0600 perms | unit test |
 | MODULE-004-AC-17 | REQ-022 | CONTRACT-011 | Registry size() returns accurate count; bound at 50 | unit test |
 | MODULE-004-AC-18 | RISK-010 | — | Per PRD §3.3, request_approval timeout is caller-controlled (no daemon-side timeout); doc verification | doc verification |
 | MODULE-004-AC-19 | RISK-010 | CONTRACT-011 | callback_data format `cb_<pending_id>_<option_index>` total length ≤ 64 bytes (Telegram limit) | unit test |
+| MODULE-004-AC-20 | REQ-035 | CONTRACT-016 | Every outbound tool (`reply` / `react` / `edit_message` / `request_approval`) calls `chatTypeCache.getChatType(chat_id)` BEFORE TG API call; non-private chat type → returns `{ok: false, error: 'InvalidChatTypeError'}` to caller; emits `outbound_chat_type_denied` event with `{chat_id, observed_type, tool}` | unit test |
+| MODULE-004-AC-21 | REQ-035 | CONTRACT-016 | Cold-start path: when chat_id is absent from cache, the getChatType call triggers M002's lazy-fetch via getChat API; on success caches + accepts; on failure (network / 5xx / 401) refuses outbound with `InvalidChatTypeError` + structured log + does NOT cache (next call retries) | integration test |
+| MODULE-004-AC-22 | REQ-042 | CONTRACT-001 | `download_attachment` writes file to `<state_dir>/attachments/` (0700 directory) with file mode 0600 | unit test |
+| MODULE-004-AC-23 | REQ-042 | CONTRACT-001 | `download_attachment` on-disk filename = `<random-16-hex>.<sanitized-ext>` where `random-16-hex` is from crypto.randomBytes(8); `sanitized-ext` derived from TG-uploader filename by extracting the last `.` segment and validating against `^[a-zA-Z0-9]{1,8}$`; non-matching → extension dropped (file has no extension) | unit test |
+| MODULE-004-AC-24 | REQ-042 | CONTRACT-001 | TG-uploader filename containing path-traversal (`../`), shell-metachar (`;`, `&`, `\|`, backtick, `$()`), or NUL bytes is sanitized: the entire TG-supplied filename is DISCARDED at the encoder boundary — never used as on-disk filename | unit test |
+| MODULE-004-AC-25 | REQ-008 / Decision A8 | CONTRACT-001 | Attachment janitor TTL bound to **4 hours** (mid-range of PRD §8 1-24h bound — A8 implicit /spec decision) | integration test |
+| MODULE-004-AC-26 | REQ-038 | CONTRACT-011 ext + CONTRACT-004 | When pending count hits 50 → M004's `emitCapacityFullAlert(tg, adminUserId)` sends "Approval queue full (50 pending) — claude tool calls failing. Complete or cancel pending approvals." via M002 sendMessage. **adminUserId source**: M005 routing supplies it via CONTRACT-009 `firstListedAdminUserId()` at the call site (M005 observes the CapacityExceededError when handling inbound + invokes the alert path); M004 itself does NOT consume CONTRACT-009 per Decision A11. 5-min throttle on the alert (subsequent trips within window suppressed) | unit test |
+| MODULE-004-AC-27 | REQ-039 | CONTRACT-011 ext | PendingApprovalRegistry adds `recordPopupThrottle(callback_data, ts)` + `shouldEmitPopup(callback_data): boolean`: same callback_data within 5-min sliding window → shouldEmitPopup returns false; subsequent click answers callback without popup (info-leak defense per Decision A17) | unit test |
+| MODULE-004-AC-28 | REQ-036 | CONTRACT-011 | Architectural enforcement of text-typed-approval-not-approval: M004 state machine exposes ZERO API path from inbound text to pending resolution. Only inline-button callback_query advances pending. Tested by attempting to find a code path; static analysis or property test that proves no text → resolveApproval edge exists | static analysis / architectural review |
+| MODULE-004-AC-29 | REQ-035 | CONTRACT-003 | `outbound_chat_type_denied` event payload schema `{chat_id, observed_type, tool}` emitted on every InvalidChatTypeError throw; M008 subscribes for audit log | unit test |
 
 ### 1.6 Non-functional Requirements
 
@@ -299,9 +336,10 @@ Background `setInterval` (every 5 min):
 | Module | Doc Link | Required Contract | Dependency Content | Type |
 |--------|----------|------------------|-------------------|------|
 | MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-001 | StateDir (attachment dir) | Hard |
-| MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus pub (tool_*, pending_capacity_snapshot, log_emit) | Hard |
-| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | TelegramAPIClient (all 6 methods called from tools) | Hard |
-| MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | CONTRACT-006 | MCPTransport.registerToolHandler for each of 5 tools | Hard |
+| MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus pub (tool_*, pending_capacity_snapshot, log_emit, **v1.1.0**: `outbound_chat_type_denied`) | Hard |
+| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | TelegramAPIClient (all 7 methods called from tools — v1.1.0 adds getChat indirectly via CONTRACT-016) | Hard |
+| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | **CONTRACT-016 (v1.1.0)** | ChatTypeCache `getChatType(chat_id)` for outbound chat-type DiD before every reply/react/edit_message/request_approval call (REQ-035); cold-start path triggers M002's lazy-fetch via getChat | Hard (v1.1.0) |
+| MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | CONTRACT-006 | MCPTransport.registerToolHandler for each of 5 tools |  Hard |
 
 #### Downstream Dependencies
 
@@ -348,6 +386,24 @@ export interface PendingApprovalRegistry {
     tg: TelegramAPIClient,
   ): Promise<{ cleaned: number }>;
   size(): number;
+
+  // v1.1.0 additive methods (signature-stable for existing consumers — pure additions)
+
+  /** REQ-039: record popup emission ts for callback_data to throttle subsequent clicks. */
+  recordPopupThrottle(callback_data: string, ts: number): void;
+
+  /** REQ-039: returns true iff popup should be emitted (no prior emission within 5-min window). */
+  shouldEmitPopup(callback_data: string): boolean;
+
+  /** REQ-038: emit one-time TG admin alert "Approval queue full (50 pending) ..." via M002 sendMessage; 5-min throttle on the alert itself.
+   *  Internal-only — called by add() when capacity trips. The adminUserId argument is supplied
+   *  by the CALLER (currently M005 routing when it observes a CapacityExceededError, since
+   *  M005 has the CONTRACT-009 AdminAllowlist dependency including the firstListedAdminUserId()
+   *  method per REQ-046). M004 itself does NOT consume CONTRACT-009 (Decision A11).
+   *  Alternative wiring: M004 emits a `pending_capacity_full` EventBus event and M008 (the
+   *  alerter subscriber) dispatches via firstListedAdminUserId — would remove the adminUserId
+   *  parameter; tracked as M004 §3.6 known design refinement. */
+  emitCapacityFullAlert(tg: TelegramAPIClient, adminUserId: number): Promise<void>;
 }
 ```
 
@@ -357,7 +413,8 @@ export interface PendingApprovalRegistry {
 |---|---|---|
 | CONTRACT-001 StateDir | M001 | attachment dir path |
 | CONTRACT-003 EventBus | M001 | publish events |
-| CONTRACT-004 TelegramAPIClient | M002 | all outbound API |
+| CONTRACT-004 TelegramAPIClient | M002 | all outbound API (7 methods including v1.1.0 getChat) |
+| **CONTRACT-016 ChatTypeCache (v1.1.0)** | M002 | outbound chat-type DiD for every reply/react/edit_message/request_approval call (REQ-035 + Decision A16) |
 | CONTRACT-006 MCPTransport | M003 | register tool handlers |
 
 #### Events/Messages
@@ -367,6 +424,7 @@ export interface PendingApprovalRegistry {
 | `tool_call` | Tool handler invoked | `{ session_id, tool_name, params_hash }` | M008 (log; M005 for LRU update per Decision A12) |
 | `tool_result` | Tool handler returned | `{ session_id, tool_name, ok, error?, duration_ms }` | M008 |
 | `pending_capacity_snapshot` | Every 30s + on every add/resolve/cleanup | `{ current, max, oldest_age_ms }` | M008 |
+| **`outbound_chat_type_denied` (v1.1.0)** | Outbound tool call rejected because `chatTypeCache.getChatType(chat_id) !== 'private'` (REQ-035 DiD) | `{ chat_id, observed_type: 'group' \| 'supergroup' \| 'channel', tool: 'reply' \| 'react' \| 'edit_message' \| 'request_approval' }` | M008 (audit log) |
 
 ### 2.4 API Endpoints
 
@@ -391,7 +449,7 @@ interface PendingEntry {
 ```
 
 Attachment file metadata (filesystem-only):
-- Path: `<state_dir>/attachments/<random_8_hex>.<ext>`
+- Path: `<state_dir>/attachments/<random-16-hex>.<sanitized-ext>` (v1.1.0 — REQ-042 AC-23 filename schema; random-16-hex = `crypto.randomBytes(8).toString('hex')`; sanitized-ext validated via `^[a-zA-Z0-9]{1,8}$` else dropped)
 - Perms: 0600
 - TTL tracked via filesystem mtime
 
@@ -455,7 +513,7 @@ sequenceDiagram
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `TGCP_ATTACHMENT_TTL_HOURS` | No | 6 | TTL for attachment cleanup (range 1-24) |
+| `TGCP_ATTACHMENT_TTL_HOURS` | No | 4 | TTL for attachment cleanup (range 1-24; v1.1.0 default 4h per Decision A8 implicit /spec lock — was 6h pre-v1.1.0) |
 | `TGCP_PENDING_CAPACITY` | No | 50 | Pending registry capacity (REQ-022 bound) |
 | `TGCP_JANITOR_INTERVAL_MIN` | No | 5 | Attachment janitor sweep cadence |
 | `TG_ADMIN_CHAT_ID` | No | (none — captured from first admin DM) | Bootstrap value for `M005.AdminChatRegistry`. Without it, `request_approval` returns `NoAdminChatConfigured` until admin DMs the bot once. Decimal integer; malformed → silently ignored at boot. |
@@ -465,7 +523,7 @@ sequenceDiagram
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | Pending capacity | 50 | REQ-022 |
-| Attachment TTL | 6h (default; 1-24h range) | PRD §8 bound |
+| Attachment TTL | 4h (default; 1-24h range — v1.1.0) | PRD §8 bound |
 | pending_capacity_snapshot cadence | 30s + on change | NFR |
 | Janitor sweep cadence | 5 min | NFR |
 
@@ -560,7 +618,7 @@ stateDiagram-v2
 | MODULE-004-T15 | Integration | AC-12 | stale button after restart | crash + restart daemon; user clicks old button | M005 lookupByPendingId miss; M002 answerCallbackQuery with "approval expired" + show_alert | P0 |
 | MODULE-004-T16 | Unit | AC-13 | snapshot cadence | wait 30s | event emitted | P1 |
 | MODULE-004-T17 | Unit | AC-14 | snapshot on change | add entry | snapshot event emitted immediately | P1 |
-| MODULE-004-T18 | Integration | AC-15 | janitor TTL | create file mtime > 6h ago, run janitor | file unlinked | P1 |
+| MODULE-004-T18 | Integration | AC-15 | janitor TTL | create file mtime > 4h ago (v1.1.0 default), run janitor | file unlinked | P1 |
 | MODULE-004-T19 | Unit | AC-16 | attachment 0600 | download_attachment + stat | mode == 0o600 | P0 |
 | MODULE-004-T20 | Unit | AC-17 | registry size | add 3, remove 1 | size() == 2 | P0 |
 | MODULE-004-T21 | Doc | AC-18 | timeout doc | grep §1.4.5 / PRD §3.3 | "no daemon-side timeout" wording present | P1 |
@@ -584,11 +642,21 @@ stateDiagram-v2
 | MODULE-004-AC-12 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-13 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-14 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
-| MODULE-004-AC-15 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-004-AC-15 | Y | untested | — | — (v1.1.0 supersedes pre-amendment passed status — default value changed 6h→4h; AC-25 enforces same and is also untested) |
 | MODULE-004-AC-16 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-17 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-19 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-004-AC-20 | Y | untested | — | — |
+| MODULE-004-AC-21 | Y | untested | — | — |
+| MODULE-004-AC-22 | Y | untested | — | — |
+| MODULE-004-AC-23 | Y | untested | — | — |
+| MODULE-004-AC-24 | Y | untested | — | — |
+| MODULE-004-AC-25 | Y | untested | — | — |
+| MODULE-004-AC-26 | Y | untested | — | — |
+| MODULE-004-AC-27 | Y | untested | — | — |
+| MODULE-004-AC-28 | Y | untested | — | — |
+| MODULE-004-AC-29 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -614,6 +682,7 @@ stateDiagram-v2
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-15 | /dev Slice 2 begins: 5 MCP tools (reply / react / edit_message / download_attachment / request_approval) + PendingApprovalRegistry (CONTRACT-011) + AttachmentJanitor + SnapshotEmitter; CONTRACT-011 signature includes `(callback_query_id, tg)` on resolveApproval and `(tg)` on cleanupBySession; PendingEntry adds `chat_id` field; new TG_ADMIN_CHAT_ID env documented |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 10 new ACs (AC-20..AC-29): outbound chat-type DiD on 4 outbound tools via CONTRACT-016 (REQ-035) including cold-start lazy-fetch path; download_attachment 0700/0600 + filename random-hash sanitization (REQ-042); janitor TTL bound to 4h (A8 implicit /spec decision); capacity-full TG admin alert at pending=50 with 5-min throttle (REQ-038); popup throttle CONTRACT-011 ext (REQ-039); architectural text-typed-approval enforcement (REQ-036 — no code path exists from text to resolveApproval); outbound_chat_type_denied event schema. 19 existing ACs preserved (merge-preserve per /spec stability rules). |
 
 ### 3.8 Implementation Notes
 

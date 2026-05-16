@@ -2,6 +2,7 @@
 
 > Status: Draft
 > Created: 2026-05-12
+> Updated: 2026-05-16 (v1.1.0 — v0.2 channels-integration amendment)
 > Architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -18,8 +19,19 @@ Many Requests) are segregated from the fatal counter; everything else flows thro
 sliding window. On persistent fatal failures it enters a "quarantine" state with cooldown
 backoff rather than ever giving up.
 
+**v1.1.0 additions**: `getChat` method exposed via CONTRACT-004 for ChatTypeCache cold-start
+lazy-fetch (REQ-035); M002 OWNS `ChatTypeCache` (CONTRACT-016 provider) with 1h TTL + LRU
+1000-entry cap, serving M004 (outbound chat-type defense-in-depth) and M005 (inbound chat-
+type gating side-effect cache warm). M002 also owns the in-memory **quarantine outbound
+replay queue** (50-cap, REQ-037), emitting `quarantine_replay_resolved` events on drain that
+M003 subscribes to for `tgcp/quarantine/reply_resolved` MCP notifications (Decision A18).
+`sendChatAction(typing)` is invoked fire-and-forget on inbound for the REQ-033 typing
+indicator UX; failures log only and are SLO-isolated per Decision A15 typing AC.
+
 **Serves PRD topics**:
-- `docs/PRD.md` (REQ-005 polling reliability, REQ-017 stability, REQ-018 zero-loss, REQ-020 latency, REQ-024 alert state-change for quarantine)
+- `docs/PRD.md` (REQ-005 polling reliability, REQ-017 stability — spurious-vs-scripted reconnect classification context, REQ-018 zero-loss, REQ-020 latency, REQ-024 alert state-change for quarantine, REQ-033 channel-protocol typing indicator, REQ-034 chat-type inbound payload plumbing, REQ-035 ChatTypeCache provider + getChat, REQ-037 quarantine outbound replay queue, REQ-045 quarantine drain event source)
+
+(REQ-043 auth-reject silent-drop is owned by M005 + M008 — M002 does not participate; removed from this reverse-map in v1.1.0 audit-fix Round 1.)
 
 ### 1.2 Architecture Overview
 
@@ -60,6 +72,11 @@ backoff rather than ever giving up.
 | `polling_health` heartbeat (1Hz while running) | P0 | Planned | M001 watchdog stuck-detection input |
 | `registration_timeout` subscription → pause polling | P0 | Planned | Decision A14 — launchd wait-for-reset |
 | `pending_capacity_snapshot` periodic event (sourced from M004) | P1 | (subscribed from M004) | for M008 StatusReporter cache |
+| **v1.1.0**: `getChat` API method wrapper | P0 | Planned | REQ-035 ChatTypeCache cold-start lazy-fetch via CONTRACT-004 |
+| **v1.1.0**: ChatTypeCache (CONTRACT-016) | P0 | Planned | REQ-035 — 1h TTL + LRU 1000; serves M004 outbound DiD + M005 inbound side-effect cache warm |
+| **v1.1.0**: Quarantine outbound replay queue (50-cap, in-memory) | P0 | Planned | REQ-037 — best-effort delivery; lost on restart; new reply beyond cap → CapacityExceededError |
+| **v1.1.0**: Quarantine drain emitter | P0 | Planned | REQ-045 + Decision A18 — emits `quarantine_replay_resolved` per replayed reply; M003 subscribes for MCP notification |
+| **v1.1.0**: `sendChatAction(typing)` fire-and-forget on inbound | P1 | Planned | REQ-033 channel-protocol typing indicator UX; SLO-isolated per A15 |
 
 ### 1.4 Detailed Feature Specifications
 
@@ -110,7 +127,8 @@ async function pollLoop() {
       await sleep(60_000);
       try {
         const probe = await getUpdates({ timeout: 5, offset: currentOffset });
-        eventBus.emit('quarantine_exit', { recovered_after_ms: Date.now() - quarantineEnteredAt });
+        eventBus.emit('quarantine_exit', { recovered_after_ms: Date.now() - quarantineEnteredAt, eta_hint: 0 });  // v1.1.0 — eta_hint=0 signals quarantine exited for M003 tgcp/quarantine/state_changed
+        await drainReplayQueue();  // v1.1.0 (REQ-037 + Decision A18) — FIFO drain emits quarantine_replay_resolved per entry; runs synchronously in polling-loop path BEFORE processUpdates(probe)
         state = 'running';
         fatalWindow.reset();
         backoffIdx = 0;
@@ -149,6 +167,7 @@ async function pollLoop() {
             reason: 'fatal_window_threshold',
             count_in_window: 5,
             window_ms: 60_000,
+            eta_hint: 60,  // v1.1.0 — cooldown remaining seconds for M003 tgcp/quarantine/state_changed
           });
           eventBus.emit('alert_emit', { severity: 'warn', topic: 'quarantine_enter' });
         } else {
@@ -198,6 +217,56 @@ async function persistOffset(offset: number) {
 2. M002 emits `polling_status_snapshot` every 30s while running OR on every state transition (whichever comes first).
 3. Snapshot fields: `state`, `last_inbound_ts`, `fatal_window_count`, `current_offset`, `since_state_change_ms`.
 
+#### 1.4.5 v1.1.0 — ChatTypeCache (CONTRACT-016 provider, REQ-035)
+
+**User flow**:
+1. M004 outbound tool (reply/react/edit_message/request_approval) wants to verify chat_id → chat_type is `private` before TG API call.
+2. M004 calls `chatTypeCache.getChatType(chat_id)`.
+3. **Hit path** (cache resident, in-bounds TTL): returns cached type immediately.
+4. **Miss path**: invoke Telegram `getChat(chat_id)` via the internal HTTP wrapper; on success cache the result + return; on network/HTTP failure reject Promise with `ChatTypeFetchError` (M004 surfaces as `InvalidChatTypeError` to claude session).
+5. M005 inbound flow reads `update.message.chat.type` from the already-parsed Telegram payload and writes the (chat_id, type) pair into the cache as a SIDE-EFFECT (no lazy-fetch needed because inbound already carries the value). Cache write happens BEFORE the chat-type gating decision — so even denied-inbound entries (group/supergroup/channel) populate the cache, letting future outbound DiD short-circuit any model attempt to use that chat_id without re-querying.
+
+**Configuration (Decision A16 implicit /spec bindings)**:
+- TTL: **1 hour** (chat type rarely changes; promotion group→supergroup is the only practical mutation and requires re-auth).
+- LRU max entries: **1000** (single-user single-machine scale never approaches; safety margin against group-bot DoS where attacker adds bot to many groups).
+- On cache-write race (two concurrent lazy-fetch calls for the same chat_id): both fetches succeed, second-writer's result overwrites first (same value, no harm).
+
+**Telemetry**: emit `chat_type_lookup` event per call with payload `{chat_id, type, source: 'cache' | 'lazy_fetch_getChat'}`; M008 subscribes to populate StatusReporter's `chat_type_cache_size` and `chat_type_lazy_fetch_failures_24h` fields.
+
+#### 1.4.5b — Drain ownership clarification (v1.1.0, audit-fix Round 4)
+
+The polling-loop pseudocode in §1.4.1 emits `quarantine_exit` inside the probe-success branch (line 130). The drain-queue walk runs **synchronously in the same path immediately after `quarantine_exit` emission**, BEFORE returning to the main loop. M002 does NOT subscribe to its own `quarantine_exit` event for drain (the §2.3 Subscribed-by table does not list `quarantine_exit` for M002). Pseudocode amended in §1.4.1: after `eventBus.emit('quarantine_exit', ...)` and `state = 'running'`, call `await drainReplayQueue()` before `processUpdates(probe)`. Drain emits one `quarantine_replay_resolved` event per replayed entry (FIFO order).
+
+#### 1.4.6 v1.1.0 — Quarantine outbound replay queue (REQ-037, Decision A18)
+
+**User flow**:
+1. claude session calls MCP `reply` tool (M004) during M002's quarantine state.
+2. M002's quarantine-aware sendMessage wrapper detects `state === 'quarantine'` → instead of immediate TG API call, push the message onto the **in-memory replay queue** (FIFO, 50-cap).
+3. If queue length already at 50 → return `CapacityExceededError` to M004 (M004 returns to claude). No enqueue.
+4. If under cap → enqueue with `{requester_session, chat_id, text, queued_at}`, return `{delivered: false, queued: true, eta_hint: <quarantine-cooldown-remaining-seconds>}` to the caller.
+5. On `quarantine_exit` (state transition), M002 walks the queue in FIFO order; for each entry attempt TG sendMessage:
+   - Success → emit `quarantine_replay_resolved` with `{requester_session, message_id: <new_tg_message_id>, delivered: true, queued_at, replayed_at: Date.now()}`.
+   - Failure (non-retriable) → emit with `delivered: false, error_class`.
+6. Queue is cleared after drain (whether success or failure for each entry).
+
+**Crash semantics**: queue is in-memory ONLY; daemon restart drops all queued messages. claude session attempting to reference a queued message after a restart will see the error on its next reply call when M002's send returns "no such queued message" via the normal MCP error path. This is intentional best-effort delivery semantics — pending state and outbound queue have same "lost on crash" treatment.
+
+**Capacity edge**: 50-cap matches REQ-022 capacity edges (≤8 sessions / ≤50 pending approvals / ≤50 quarantine queue). 51st reply does NOT enqueue.
+
+#### 1.4.7 v1.1.0 — `sendChatAction(typing)` fire-and-forget (REQ-033 typing AC)
+
+**User flow**:
+1. M005 routing receives inbound text/callback that passes chat-type + admin checks.
+2. M005 fires `tg.sendChatAction(chat_id, 'typing')` via CONTRACT-004 in a non-blocking await — the call is dispatched but the result is not consumed.
+3. Telegram displays "{botname} is typing..." in the chat for ~5 seconds.
+4. When claude session emits any of `reply` / `react` / `edit_message` / `request_approval` (4 outbound triggers per A15), M005/M004 emit the corresponding TG API call; the typing indicator auto-stops on Telegram side because a real message arrives.
+
+**Failure handling (Decision A15 Latency Isolation clause)**:
+- HTTP error / timeout / 429 on `sendChatAction` → log only (debug-level structured event); do NOT count toward §5 SLO (REQ-020 inbound latency P95<5s); do NOT block inbound delivery to claude session; do NOT raise to M008 as alert.
+- This is a fire-and-forget UX hint, not a delivery contract; failures here are noise.
+
+**Latency invariant**: the `sendChatAction` call is dispatched in parallel with (NOT before) the call to M003's `deliverChannelNotification` — the inbound→claude path's P95<5s SLO is not on the typing call's critical path.
+
 ### 1.5 Acceptance Criteria
 
 | ID | REQ Source | Contracts | Criterion | Verification |
@@ -219,10 +288,24 @@ async function persistOffset(offset: number) {
 | MODULE-002-AC-15 | CONTRACT-005 | CONTRACT-005 | `polling_status_snapshot` emitted every 30s or on state transition; payload schema matches §1.4.4 | unit test |
 | MODULE-002-AC-16 | REQ-024 / Decision A5 | CONTRACT-003 | quarantine_enter / quarantine_exit each emit one `alert_emit` event (edge-triggered; no repeats during quarantine) | unit test |
 | MODULE-002-AC-17 | CONTRACT-004 | CONTRACT-004 | sendMessage during quarantine returns `{delivered: false, queued: true, eta_hint: seconds_remaining}` per PRD §3.2 | unit test |
-| MODULE-002-AC-18 | REQ-018 | CONTRACT-004 | Per `daemon_stop` event from M001, M002 flushes offset.json to current offset before allowing daemon exit | integration test |
+| MODULE-002-AC-18 | REQ-018 | CONTRACT-004 + CONTRACT-003 | Per `daemon_stop` event from M001, M002's subscriber handler synchronously flushes offset.json (atomic mktemp+rename per AC-08) BEFORE returning from the handler. **Sync handshake**: M001 publishes `daemon_stop` via CONTRACT-003's synchronous-shutdown-mode dispatch (M001 awaits all `daemon_stop` subscribers' handlers to settle before proceeding with process-exit). The handler ALSO sets the polling-loop's `shutdownRequested` flag so the next `while (true)` iteration breaks cleanly. CONTRACT-003 sync-mode for `daemon_stop` is a v1.1.0 audit clarification — see ARCH RISK-013 note + CONTRACT-003 "Universal daemon_stop subscription" clause | integration test |
 | MODULE-002-AC-19 | REQ-005 / RISK-003 | CONTRACT-004 | 429 with no Retry-After header defaults to 5s sleep | unit test |
-| MODULE-002-AC-20 | CONTRACT-004 | CONTRACT-004 | sendMessage / editMessageText / answerCallbackQuery / getFile / sendChatAction wrappers exist with correct HTTP method + path + auth header | unit test |
+| MODULE-002-AC-20 | CONTRACT-004 | CONTRACT-004 | sendMessage / editMessageText / answerCallbackQuery / getFile / sendChatAction / getUpdates (+ v1.1.0 getChat) wrappers exist with correct HTTP method (POST per §2.4 convention) + path + auth header | unit test |
 | MODULE-002-AC-21 | CONTRACT-004 | CONTRACT-004 | TelegramAPIClient input/output JSON schemas validate against upstream 0.0.6 same-name endpoint schemas (compat-test pinning) | integration test (compat suite) |
+| MODULE-002-AC-22 | REQ-035 | CONTRACT-004 | `getChat(chat_id)` API wrapper: POST `/bot{token}/getChat` with `chat_id` in form-body (per §2.4 POST convention); returns `{id, type: 'private' \| 'group' \| 'supergroup' \| 'channel', ...}` per Telegram Bot API schema | unit test |
+| MODULE-002-AC-23 | REQ-035 | CONTRACT-016 | ChatTypeCache hit path: in-bounds TTL (1h) entry returns cached value in O(1); emits `chat_type_lookup` event with `source: 'cache'` | unit test |
+| MODULE-002-AC-24 | REQ-035 | CONTRACT-016 | ChatTypeCache miss path: invokes `getChat` once via internal HTTP wrapper; on success writes cache + returns type; emits `chat_type_lookup` with `source: 'lazy_fetch_getChat'` | unit test |
+| MODULE-002-AC-25 | REQ-035 | CONTRACT-016 | ChatTypeCache miss path on `getChat` failure (network / 5xx / 401): rejects Promise with `ChatTypeFetchError`; does NOT cache; next call retries via lazy-fetch | unit test |
+| MODULE-002-AC-26 | REQ-035 | CONTRACT-016 | ChatTypeCache LRU eviction at 1000 entries; oldest entry by access-time evicted on 1001st insert | unit test |
+| MODULE-002-AC-27 | REQ-035 | CONTRACT-016 | ChatTypeCache entry TTL of 1 hour; expired entries treated as miss + re-fetched on next access | unit test |
+| MODULE-002-AC-28 | REQ-037 | CONTRACT-004 | Quarantine outbound replay queue: in-memory FIFO 50-cap; under cap accepts reply, returns `{delivered: false, queued: true, eta_hint}`; at cap returns `CapacityExceededError` (no enqueue) | unit test |
+| MODULE-002-AC-29 | REQ-037 | CONTRACT-004 | Quarantine queue drain on `quarantine_exit`: walks FIFO, calls sendMessage per entry, emits `quarantine_replay_resolved` per entry with `{requester_session, message_id, delivered, queued_at, replayed_at}` | unit test |
+| MODULE-002-AC-30 | REQ-037 | CONTRACT-004 | Quarantine queue lost on daemon restart (in-memory, not persisted); pending entries silently dropped; claude session sees error on next reply call when the queued message_id is referenced | integration test |
+| MODULE-002-AC-31 | REQ-045 + Decision A18 | CONTRACT-003 | `quarantine_replay_resolved` event payload schema: `{requester_session, message_id, delivered, queued_at, replayed_at, error_class?}`; M003 subscribes for `tgcp/quarantine/reply_resolved` MCP notification | unit test |
+| MODULE-002-AC-32 | REQ-045 | CONTRACT-003 | `quarantine_enter` carries `eta_hint: <cooldown_remaining_sec>` at every cooldown-restart transition (probe-fail-restarts-cooldown is treated as a state transition for emission purposes per Decision A18 clarification, so a stuck quarantine continues to surface fresh eta_hint to M003); `quarantine_exit` carries `eta_hint: 0`. **Emission cadence**: edge-triggered on each cooldown restart + on exit; M003 forwards each fresh hint via `tgcp/quarantine/state_changed`. (Earlier wording "transitions only — countdown is client-side" was misleading; under probe-fail-restarts-cooldown the eta_hint must re-emit or M003's client sees a stale 60s window that never reaches 0) | unit test |
+| MODULE-002-AC-33 | REQ-033 + A15 | CONTRACT-004 | `sendChatAction(chat_id, 'typing')` invoked fire-and-forget on inbound (parallel to deliverChannelNotification dispatch — NOT sequential); HTTP error / timeout / 429 logged at debug-level only, NOT counted in §5 SLO, NOT raised as alert | unit test |
+| MODULE-002-AC-34 | REQ-022 | CONTRACT-004 | Quarantine queue 50-cap is independent counter from REQ-009 pending-approval 50-cap and REQ-022 session 8-cap — three independent capacity edges | unit test |
+| MODULE-002-AC-35 | REQ-017 | CONTRACT-004 | Stability SLO M002 contribution: polling loop maintains running state across 72h soak (REQ-017 ≥99% windows zero SPURIOUS reconnect — M002 polling-reliability invariants prevent gratuitous disconnects). Measured by AC-06 (never voluntarily terminates) + AC-02/03 (quarantine cycling without loop exit) + soak harness counting `mcp_reconnect_classified` events with reason=spurious to ≤8 windows over 72h | integration test (soak harness; gates on M003 reconnect-classification handshake protocol per REQ-045) |
 
 ### 1.6 Non-functional Requirements
 
@@ -276,8 +359,10 @@ async function persistOffset(offset: number) {
 
 | Module | Doc Link | Dependency Content |
 |--------|----------|--------------------|
-| MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | CONTRACT-004 TelegramAPIClient (calls sendMessage, editMessageText, answerCallbackQuery, getFile from each MCP tool handler) |
-| MODULE-008 observability | [MODULE-008](./MODULE-008-observability.md) | CONTRACT-005 PollingStatus (snapshots cached for status CLI); CONTRACT-004 TelegramAPIClient (alert delivery via sendMessage) |
+| MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | CONTRACT-004 TelegramAPIClient (calls sendMessage, editMessageText, answerCallbackQuery, getFile from each MCP tool handler; **v1.1.0** also CONTRACT-016 ChatTypeCache for outbound chat-type defense-in-depth REQ-035) |
+| MODULE-005 routing | [MODULE-005](./MODULE-005-routing.md) | CONTRACT-004 TelegramAPIClient (no-session reply / `/list` / `/status` / `/session` ack via sendMessage; stale-button answerCallbackQuery; **v1.1.0** sendChatAction(typing) fire-and-forget on inbound REQ-033; CONTRACT-016 ChatTypeCache side-effect cache warm on inbound REQ-034 — M005 writes to cache as it parses chat.type from update payload) |
+| MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | **v1.1.0**: subscribes via CONTRACT-003 to M002-published `quarantine_replay_resolved` + `quarantine_enter` + `quarantine_exit` events for `tgcp/quarantine/reply_resolved` and `tgcp/quarantine/state_changed` MCP notification emission (Decision A18) — pub/sub direction, no graph edge per §4.2 |
+| MODULE-008 observability | [MODULE-008](./MODULE-008-observability.md) | CONTRACT-005 PollingStatus (snapshots cached for status CLI); CONTRACT-004 TelegramAPIClient (alert delivery via sendMessage); **v1.1.0** subscribes to `chat_type_lookup` + `quarantine_replay_resolved` + `mcp_reconnect_classified` events for StatusReporter v1.1.0 fields |
 
 #### External Dependencies
 
@@ -299,25 +384,55 @@ async function persistOffset(offset: number) {
 
 | Contract ID | Interface | Source Files | Description |
 |-------------|-----------|--------------|-------------|
-| CONTRACT-004 | TelegramAPIClient | `src/telegram/client.ts`, `src/telegram/methods.ts` | 6 Telegram API method wrappers + classified error returns |
+| CONTRACT-004 | TelegramAPIClient | `src/telegram/client.ts`, `src/telegram/methods.ts` | 6 Telegram API method wrappers + classified error returns. **v1.1.0**: 7th method `getChat` added for ChatTypeCache cold-start lazy-fetch (REQ-035). |
 | CONTRACT-005 | PollingStatus | `src/telegram/polling-status.ts` | Current FSM state snapshot |
+| **CONTRACT-016 (v1.1.0)** | ChatTypeCache | `src/telegram/chat-type-cache.ts` | Async LRU cache of chat_id → chat_type with 1h TTL + 1000-entry LRU eviction; lazy-fetch via `getChat` on miss; rejects with `ChatTypeFetchError` on network failure. Serves M004 outbound DiD + M005 inbound side-effect cache warm. |
 
 ```ts
-// CONTRACT-004 — TelegramAPIClient
+// CONTRACT-004 — TelegramAPIClient (v1.1.0 — 7 methods including getChat)
 export interface TelegramAPIClient {
   sendMessage(req: SendMessageReq): Promise<SendMessageResult>;
   editMessageText(req: EditMessageTextReq): Promise<EditMessageTextResult>;
   answerCallbackQuery(req: AnswerCallbackQueryReq): Promise<{ok: true}>;
   getFile(file_id: string): Promise<GetFileResult>;
   sendChatAction(chat_id: number, action: ChatAction): Promise<{ok: true}>;
+  // ChatAction enum per Telegram Bot API (v1.1.0 explicit declaration):
+  // 'typing' | 'upload_photo' | 'record_video' | 'upload_video' | 'record_voice'
+  // | 'upload_voice' | 'upload_document' | 'choose_sticker' | 'find_location'
+  // | 'record_video_note' | 'upload_video_note'
+  // tgcp v0.2 uses 'typing' exclusively (REQ-033); other actions reserved for v0.3+.
   getUpdates(opts: { timeout: number; offset: number }): Promise<Update[]>;  // internal use by polling loop
+  // v1.1.0 — REQ-035 cold-start lazy-fetch for ChatTypeCache
+  getChat(chat_id: number): Promise<{ id: number; type: 'private' | 'group' | 'supergroup' | 'channel'; /* other Telegram getChat fields */ }>;
 }
 
 export type SendMessageResult =
   | { delivered: true; message_id: number }
   | { delivered: false; queued: true; eta_hint: number }
   | { delivered: false; error: 'rate_limited'; retry_after_sec: number }
-  | { delivered: false; error: 'disconnected' };
+  | { delivered: false; error: 'disconnected' }
+  | { delivered: false; error: 'capacity_exceeded' };  // v1.1.0 — REQ-037: queue at 50-cap
+
+// CONTRACT-016 (v1.1.0) — ChatTypeCache
+export interface ChatTypeCache {
+  // Hit returns immediately; miss triggers lazy-fetch via CONTRACT-004 getChat.
+  getChatType(chat_id: number): Promise<'private' | 'group' | 'supergroup' | 'channel'>;
+  // Side-effect write used by M005 inbound flow (already has chat.type from update payload).
+  primeCache(chat_id: number, type: 'private' | 'group' | 'supergroup' | 'channel'): void;
+  // The methods below are M008-StatusReporter-only conveniences; they are equivalent to
+  // counting `chat_type_lookup` events. M008 derives its StatusReporter fields from
+  // EventBus subscription per CONTRACT-014, so these direct-query methods are OPTIONAL.
+  // /dev may implement them OR skip them — the contract surface is satisfied either way.
+  // (Inconsistency with ARCH §6.1 CONTRACT-016 description noted; ARCH does not enumerate
+  // these methods and instead relies on event-derivation. Both paths converge on the same
+  // values.)
+  size?(): number;
+  lazyFetchFailures24h?(): number;
+}
+
+export class ChatTypeFetchError extends Error {
+  constructor(public chat_id: number, public underlying: unknown) { super(`getChat(${chat_id}) failed`); }
+}
 
 // EditMessageTextResult, AnswerCallbackQueryReq, etc. follow Telegram Bot API 0.0.6 schemas
 // (verified by MODULE-002-AC-21 compat suite).
@@ -349,19 +464,21 @@ export interface PollingSnapshot {
 | Event Name | Trigger | Payload | Consumer |
 |-----------|---------|---------|----------|
 | `inbound_update` | After offset persisted, per Telegram update | `{ update_id, type: 'message' \| 'callback_query', payload: ... }` | M005 (routing), M008 (log) |
-| `quarantine_enter` | Fatal window threshold tripped | `{ reason: 'fatal_window_threshold', count_in_window, window_ms }` | M008 (alert + log) |
-| `quarantine_exit` | Quarantine cooldown probe succeeds | `{ recovered_after_ms }` | M008 (alert + log) |
+| `quarantine_enter` | Fatal window threshold tripped | `{ reason: 'fatal_window_threshold', count_in_window, window_ms, eta_hint }` (v1.1.0 adds eta_hint) | M008 (alert + log), **M003 (v1.1.0: emit `tgcp/quarantine/state_changed`)** |
+| `quarantine_exit` | Quarantine cooldown probe succeeds | `{ recovered_after_ms, eta_hint: 0 }` (v1.1.0 adds eta_hint) | M008 (alert + log), **M003 (v1.1.0: emit `tgcp/quarantine/state_changed`)** |
 | `polling_health` | Every successful getUpdates cycle | `{ ts, state }` | M001 (watchdog stuck-detection input) |
 | `polling_status_snapshot` | Every 30s or on state transition | (matches PollingSnapshot shape) | M008 (status CLI cache) |
 | `polling_event` | Classified non-fatal events (409, 429) | `{ kind: 'conflict_409' \| 'rate_limited_429', detail }` | M008 (log) |
 | `alert_emit` | On quarantine_enter/exit and registration_timeout pause | `{ severity, topic }` | M008 (alert dispatch) |
+| **`chat_type_lookup` (v1.1.0)** | Every ChatTypeCache `getChatType` call | `{ chat_id, type, source: 'cache' \| 'lazy_fetch_getChat', failed?: boolean }` | M008 (StatusReporter cache size + lazy-fetch failure counter) |
+| **`quarantine_replay_resolved` (v1.1.0)** | Per replayed reply during quarantine drain (REQ-037 + Decision A18) | `{ requester_session, message_id?: number, delivered: boolean, queued_at, replayed_at, error_class?: string }` | **M003 (emit `tgcp/quarantine/reply_resolved` MCP notification)**, M008 (log) |
 
 **Subscribed by M002**:
 
 | Event Name | Source | Handler |
 |-----------|--------|---------|
 | `registration_timeout` | M006 | Transition polling state → 'paused'; emit polling_status_snapshot reflecting paused |
-| `daemon_stop` | M001 | Flush offset.json + close any in-flight requests gracefully |
+| `daemon_stop` | M001 | Flush offset.json + close any in-flight requests gracefully (v1.1.0 audit: ARCH CONTRACT-003 subscriber summary now explicitly includes `daemon_stop` for M002 + universal-subscription clarification for any module with cleanup needs) |
 
 ### 2.4 API Endpoints
 
@@ -375,8 +492,9 @@ export interface PollingSnapshot {
 | POST | `/bot{token}/getFile` | URL token | Get download path for attachment |
 | POST | `/bot{token}/sendChatAction` | URL token | Typing indicator etc. |
 | POST | `/bot{token}/getUpdates` | URL token | Long-poll for incoming updates |
+| **POST (v1.1.0)** | `/bot{token}/getChat` | URL token | REQ-035 cold-start lazy-fetch via ChatTypeCache; `chat_id` in form-encoded body (per the §2.4 POST convention below); response includes `{id, type, ...}` |
 
-Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error.
+Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error. **Convention**: all 7 endpoints use POST with `chat_id` (or `offset`/`file_id` etc.) in form-encoded body — Telegram Bot API accepts both GET and POST but the wrapper standardizes on POST for consistency + body-size headroom.
 
 ### 2.5 Data Models
 
@@ -433,6 +551,98 @@ sequenceDiagram
     DC->>DC: continue loop
 ```
 
+**v1.1.0 — Quarantine outbound replay queue (REQ-037 + Decision A18)**:
+
+```mermaid
+sequenceDiagram
+    participant MT as M004 mcp-tools (reply)
+    participant TC as M002 telegram-client
+    participant Q as quarantineQueue
+    participant TG as Telegram API
+    participant EB as EventBus
+    participant SP as M003 mcp-server-proxy
+    participant CL as claude session (requester)
+
+    Note over TC: state = Quarantine
+    MT->>TC: sendMessage(chat_id, text)
+    alt queue.length >= 50
+        TC-->>MT: { delivered:false, error:'capacity_exceeded' }
+    else under cap
+        TC->>Q: enqueue { requester_session, chat_id, text, queued_at }
+        TC-->>MT: { delivered:false, queued:true, eta_hint }
+    end
+    Note over TC: ... time passes ...
+    TC->>TG: probe getUpdates succeeds → state = Running
+    TC->>EB: emit quarantine_exit
+    EB-->>SP: notify subscriber (M003)
+    SP->>CL: tgcp/quarantine/state_changed { eta_hint: 0 }
+    loop drain queue FIFO
+        Q-->>TC: dequeue entry
+        TC->>TG: sendMessage(chat_id, text)
+        alt success
+            TG-->>TC: { ok: true, message_id }
+            TC->>EB: emit quarantine_replay_resolved { requester_session, message_id, delivered:true, ... }
+        else failure
+            TG-->>TC: error
+            TC->>EB: emit quarantine_replay_resolved { requester_session, delivered:false, error_class }
+        end
+        EB-->>SP: notify subscriber (M003)
+        SP->>CL: tgcp/quarantine/reply_resolved (per entry)
+    end
+```
+
+**v1.1.0 — ChatTypeCache flow (REQ-035 + CONTRACT-016)**:
+
+```mermaid
+sequenceDiagram
+    participant Caller as M004 / M005
+    participant TC as ChatTypeCache (M002)
+    participant TG as Telegram getChat API
+    participant EB as EventBus
+
+    Caller->>TC: getChatType(chat_id)
+    alt cache hit (TTL in-bounds)
+        TC->>EB: emit chat_type_lookup { chat_id, type, source:'cache' }
+        TC-->>Caller: type (immediate)
+    else cache miss
+        TC->>TG: POST /bot{token}/getChat (chat_id in form-body)
+        alt success
+            TG-->>TC: { type:'private'|'group'|... }
+            TC->>TC: write cache (LRU + TTL=1h)
+            TC->>EB: emit chat_type_lookup { chat_id, type, source:'lazy_fetch_getChat' }
+            TC-->>Caller: type
+        else network/HTTP failure
+            TG-->>TC: error
+            TC->>EB: emit chat_type_lookup { chat_id, source:'lazy_fetch_getChat', failed:true }
+            TC-->>Caller: reject ChatTypeFetchError
+        end
+    end
+```
+
+**v1.1.0 — sendChatAction fire-and-forget (REQ-033 typing AC)**:
+
+```mermaid
+sequenceDiagram
+    participant TG as Telegram getUpdates
+    participant TC as M002 polling
+    participant EB as EventBus
+    participant RT as M005 routing
+    participant SCA as sendChatAction wrapper
+    participant SP as M003 mcp-server-proxy
+
+    TG-->>TC: inbound update {chat_id, text, ...}
+    TC->>EB: emit inbound_update
+    EB-->>RT: notify
+    Note over RT: chat-type private ✓ + admin ✓
+    par fire-and-forget typing
+        RT->>SCA: sendChatAction(chat_id, 'typing')
+        SCA->>TG: HTTPS POST /sendChatAction (no await)
+    and channel notification dispatch
+        RT->>SP: deliverChannelNotification(session_id, ...)
+    end
+    Note over SCA: SLO-isolated: HTTP error logged at DEBUG only
+```
+
 ### 2.8 Error Handling
 
 | Error Code | Trigger | Handling | Surfaced to caller |
@@ -484,10 +694,23 @@ sequenceDiagram
 | `offset.json` | Disk (0600), atomic write | M002 | M002 (read at boot) |
 | Polling FSM state (running/quarantine/paused) | Process | M002 | M008 (via snapshot events) |
 | Fatal window timestamps | Process | M002 | (internal) |
+| **ChatTypeCache (v1.1.0, CONTRACT-016)** | Process (in-memory LRU map; 1h TTL, 1000-entry cap) | M002 | M004 (outbound DiD per REQ-035), M005 (inbound side-effect write per REQ-034) |
+| **Quarantine outbound replay queue (v1.1.0, REQ-037)** | Process (in-memory FIFO; 50-cap) | M002 | M004 (returns capacity_exceeded if at cap), M003 (subscribes to drain events for MCP notifications) |
+| **chat_id → chat_type cache write-through state (v1.1.0)** | derived from inbound + lazy-fetch | M002 (cache provider) | M005 calls `primeCache` on inbound; M004 calls `getChatType` for outbound DiD |
 
-**State transitions**: see §2.7 polling FSM diagram.
+**State transitions**: see §2.7 polling FSM diagram (Running ↔ Quarantine ↔ Paused). v1.1.0 ChatTypeCache and quarantine queue are stateless from the FSM perspective — they live in process memory and reset on daemon restart (intentional — see REQ-037 best-effort delivery semantics).
 
-**Cross-module state protocol**: none — state is local to M002. Snapshot events broadcast state for read-only observation.
+**Cross-module state protocol**:
+- Polling state: M008 reads via `polling_status_snapshot` events (read-only observation).
+- ChatTypeCache: M005 has WRITE access via `primeCache(chat_id, type)`; M004 has READ access via `getChatType(chat_id)`. Two-writer (M002 lazy-fetch + M005 prime) on same map is safe because both write the same factual value (Telegram's reported chat.type is the source of truth; both paths converge).
+- Quarantine queue: M002-owned write; M004 attempts to enqueue (gated through `sendMessage` API); M003 reads drain events via EventBus subscription. No direct queue access from outside M002.
+
+**Consistency model**: eventually consistent (in-memory). Daemon restart loses ChatTypeCache + quarantine queue (intentional). Cross-process consistency: out-of-scope (v0.2 single-process daemon assumption per REQ-029).
+
+**Failure semantics**:
+- ChatTypeCache lazy-fetch failure → reject Promise; cache unchanged; next call retries.
+- Quarantine queue at cap → 51st reply returns capacity_exceeded; no enqueue; claude session sees error.
+- Quarantine drain partial failure → per-entry `quarantine_replay_resolved` event with `delivered:false + error_class`; subsequent entries still attempted (drain doesn't abort on first failure).
 
 ### 2.13 Operations
 
@@ -526,16 +749,22 @@ sequenceDiagram
 | `polling_event: rate_limited_429` | WARN | retry_after_sec | — |
 | `inbound_update` | DEBUG | update_id, type (NOT payload — that's user content) | message text, callback_data |
 | `polling_status_snapshot` | DEBUG | (snapshot fields) | — |
+| **`chat_type_lookup` (v1.1.0)** | DEBUG | chat_id, type, source | — |
+| **`quarantine_replay_resolved` (v1.1.0)** | INFO | requester_session, message_id, delivered, queued_at, replayed_at, error_class? | requester_session (hashed on JSON-log write boundary by M008 redaction; ACTUAL session_id retained in the in-memory event payload for M003 routing — see redaction discipline below) |
+| ~~`mcp_reconnect_classified`~~ | (not M002 — published by M003, subscribed by M008; listed here only for the StatusReporter cross-reference below) | — | — |
 
 **Metrics**: derived by M008 from EventBus:
 - `polling_state` (gauge: running=0, quarantine=1, paused=2)
 - `inbound_update_rate` (rate of inbound_update events)
 - `quarantine_count` (counter)
 - `current_offset` (gauge)
+- **v1.1.0**: `chat_type_cache_size` (gauge from M002 state) + `chat_type_lazy_fetch_failures_24h` (counter, sliding window)
+- **v1.1.0**: `quarantine_replay_queue_size` (gauge from M002 state)
+- **v1.1.0**: `spurious_reconnect_count_72h` (M008-owned StatusReporter field per CONTRACT-014; derived from `mcp_reconnect_classified` event published by M003 — cross-reference only, not M002 observability)
 
 **Traces**: not applicable (single-process).
 
-**Redaction list**: bot token (always), inbound message text + callback_data, file_id from getFile.
+**Redaction list (M008 boundary)**: bot token (always), inbound message text + callback_data, file_id from getFile, **v1.1.0** chat_id (hashed in logs for `chat_type_lookup` and `quarantine_replay_resolved` events), **v1.1.0** requester_session (hashed in logs for `quarantine_replay_resolved`; in-memory event payload retains plaintext for M003 routing — log redaction is at M008 write boundary, not at M002 publish boundary).
 
 **Retention**: M008-owned.
 
@@ -546,6 +775,12 @@ sequenceDiagram
 **Progress policy**: AC-driven, per §3.4 ledger.
 
 ### 3.1 Current Status
+
+| Status | Progress | Last Updated |
+|--------|----------|--------------|
+| In Progress | 60% (21 passed / 35 active) | 2026-05-16 |
+
+Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 21/35 ≈ 60%. v1.1.0 amendment dropped apparent progress from pre-amendment 90% (19 passed + 2 untested = 21/21 ≈ 90%) by adding 14 new ACs all marked untested per /spec stability rules.
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
@@ -562,8 +797,13 @@ sequenceDiagram
 | `src/telegram/offset-manager.ts` | offset.json read/write/atomic-persist |
 | `src/telegram/fatal-window.ts` | Sliding window data structure |
 | `src/telegram/error-classify.ts` | 409 / 429 / 5xx / network classifier |
+| **`src/telegram/chat-type-cache.ts` (v1.1.0)** | CONTRACT-016 ChatTypeCache implementation (LRU map + 1h TTL + lazy-fetch via getChat) |
+| **`src/telegram/quarantine-queue.ts` (v1.1.0)** | REQ-037 in-memory FIFO replay queue (50-cap) + drain emission of `quarantine_replay_resolved` events |
+| **`src/telegram/get-chat.ts` (v1.1.0)** | `getChat(chat_id)` wrapper used by ChatTypeCache cold-start path |
 | `tests/telegram/*.test.ts` | Unit + integration tests |
-| `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification — partially covered by `tests/telegram/methods.test.ts` (shape check of all 6 wrappers); full upstream-0.0.6 JSON-Schema validation ships in subsequent task |
+| `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification — partially covered by `tests/telegram/methods.test.ts` (shape check of all 7 wrappers including v1.1.0 `getChat`); full upstream-0.0.6 JSON-Schema validation ships in subsequent task. Note: AC-21 scope is the 4 official-compatible tools (`reply`/`react`/`edit_message`/`download_attachment`) of upstream 0.0.6 — `getChat` is a tgcp-specific add (REQ-035 outbound DiD cache) so it is excluded from the 0.0.6 compat suite and only needs the shape-check in `methods.test.ts`. |
+| **`tests/telegram/chat-type-cache.test.ts` (v1.1.0)** | AC-22..AC-27 unit tests for ChatTypeCache hit/miss/eviction/TTL |
+| **`tests/telegram/quarantine-queue.test.ts` (v1.1.0)** | AC-28..AC-32 unit tests for cap, drain, drain event payloads |
 
 ### 3.3 Test Cases
 
@@ -590,6 +830,20 @@ sequenceDiagram
 | MODULE-002-T19 | Unit | AC-19 | 429 default Retry-After | HTTP 429 with no Retry-After header | sleeps 5s (default) | P1 |
 | MODULE-002-T20 | Unit | AC-20 | all 6 method wrappers | call each; mock response | correct HTTP method, path with token, body shape | P0 |
 | MODULE-002-T21 | Integration | AC-21 | compat schema suite | run compat-suite against upstream 0.0.6 schemas | all 4 official-compatible method I/O schemas validate | P0 |
+| MODULE-002-T22 | Unit | AC-22 | getChat method wrapper | call getChat(12345); mock 200 ok `{id:12345, type:'private'}` | returns `{id:12345, type:'private'}`; correct HTTP method, path with token | P0 |
+| MODULE-002-T23 | Unit | AC-23 | ChatTypeCache hit | prime cache with chat_id=999, type='private'; call getChatType(999) | returns 'private' in O(1); `chat_type_lookup` with source='cache' emitted | P0 |
+| MODULE-002-T24 | Unit | AC-24 | ChatTypeCache miss with success | empty cache; call getChatType(12345); mock getChat ok | invokes getChat once; caches; returns 'private'; `chat_type_lookup` with source='lazy_fetch_getChat' emitted | P0 |
+| MODULE-002-T25 | Unit | AC-25 | ChatTypeCache miss with failure | empty cache; call getChatType(99); mock getChat 5xx | rejects with ChatTypeFetchError; cache unchanged; next call retries | P0 |
+| MODULE-002-T26 | Unit | AC-26 | ChatTypeCache LRU eviction | insert 1001 entries; observe oldest evicted | entry 1 (least-recently-accessed) removed | P1 |
+| MODULE-002-T27 | Unit | AC-27 | ChatTypeCache TTL expiry | insert at t=0 with TTL=1h; query at t=3601s | treated as miss; re-fetched via getChat | P1 |
+| MODULE-002-T28 | Unit | AC-28 | quarantine queue accept | quarantine active; enqueue 50 entries; 51st reply | first 50 enqueued returning `{delivered:false, queued:true, eta_hint}`; 51st returns `{delivered:false, error:'capacity_exceeded'}` (no enqueue) | P0 |
+| MODULE-002-T29 | Unit | AC-29 | quarantine queue drain | enqueue 3 entries; trigger quarantine_exit; mock sendMessage success | 3 `quarantine_replay_resolved` events emitted in FIFO order with `{requester_session, message_id, delivered:true, queued_at, replayed_at}` | P0 |
+| MODULE-002-T30 | Integration | AC-30 | queue lost on restart | enqueue 5 entries; daemon-stop; restart | queue empty after restart; subsequent reply attempt on previously-queued messages errors normally | P0 |
+| MODULE-002-T31 | Unit | AC-31 | replay_resolved payload schema | drain queue with mixed success+failure | events carry the documented payload shape (including optional `error_class` on failures) | P0 |
+| MODULE-002-T32 | Unit | AC-32 | quarantine state events carry eta_hint | trigger quarantine_enter; observe payload | event payload includes `eta_hint` (cooldown remaining seconds) | P1 |
+| MODULE-002-T33 | Unit | AC-33 | typing fire-and-forget | inject inbound that passes gating; mock sendChatAction 500 | inbound routes through to M003 without delay; HTTP error logged at DEBUG only; no `alert_emit` for sendChatAction failure | P0 |
+| MODULE-002-T34 | Unit | AC-34 | three capacity edges independent | fill session cap (8); fill pending (50); fill quarantine queue (50) | each returns its own CapacityExceededError without affecting the others | P1 |
+| MODULE-002-T35 | Integration | AC-35 | stability SLO contribution | 72h soak harness: run daemon + 3 sessions + 30-min `/reload-plugins` cadence; count `mcp_reconnect_classified` events with reason=spurious | ≤8 5-min windows contain ≥1 spurious reconnect; no >5min continuous outage | P0 (soak gate) |
 
 ### 3.4 Acceptance Criteria Verification
 
@@ -616,6 +870,20 @@ sequenceDiagram
 | MODULE-002-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-002-AC-20 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-002-AC-21 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-002-AC-22 | Y | untested | — | — |
+| MODULE-002-AC-23 | Y | untested | — | — |
+| MODULE-002-AC-24 | Y | untested | — | — |
+| MODULE-002-AC-25 | Y | untested | — | — |
+| MODULE-002-AC-26 | Y | untested | — | — |
+| MODULE-002-AC-27 | Y | untested | — | — |
+| MODULE-002-AC-28 | Y | untested | — | — |
+| MODULE-002-AC-29 | Y | untested | — | — |
+| MODULE-002-AC-30 | Y | untested | — | — |
+| MODULE-002-AC-31 | Y | untested | — | — |
+| MODULE-002-AC-32 | Y | untested | — | — |
+| MODULE-002-AC-33 | Y | untested | — | — |
+| MODULE-002-AC-34 | Y | untested | — | — |
+| MODULE-002-AC-35 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -642,6 +910,7 @@ sequenceDiagram
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: telegram-client implementation under `plugins/telegram-channels-pro/` |
 | 2026-05-15 | Slice 2 scope-expansion re-verification: M002 implementation unchanged; included in scope_expansion for CONTRACT-001 additive `controlSocketFile` field — no consumer in M002 references the new field. |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. Added §1.4.5 ChatTypeCache provider (CONTRACT-016), §1.4.6 Quarantine outbound replay queue (REQ-037 + Decision A18 drain), §1.4.7 `sendChatAction(typing)` fire-and-forget (REQ-033 typing AC + Decision A15 isolation). 13 new ACs (AC-22..AC-34) for getChat method, ChatTypeCache hit/miss/eviction/TTL, quarantine queue cap+drain+crash semantics, drain event payload schemas (REQ-045), typing fire-and-forget SLO isolation. Existing AC-01..AC-21 verification status preserved (merge-preserve per /spec stability rules). |
 
 ### 3.8 Implementation Notes
 

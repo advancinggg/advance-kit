@@ -605,6 +605,7 @@ sequenceDiagram
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-15 | /dev Slice 2 begins: 4 slash commands + 4 bin/ helpers + plist template + ROLLBACK.md authored; daemon-side ControlSocket added at `src/deployment/control-socket.ts` (separate UDS at `daemon.ctl.sock`, distinct from MCP socket); reset-admin path rewritten — no daemon kill in either deployment mode (in-process forceReopenForReset via CONTRACT-010) |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. **MINOR**: M007's only v1.1.0 surface is the rollback documentation update (REQ-026 + Decision A15 added) — ROLLBACK.md now documents path (d) channel-protocol regression in-version downgrade: when v0.2's §4.9 channel protocol shows behavior drift vs upstream 0.0.6 (detected by REQ-033 A/B parity gate failure OR field reports), users can downgrade to a v0.1.x patch retaining daemon-reliability + outbound tools but demoting inbound to log channel (model loses inbound visibility temporarily until v0.2.1+ patch ships). Distinct from rollback paths (a) 72h-soak failure, (b) SIGTERM-of-other-processes, (c) request_approval lost events which all roll BACK to upstream telegram plugin. Path (d) is in-version downgrade only. M007 gets NO new ACs in this round — the rollback document update is content-level, AC-list unchanged. macOS Notification Center delivery (REQ-047 stream b) is M006-internal direct shell-out via Bun child-process — NOT a M007 surface. |
 
 ### 3.8 Implementation Notes
 

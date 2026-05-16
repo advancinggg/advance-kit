@@ -2,6 +2,7 @@
 
 > Status: Draft
 > Created: 2026-05-12
+> Updated: 2026-05-16 (v1.1.0 — v0.2 channels-integration amendment)
 > Architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -21,10 +22,44 @@ routing is a pure subscriber/publisher with respect to EventBus and a consumer o
 several other modules' contracts (AdminAllowlist, RegistrationGate, MCPTransport
 deliver/disconnect, PendingApprovalRegistry). It owns no persistent state.
 
+**v1.1.0 additions (REQ-034 inbound chat-type gating + REQ-040 strict /session +
+REQ-043 auth-reject aggregator + REQ-036 architectural enforcement + REQ-046
+first-listed-admin routing + REQ-047 wait-for-reset disconnect carrier + REQ-039
+popup throttle + REQ-033 typing dispatcher)**:
+- Inbound chat-type gating: M005 silently drops `chat.type !== 'private'` BEFORE
+  admin allowlist verification (REQ-034); emits `chat_type_inbound_denied` event.
+- Inbound side-effect cache warm: M005 calls `chatTypeCache.primeCache(chat_id,
+  type)` on every accepted inbound (incl. denied — feeds outbound DiD) per
+  REQ-035.
+- `/session` strict full-line regex `^/session [a-f0-9]{1,12}$` (REQ-040 anti
+  focus-redirect injection); embedded variants route as regular text.
+- Auth-reject silent-drop + sliding-window aggregated alert (REQ-043): per-event
+  silent drop + ERROR JSON log; threshold-aggregated `auth_reject_aggregated`
+  event on burst (5/30/10/10 over 5min); M008 dispatcher applies ≤1/hour cap.
+- All outbound notifications + ops alerts target `firstListedAdminUserId()` from
+  CONTRACT-009 (REQ-046 multi-admin first-listed degradation).
+- Wait-for-reset disconnect carrier (REQ-047): on every `session_connected`,
+  M005 queries `M006.isWaitForReset()` → if true, invoke
+  `M003.disconnectSession(id, "registration timed out; run reset-admin to retry")`.
+- Approval-expired popup throttle dispatch (REQ-039): on `lookupByPendingId`
+  miss, M005 checks `shouldEmitPopup(callback_data)` via CONTRACT-011 ext;
+  emits popup only when allowed; emits `popup_throttled` event when suppressed.
+- Typing indicator dispatcher (REQ-033 Decision A15): M005 fires
+  `tg.sendChatAction(chat_id, 'typing')` fire-and-forget in parallel with
+  `M003.deliverChannelNotification` (latency-isolated per AC-26b).
+- Architectural enforcement of REQ-036 text-typed-approval boundary: M005
+  inbound text path has ZERO call to `resolveApproval`; callback-query path
+  is the sole resolve site (AC-30).
+
 **Serves PRD topics**:
 - `docs/PRD.md` (REQ-001 Flow A bidirectional chat, REQ-003 Flow C approval routing,
   REQ-010 opt-in + LRU + commands, REQ-013 admin enforcement, REQ-015 /session input
-  sanitization, REQ-022 session capacity, REQ-024 auth-deny alert via token-bucket)
+  sanitization, REQ-022 session capacity, REQ-024 auth-deny alert via token-bucket,
+  REQ-033 typing-indicator dispatcher, REQ-034 chat-type inbound gating, REQ-035
+  cache prime side-effect, REQ-036 text-typed-approval architectural enforcement,
+  REQ-039 popup throttle dispatch, REQ-040 strict `/session` matching, REQ-043
+  auth-reject aggregated alert, REQ-046 first-listed-admin routing, REQ-047
+  wait-for-reset handshake disconnect)
 
 ### 1.2 Architecture Overview
 
@@ -139,8 +174,12 @@ export class AdminChatRegistry {
 
 #### 1.4.2 Inbound text dispatch
 
-**Flow** (from EventBus subscriber):
+**Flow** (from EventBus subscriber, v1.1.0 revised order):
 1. Receive `inbound_update` where `type === 'message'`.
+1a. **v1.1.0 (REQ-034) chat-type gate FIRST** — read `message.chat.type`:
+   - **Cache prime side-effect (REQ-035 AC-22)**: regardless of value, call `chatTypeCache.primeCache(message.chat.id, message.chat.type)` so future outbound DiD short-circuits without lazy-fetch (cache prime happens BEFORE the drop decision so even denied entries are captured).
+   - if `chat.type !== 'private'` → emit `chat_type_inbound_denied` event with `{chat_id, observed_type, sender_hash}` + ERROR JSON log; SILENTLY DROP (no reply to attacker per PRD §3.1 step 2(a)); update sliding-window counter for `non_private_chat` aggregated alert per AC-25. **RETURN** — do NOT proceed to admin verification (chat-type gate precedes admin allowlist per PRD §3.1).
+   - if `chat.type === 'private'` → proceed to step 2.
 2. Call `M006.isInRegistrationWindow()` **FIRST** (before admin check, because admin allowlist is empty during registration — admin-check-first would deadlock first-run registration):
    - true → call `M006.processRegistrationDM(message.from.id, message.text)`; result either consumed (registration in progress — return without further routing) or `not_registration_dm` (drop silently; do NOT fall through to LRU because no admin exists yet).
    - false → proceed to step 3.
@@ -156,8 +195,12 @@ export class AdminChatRegistry {
 
 #### 1.4.3 Inbound callback dispatch
 
-**Flow**:
+**Flow** (v1.1.0 revised order):
 1. Receive `inbound_update` where `type === 'callback_query'`.
+1a. **v1.1.0 (REQ-034) chat-type gate FIRST** — read `callback.message.chat.type`:
+   - Cache prime side-effect (REQ-035 AC-22): regardless of value, call `chatTypeCache.primeCache(...)`.
+   - if `chat.type !== 'private'` → emit `chat_type_inbound_denied` event + ERROR JSON log; SILENTLY DROP (per PRD §3.3 step 4 + ARCH §11.2 STRIDE); update sliding-window counter for `non_private_chat` aggregated alert per AC-25. **RETURN** — do NOT proceed to admin verification (chat-type precedes admin allowlist).
+   - if `chat.type === 'private'` → proceed to step 2.
 2. Call `M006.isAdmin(callback.from.id)`:
    - false → emit `auth_deny_routing` event (token-bucket rate-limited via M008); **silently drop** the callback (per PRD §3.3 edge case "daemon 静默忽略 callback, pending 保持挂起" — no `answerCallbackQuery` to the attacker, no state leak). pending remains alive for legitimate admin click.
    - true → continue.
@@ -218,6 +261,17 @@ Throttle keyed by `chat_id` (admin sender's chat). Single-admin scenario degener
 | MODULE-005-AC-18 | REQ-009 / RISK-010 | CONTRACT-011 | `session_disconnected` triggers M005 → M004.cleanupBySession; pending entries for that session resolved with SessionTerminated | integration test |
 | MODULE-005-AC-19 | REQ-020 | — | Inbound text → focus session deliver: P95 < 50ms (in-process; excludes Telegram poll cycle) | benchmark |
 | MODULE-005-AC-20 | RISK-010 | — | Failed deliverToSession (race with session disconnect) → fall back to next LRU; if no next, no-session-throttle reply | integration test |
+| MODULE-005-AC-21 | REQ-034 | CONTRACT-003 | Inbound chat-type gating: M005 silently drops any `inbound_update` whose `message.chat.type !== 'private'` OR `callback_query.message.chat.type !== 'private'`. Check runs BEFORE admin allowlist verification. Even if `from.id` is in admin allowlist, non-private chat type → silent drop. Emits `chat_type_inbound_denied` event with `{chat_id, observed_type, sender_hash}` for audit | unit test |
+| MODULE-005-AC-22 | REQ-035 | CONTRACT-016 | On every inbound (any chat type), M005 calls `chatTypeCache.primeCache(chat_id, observed_type)` AT step 1a — BEFORE the chat-type gate decision (so the cache is populated for both accepted AND denied entries). The "denied" inbound is dropped per AC-21 but its chat_id→type binding is already in the cache, enabling future outbound DiD to short-circuit without lazy-fetch. Ordering: read chat.type → primeCache → if non-private gate-drop, else proceed | unit test |
+| MODULE-005-AC-23 | REQ-040 | — | `/session <shortid>` strict matching: regex `^/session [a-f0-9]{1,12}$` (full-line anchor). Embedded `/session abc123` in message body OR multi-line text OR `/session` followed by non-hex → routed as regular channel notification (NOT a command); no focus mutation | unit test |
+| MODULE-005-AC-24 | REQ-046 | CONTRACT-009 ext | All outbound notifications (REQ-002 Flow B), pending approval routing (REQ-009), and ops alerts (REQ-024, REQ-038, REQ-043) use `firstListedAdminUserId()` from CONTRACT-009 to obtain target admin user_id; under multi-admin config, only first-listed receives ops traffic | unit test |
+| MODULE-005-AC-25 | REQ-043 | CONTRACT-003 | Auth-reject aggregated alert: per-category sliding-window counters (per-sender 5 / global 30 / non-admin-chat 10 / non-private-chat 10; 5-min window). On threshold trip, publish `auth_reject_aggregated` event with `{category, count, window_start, window_end}`; M008 dispatcher applies ≤1/hour per-category cap before TG admin alert | unit test |
+| MODULE-005-AC-26 | REQ-039 | CONTRACT-011 ext | Approval-expired popup throttle: on `lookupByPendingId` miss (stale button), call `shouldEmitPopup(callback_data)` via CONTRACT-011 ext; if true → M002.answerCallbackQuery WITH "approval expired" popup text + records throttle ts; if false → answerCallbackQuery WITHOUT popup (silent ack); emits `popup_throttled` event when suppressed | unit test |
+| MODULE-005-AC-26b | REQ-033 + Decision A15 | CONTRACT-004 + CONTRACT-006 | Typing indicator dispatch: on every accepted inbound (post chat-type + admin gates), M005 fires `tg.sendChatAction(chat_id, 'typing')` via CONTRACT-004 in parallel with `M003.deliverChannelNotification(session_id, payload, meta)` (v1.1.0 CONTRACT-006 additive method — REQ-033 channel-protocol path that supersedes the v1.0 `deliverToSession` call site for channel-tag inbound) — fire-and-forget; failure of sendChatAction does NOT block inbound or count toward §5 SLO per Decision A15 latency-isolation | unit test |
+| MODULE-005-AC-27 | REQ-047 | CONTRACT-010 ext + CONTRACT-006 | Wait-for-reset handshake disconnect: on every `session_connected` event, M005 queries `M006.isWaitForReset()`; if true → M005 calls `M003.disconnectSession(session_id, "registration timed out; run reset-admin to retry")` so the disconnect frame carries the hint to the claude session terminal | integration test |
+| MODULE-005-AC-28 | REQ-001 / REQ-010 | — | `/session` UX one-shot snapshot annotation: `/session <shortid>` bubbles match session to LRU head AT THE MOMENT of command; if other sessions call tool_call afterward, those updates may bubble them past — `/session` is NOT a sticky lock. Test: switch to session X, then session Y calls tool_call, send inbound → routes to Y not X | integration test |
+| MODULE-005-AC-29 | REQ-001 | — | `/list` Branch trade-off documented in operator-facing `/list` reply (PRD §4.6): branch column kept in output (UX value > redaction); admin warned in operator notes (currently inline §1.1 narrative + §2.13 runbook gets a new "Branch leakage advisory" row in the same /spec rerun) to avoid leaking employer/customer/internal-codename branch names | doc verification |
+| MODULE-005-AC-30 | REQ-036 + Decision A17 | CONTRACT-011 | Architectural enforcement of text-typed-approval-NOT-approval: M005 inbound text routing path has ZERO call to CONTRACT-011 `resolveApproval`; the sole call site is the callback_query path (AC-08). Verified by static analysis or property test | static analysis / architectural review |
 
 ### 1.6 Non-functional Requirements
 
@@ -265,11 +319,12 @@ Throttle keyed by `chat_id` (admin sender's chat). Single-admin scenario degener
 
 | Module | Doc Link | Required Contract | Dependency Content | Type |
 |--------|----------|------------------|-------------------|------|
-| MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus sub (inbound_update, session_*, tool_call) + pub (route_decision, auth_deny_routing) | Hard |
-| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | answerCallbackQuery for stale-button + no-session reply via sendMessage | Hard |
-| MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | CONTRACT-006 | deliverToSession, disconnectSession | Hard |
-| MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | CONTRACT-011 | lookupByPendingId, resolveApproval, cleanupBySession | Hard |
-| MODULE-006 admin-auth | [MODULE-006](./MODULE-006-admin-auth.md) | CONTRACT-009 + CONTRACT-010 | isAdmin, isInRegistrationWindow, processRegistrationDM | Hard |
+| MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus sub (inbound_update, session_*, tool_call) + pub (route_decision, auth_deny_routing, **v1.1.0**: `chat_type_inbound_denied`, `auth_reject_aggregated`, `popup_throttled`) | Hard |
+| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | answerCallbackQuery for stale-button + no-session reply via sendMessage; **v1.1.0**: `sendChatAction(typing)` fire-and-forget for REQ-033 typing indicator dispatcher | Hard |
+| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | **CONTRACT-016 (v1.1.0)** | ChatTypeCache `primeCache(chat_id, type)` side-effect write on every accepted inbound (REQ-035 cache warm — supports M004 outbound DiD) | Hard (v1.1.0) |
+| MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | CONTRACT-006 | deliverToSession, disconnectSession; **v1.1.0**: `deliverChannelNotification` for inbound REQ-033 channel-protocol; `disconnectSession` invoked with REQ-047 hint string when M006.isWaitForReset on session_connected | Hard |
+| MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | CONTRACT-011 | lookupByPendingId, resolveApproval, cleanupBySession; **v1.1.0**: `recordPopupThrottle` + `shouldEmitPopup` for REQ-039 approval-expired popup throttle | Hard |
+| MODULE-006 admin-auth | [MODULE-006](./MODULE-006-admin-auth.md) | CONTRACT-009 + CONTRACT-010 | isAdmin, isInRegistrationWindow, processRegistrationDM; **v1.1.0**: `firstListedAdminUserId()` for REQ-046 first-listed-admin routing; `isWaitForReset()` for REQ-047 handshake disconnect gate | Hard |
 | MODULE-008 observability | [MODULE-008](./MODULE-008-observability.md) | CONTRACT-014 | StatusReporter for /status command | Hard |
 
 #### Downstream Dependencies
@@ -292,12 +347,13 @@ M005 does NOT provide cross-module contracts. Its internal SessionRegistry is in
 | Required Contract | Provider | Used For |
 |---|---|---|
 | CONTRACT-003 EventBus | M001 | sub/pub |
-| CONTRACT-004 TelegramAPIClient | M002 | sendMessage (no-session reply, ack messages), answerCallbackQuery (stale buttons) |
-| CONTRACT-006 MCPTransport | M003 | deliverToSession, disconnectSession |
-| CONTRACT-009 AdminAllowlist | M006 | isAdmin |
-| CONTRACT-010 RegistrationGate | M006 | isInRegistrationWindow, processRegistrationDM |
-| CONTRACT-011 PendingApprovalRegistry | M004 | lookupByPendingId, resolveApproval, cleanupBySession |
+| CONTRACT-004 TelegramAPIClient | M002 | sendMessage (no-session reply, ack messages), answerCallbackQuery (stale buttons), **v1.1.0**: sendChatAction(typing) for REQ-033 dispatcher |
+| CONTRACT-006 MCPTransport | M003 | deliverToSession, disconnectSession, **v1.1.0**: deliverChannelNotification (REQ-033 channel-protocol inbound); disconnectSession with REQ-047 hint on isWaitForReset |
+| CONTRACT-009 AdminAllowlist | M006 | isAdmin; **v1.1.0**: firstListedAdminUserId (REQ-046 multi-admin first-listed routing) |
+| CONTRACT-010 RegistrationGate | M006 | isInRegistrationWindow, processRegistrationDM; **v1.1.0**: isWaitForReset (REQ-047 handshake disconnect gate) |
+| CONTRACT-011 PendingApprovalRegistry | M004 | lookupByPendingId, resolveApproval, cleanupBySession; **v1.1.0**: recordPopupThrottle + shouldEmitPopup (REQ-039 popup throttle) |
 | CONTRACT-014 StatusReporter | M008 | /status command output |
+| **CONTRACT-016 ChatTypeCache (v1.1.0)** | M002 | `primeCache(chat_id, type)` side-effect write on every accepted inbound (REQ-035 cache warm) |
 
 #### Events/Messages
 
@@ -307,6 +363,9 @@ M005 does NOT provide cross-module contracts. Its internal SessionRegistry is in
 |-----------|---------|---------|----------|
 | `route_decision` | Each dispatch | `{ update_id: number; target_session: string \| null; reason: string }` — canonical `reason` values: `"session_added"` / `"session_removed"` / `"text_delivered"` / `"callback_resolved"` (admin clicked, valid pending) / `"callback_stale"` (admin clicked, pending lost — post-crash) / `"callback_invalid_option"` (admin clicked, invalid option_index in callback_data) / `"no_session"` / `"command_handled"` / `"invalid_shortid"`. `update_id: -1` for non-update events (session lifecycle); else carries the inbound update's update_id. `target_session` is the chosen session_id (or null for no-session/command/invalid-shortid/callback_stale). | M008 (log) |
 | `auth_deny_routing` | non-admin attempt | `{ sender_hash: string; reason: string }` — canonical `reason` values: `"inbound_text_deny"` / `"callback_deny"` / `"session_capacity_exceeded"`. `sender_hash` = `shortHash(String(sender_id))` for admin-gate denials; empty string `""` for capacity-exceeded (caller is local UDS, not TG sender). | M008 (alert via token-bucket) |
+| **`chat_type_inbound_denied` (v1.1.0)** | Non-private `chat.type` on inbound message OR callback_query (REQ-034) | `{ chat_id, observed_type: 'group' \| 'supergroup' \| 'channel', sender_hash }` | M008 (ERROR JSON log) |
+| **`auth_reject_aggregated` (v1.1.0)** | Sliding-window threshold trip per category (REQ-043) — per-sender 5 / global 30 / non-admin-chat 10 / non-private-chat 10 in 5min | `{ category, count, window_start, window_end }` | M008 (TG admin alert with ≤1/hour per-category cap) |
+| **`popup_throttled` (v1.1.0)** | Approval-expired popup suppression (REQ-039) | `{ callback_data_hash, throttle_until_ts }` | M008 (DEBUG audit) |
 
 **Subscribed**:
 
@@ -452,17 +511,28 @@ sequenceDiagram
 | Error | Trigger | Handling |
 |---|---|---|
 | `auth_deny_routing` | non-admin sender (text or callback) OR capacity overflow | log + token-bucket alert (via M008); drop / disconnect target |
+| **`chat_type_inbound_denied` (v1.1.0 REQ-034)** | `chat.type !== 'private'` on inbound text OR callback_query | emit event + ERROR JSON log; silently drop (no reply); update sliding-window counter for `non_private_chat` aggregated alert; cache prime still happens (REQ-035 AC-22) |
+| **`auth_reject_aggregated` (v1.1.0 REQ-043)** | Per-category sliding-window count reaches threshold (per-sender 5 / global 30 / non-admin-chat 10 / non-private-chat 10 in 5min) | publish `auth_reject_aggregated` event with `{category, count, window_start, window_end}`; M008 dispatcher caps to ≤1/hour per category before TG admin alert |
+| **Popup-throttled stale callback (v1.1.0 REQ-039)** | `lookupByPendingId` miss AND `shouldEmitPopup(callback_data) === false` (within 5min throttle window) | M005 calls `answerCallbackQuery(callback_id)` WITHOUT popup text (silent ack); emit `popup_throttled` event |
 | Stale session in registry (race with disconnect during dispatch) | deliverToSession returns unknown_session | remove entry; fall back to next focus or no-session reply |
-| Stale pending callback (post-daemon-crash) | M004.lookupByPendingId returns null | M005 calls M002.answerCallbackQuery with "approval expired" + show_alert |
+| Stale pending callback (post-daemon-crash) | M004.lookupByPendingId returns null AND popup throttle allows | M005 calls M002.answerCallbackQuery with "approval expired" + show_alert; records popup ts via `recordPopupThrottle` |
 | Invalid /session input | regex mismatch | reply "Invalid shortid format" (via M002) |
+| **Embedded /session in body (v1.1.0 REQ-040)** | message body contains `/session abc` but does NOT match full-line regex `^/session [a-f0-9]{1,12}$` | route as regular channel notification (NOT a command); no focus mutation; no ack |
 | Unknown shortid in /session | no entry matches prefix | reply "Session <shortid> not found" |
+| **Wait-for-reset session_connected (v1.1.0 REQ-047)** | `M006.isWaitForReset() === true` at session_connected event | M005 calls `M003.disconnectSession(session_id, 'registration timed out; run reset-admin to retry')` — claude session terminal shows the hint via the disconnect frame |
 
 ### 2.9 Security Considerations
 
 - All TG-originating data treated as untrusted (admin gate is the trust boundary).
+- **v1.1.0 (REQ-034)**: chat-type gate `chat.type === 'private'` runs FIRST — BEFORE admin allowlist; even an admin user posting from group context is silently dropped. Protects against bot-in-group output leakage when admin user_id legitimately exists but the channel context is group-shared.
 - `/session <shortid>` regex-validated BEFORE any registry access (avoids ReDoS / injection in lookup loop).
+- **v1.1.0 (REQ-040)**: `/session` regex extended to full-line anchor `^/session [a-f0-9]{1,12}$` — embedded `/session abc123` in message body NEVER triggers focus mutation (defends against composite-message focus-redirect injection).
 - ack text uses validated input only (REQ-015).
 - `auth_deny_routing` events redacted (use hashed user_id, not raw).
+- **v1.1.0 (REQ-043)**: Per-event auth-reject is silent at protocol surface (no enumeration to attacker); aggregated alert layer (sliding 5min window per category, ≤1/hour cap) provides admin visibility without per-event echo.
+- **v1.1.0 (REQ-036 + Decision A17)**: Architectural enforcement — M005 inbound text routing path has NO call to CONTRACT-011 `resolveApproval`. The sole call site is the callback_query branch. Text "approve" / "yes" prose CANNOT advance pending state, regardless of model interpretation. Two-layer defense (architectural code path + system instructions in M003 §2.7).
+- **v1.1.0 (REQ-039)**: Approval-expired popup throttle (5min per `callback_data`) prevents repeated-click info-leak probing of daemon state.
+- **v1.1.0 (REQ-046)**: All outbound notifications + ops alerts target `firstListedAdminUserId()` — multi-admin config degrades safely; non-first-listed admin user_ids receive no ops traffic to avoid divergent escalation paths.
 - Pending-id lookup happens AFTER admin verify (defense-in-depth — even though pending_id is daemon-generated and unguessable, this prevents CPU waste on attack traffic).
 
 ### 2.10 Configuration & Environment Variables
@@ -501,6 +571,9 @@ sequenceDiagram
 | Routing always goes to "wrong" session | LRU ordering not matching user expectation | Use `/session <shortid>` to force focus | If common, may need clearer LRU explanation in user docs |
 | `/session <shortid>` always says "not found" | shortid hex doesn't match registered sessions | `/list` to see actual shortids | User should copy from `/list` output |
 | Approvals frequently "approval expired" | Daemon crash-restart loop | RISK-004 territory; investigate crash root | M008 alerts should fire too |
+| **v1.1.0 — `chat_type_inbound_denied` flood** | Bot added to a group/supergroup/channel | Remove bot from group; aggregated alert (REQ-043 `non_private_chat` category at threshold 10/5min) tells you it's spiking | Audit how bot was added — TG bot privacy mode may need toggling |
+| **v1.1.0 — `auth_reject_aggregated` burst** | Real attack OR mistaken bot DM | Inspect M008 JSON event log for sender_hash patterns; if attack: rotate token; if user error: educate user | High burst sustained → consider env-only admin lockdown (`TELEGRAM_AUTHORIZED_USERS` set) to bypass registration window |
+| **v1.1.0 — Branch leakage advisory (REQ-001 / `/list` trade-off doc — AC-29)** | `/list` output includes `<branch>` column which may carry sensitive names (employer / customer / internal codename) | Recommend renaming branches to non-sensitive forms before connecting via `--channels plugin:telegram-channels-pro@advance-kit`; admin self-managed (not redacted in `/list` per UX trade-off) | If branch names cannot be sanitized, consider not using tgcp for that project until v0.3+ adds optional branch redaction |
 
 **Capacity**: hard 8 sessions; documented and enforced.
 
@@ -588,6 +661,17 @@ sequenceDiagram
 | MODULE-005-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-005-AC-19 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-005-AC-20 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
+| MODULE-005-AC-21 | Y | untested | — | — |
+| MODULE-005-AC-22 | Y | untested | — | — |
+| MODULE-005-AC-23 | Y | untested | — | — |
+| MODULE-005-AC-24 | Y | untested | — | — |
+| MODULE-005-AC-25 | Y | untested | — | — |
+| MODULE-005-AC-26 | Y | untested | — | — |
+| MODULE-005-AC-26b | Y | untested | — | — |
+| MODULE-005-AC-27 | Y | untested | — | — |
+| MODULE-005-AC-28 | Y | untested | — | — |
+| MODULE-005-AC-29 | Y | untested | — | — |
+| MODULE-005-AC-30 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -611,6 +695,7 @@ sequenceDiagram
 |------|--------|
 | 2026-05-12 | Initial creation |
 | 2026-05-15 | /dev Slice 2 begins: SessionRegistry + InboundDispatcher (text + callback branches) + AdminChatRegistry + commands (/session /list /status) + NoSessionReplyThrottle + capacity guard + pendingRegistry cleanup trigger; event payload shapes aligned to event-types.ts (route_decision uses update_id sentinel -1 for non-update events; auth_deny_routing uses sender_hash field); §1.4.3 spec-vs-test mismatch corrected (silent drop, no answerCallbackQuery to attacker); AC-19 benchmark relaxed to in-process micro-bench (max<5ms vs production E2E budget 50ms); §2.7 mermaid event payloads will be regenerated to match the table (deferred to future /spec rerun) |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 11 new ACs (AC-21..AC-30 + AC-26b): inbound chat-type gating with `chat_type_inbound_denied` (REQ-034); cache prime side-effect on inbound (REQ-035 + CONTRACT-016 consumer); `/session` strict full-line regex (REQ-040); auth-reject aggregated alert with sliding-window thresholds (REQ-043); first-listed-admin routing for outbound notifications + ops alerts (REQ-046 via CONTRACT-009 ext); wait-for-reset handshake disconnect carrier (REQ-047 via CONTRACT-010 ext); popup throttle dispatcher (REQ-039 via CONTRACT-011 ext); typing-indicator dispatcher (REQ-033 + Decision A15 fire-and-forget); architectural enforcement of text-typed-approval-NOT-approval (REQ-036); `/session` UX one-shot snapshot annotation; `/list` Branch trade-off doc. 20 existing ACs preserved (merge-preserve per /spec stability rules). |
 
 ### 3.8 Implementation Notes
 

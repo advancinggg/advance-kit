@@ -2,6 +2,7 @@
 
 > Status: Draft
 > Created: 2026-05-12
+> Updated: 2026-05-16 (v1.1.0 — v0.2 channels-integration amendment)
 > Architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
@@ -19,9 +20,30 @@ the `status` CLI subcommand via CONTRACT-014 StatusReporter. It uses CONTRACT-00
 Per Decision A12, no module calls M008 directly except M007 (for status CLI). All other
 modules emit `log_emit` / `alert_emit` events to EventBus; M008 subscribes and dispatches.
 
+**v1.1.0 additions (REQ-017 SLO counter + REQ-035 ChatTypeCache observability + REQ-037
+quarantine queue gauge + REQ-038 capacity-full alert dispatch + REQ-043 aggregated alert
+dispatch + REQ-044 redaction two-stream + REQ-045 reconnect classification subscriber +
+REQ-046 first-listed routing + RISK-018 mitigation)**:
+- Subscribes to 8 new CONTRACT-003 v1.1.0 event types in addition to existing 26.
+- StatusReporter v1.1.0 fields: spurious_reconnect_count_72h, quarantine_replay_queue_size,
+  chat_type_cache_size, chat_type_lazy_fetch_failures_24h, auth_reject_aggregated_24h
+  (per-category 24h counts), last_auth_reject_aggregated_window (latest threshold trip).
+- Auth-reject aggregated alert dispatcher (REQ-043): applies ≤1/hour per-category cap
+  before TG admin alert via CONTRACT-004 targeting firstListedAdminUserId() (REQ-046).
+- Two-stream redaction invariant (REQ-044) — JSON event log is the redaction surface;
+  user-facing channels (stderr / launchd log / first MCP session log) are M006-emitted
+  and deliver registration code plaintext by design.
+- RISK-018 alerting-during-quarantine deadlock mitigation: immediate dispatch + replay
+  queue with `belatedly:true` payload-field dedup.
+- First-listed-admin routing for ALL outbound ops alerts (REQ-046 + CONTRACT-009 ext).
+
 **Serves PRD topics**:
-- `docs/PRD.md` (REQ-023 observability/structured-logs/redaction/status, REQ-024 alerting
-  edge-triggered semantics, REQ-021 measurement script for resource budget)
+- `docs/PRD.md` (REQ-017 spurious reconnect counter, REQ-021 measurement script for
+  resource budget, REQ-023 observability/structured-logs/redaction/status, REQ-024
+  alerting edge-triggered semantics, REQ-035 ChatTypeCache observability fields, REQ-037
+  quarantine queue gauge, REQ-038 capacity-full alert dispatch, REQ-039 popup-throttle
+  audit, REQ-043 auth-reject aggregated dispatch, REQ-044 redaction two-stream invariant,
+  REQ-045 mcp_reconnect_classified subscriber, REQ-046 first-listed-admin alert routing)
 
 ### 1.2 Architecture Overview
 
@@ -250,9 +272,10 @@ After ≥120 stationary samples, an aggregation log entry can be emitted for the
 |--------|----------|------------------|-------------------|------|
 | MODULE-001 | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-001 | StateDir (log dir) | Hard |
 | MODULE-001 | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-002 | DeploymentMode (status output) | Hard |
-| MODULE-001 | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus sub all event types | Hard |
+| MODULE-001 | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus sub all event types (v1.1.0: 8 new types subscribed: auth_reject_aggregated, chat_type_lookup, outbound_chat_type_denied, chat_type_inbound_denied, popup_throttled, mcp_reconnect_classified, quarantine_replay_resolved, channel_notification_emitted) | Hard |
 | MODULE-002 | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | sendMessage for alert delivery | Hard |
 | MODULE-002 | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-005 | (not directly — receives snapshot via EventBus polling_status_snapshot events) | (via events) |
+| MODULE-006 admin-auth | [MODULE-006](./MODULE-006-admin-auth.md) | **CONTRACT-009 ext (v1.1.0)** | `firstListedAdminUserId()` — target user_id for all outbound ops alerts under REQ-046 first-listed-admin degradation | Hard (v1.1.0) |
 
 #### Downstream
 
@@ -581,6 +604,16 @@ stateDiagram-v2
 | MODULE-008-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-008-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 (re-verify; Slice B initial) | 2026-05-15 |
 | MODULE-008-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
+| MODULE-008-AC-20 | Y | untested | — | — |
+| MODULE-008-AC-21 | Y | untested | — | — |
+| MODULE-008-AC-22 | Y | untested | — | — |
+| MODULE-008-AC-23 | Y | untested | — | — |
+| MODULE-008-AC-24 | Y | untested | — | — |
+| MODULE-008-AC-25 | Y | untested | — | — |
+| MODULE-008-AC-26 | Y | untested | — | — |
+| MODULE-008-AC-27 | Y | untested | — | — |
+| MODULE-008-AC-28 | Y | untested | — | — |
+| MODULE-008-AC-29 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
 
@@ -607,6 +640,7 @@ stateDiagram-v2
 | 2026-05-12 | Initial creation |
 | 2026-05-14 | /dev Slice B begins: observability subsystem (subscriber, redaction, JSON logger, alert dispatcher with 3 categories + crash-restart merge, StatusReporter, measurement helper, retention janitor) under `plugins/telegram-channels-pro/`. Adds `drainAlertsToLogOnly` exit-path helper for boot-error paths that exit before tgClient is ready. |
 | 2026-05-15 | Slice 2 additive: `ObservabilityCtx.setAdminChat(chatId)` public method + `AlertDispatcher.setAdminChat(chatId)` internal setter (with flushQueue mirror) — wires AlertDispatcher's destination chat to M005's AdminChatRegistry via subscribe pattern. M008 also re-verified for CONTRACT-001 additive `controlSocketFile` field (AC-02 + AC-18 in scope_expansion). |
+| 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 10 new ACs (AC-20..AC-29): REQ-044 two-stream redaction invariant (JSON-log-only vs user-facing channels); REQ-017+REQ-045 mcp_reconnect_classified subscriber + spurious_reconnect_count_72h counter; REQ-035 chat_type_lookup subscriber + cache_size + lazy_fetch_failures_24h fields; REQ-037 quarantine_replay_queue_size gauge + per-replay audit; REQ-043 auth_reject_aggregated dispatcher with ≤1/hour per-category cap; REQ-038 capacity-full alert dispatch passthrough; REQ-039 popup_throttled audit; CONTRACT-014 v1.1.0 additive StatusReporter fields (6 new); RISK-018 alerting-during-quarantine deadlock mitigation (immediate dispatch + replay-queue with belatedly:true payload-field dedup); REQ-046 first-listed-admin routing for all ops alerts via CONTRACT-009 ext. 19 existing ACs preserved (merge-preserve per /spec stability rules). |
 
 ### 3.8 Implementation Notes
 
