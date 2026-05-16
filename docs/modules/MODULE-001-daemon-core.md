@@ -329,14 +329,21 @@ eventBus.on('inbound_update', (event) => {
 ```ts
 // CONTRACT-001 — StateDir
 export interface StateDir {
-  readonly root: string;       // ~/Library/Application Support/...
+  readonly root: string;             // ~/Library/Application Support/...
   readonly lockFile: string;
   readonly socketFile: string;
+  readonly controlSocketFile: string; // Slice 2 additive — M007 daemon-side control socket
   readonly adminFile: string;
   readonly offsetFile: string;
   readonly attachmentDir: string;
   readonly logDir: string;
-  initialize(): Promise<void>;  // ensures dirs exist with 0700; verifies file perms 0600 on existing files
+  readonly lastShutdownFile: string;  // v1.1.0 additive — REQ-045 reconnect classification marker
+  initialize(): Promise<void>;        // ensures dirs exist with 0700; verifies file perms 0600 on existing files
+  // v1.1.0 additive — one-shot read of the previous-shutdown cause for M003 reconnect classification.
+  // First call reads <state_dir>/last_shutdown.json (deleting on success → 'sigterm'),
+  // falls back to XPC_SERVICE_NAME env check (set by launchd → 'keepalive'), else returns 'none'.
+  // Subsequent calls within the same daemon process return 'none' (one-shot cached).
+  getPostBootShutdownContext(): 'sigterm' | 'keepalive' | 'none';
 }
 
 // CONTRACT-002 — DeploymentMode
@@ -694,6 +701,7 @@ stateDiagram-v2
 | 2026-05-14 | /dev Slice B begins: bringing up StateDir + ProcessLock + EventBus + DeploymentMode + Watchdog + graceful shutdown under `plugins/telegram-channels-pro/` |
 | 2026-05-15 | Slice 2 additive: `controlSocketFile` field added to StateDirSpec for M007 daemon-side control socket; resolveStateDir + tmp-state-dir.ts helpers updated; existing consumers unchanged (no removed/renamed fields) |
 | 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. **MINOR**: M001 has only a cross-cutting role in v1.1.0 (no new MAJOR feature). CONTRACT-001 gains additive method `getPostBootShutdownContext(): 'sigterm' \| 'keepalive' \| 'none'` (one-shot read consumed by M003's first post-boot session-init to classify reconnects per REQ-045 AC-24b/24c); M001 SIGTERM handler writes `<state_dir>/last_shutdown.json` (reason='sigterm', ts, daemon_pid); boot phase reads + deletes the file AND inspects `XPC_SERVICE_NAME` env var for launchd-restart detection (sets to 'keepalive' when env present + no last_shutdown.json). Subsequent reads return 'none' for the lifetime of this daemon instance. CONTRACT-003 v1.1.0 also clarifies M002 + M003 + M008 subscriber sets but those changes are observed-through-M001-EventBus rather than M001-owned. State.json schema (M001-owned per Slice 2) untouched. M001 gets NO new ACs in this round — the `getPostBootShutdownContext()` implementation is captured by M003 AC-24b/24c (downstream consumer side; M001 provider side will get an AC in next /spec rerun targeting M001-internal lifecycle). |
+| 2026-05-16 | /dev task — channel-protocol slice (REQ-033/037/045). **DOCS phase**: §2.3 CONTRACT-001 interface code-block updated to include the v1.1.0 additive `getPostBootShutdownContext()` method + `lastShutdownFile` path field; retroactive drift fix also adds `controlSocketFile` (in source since 2026-05-15 Slice 2 but absent from §2.3 doc). **IMPLEMENT phase (forthcoming)**: `StateDirImpl.getPostBootShutdownContext()` one-shot cached read of `last_shutdown.json` → fallback `XPC_SERVICE_NAME` → 'none'; private `writeShutdownMarker(reason)` (NOT on `StateDir` interface — kept off the public surface to prevent downstream forgery of post-boot context); SIGTERM handler in `shutdown.ts:41` invokes `writeShutdownMarker("sigterm")` synchronously before `emit("daemon_stop")`. `tmp-state-dir.ts` test helper updated to populate `lastShutdownFile` field. No new M001 AC in scope (impl verified via M003 AC-24b/24c). |
 
 ### 3.8 Implementation Notes
 

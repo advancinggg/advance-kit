@@ -37,6 +37,13 @@ export function installShutdownHandlers(args: ShutdownArgs): ShutdownCtl {
       return;
     }
     shuttingDown = true;
+    // REQ-045 — on SIGTERM only, write a marker so the next post-boot session_init classifies
+    // as 'sigterm'. writeShutdownMarker is intentionally NOT on the public StateDir interface;
+    // cast via structural type so test stubs without the method don't crash.
+    if (reason === "SIGTERM") {
+      const sd = args.stateDir as { writeShutdownMarker?: (reason: "sigterm") => void };
+      sd.writeShutdownMarker?.("sigterm");
+    }
     const uptimeMs = Date.now() - args.bootTs;
     args.eventBus.emit("daemon_stop", { pid: process.pid, reason, uptime_ms: uptimeMs });
     // Flush barrier — give subscribers a chance to act before we tear down.

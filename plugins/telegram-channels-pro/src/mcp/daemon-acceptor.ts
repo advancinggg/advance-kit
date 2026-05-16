@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import type { Clock, TimerHandle } from "../daemon/clock";
 import type { EventBus } from "../daemon/event-bus";
+import type { Unsubscribe } from "../daemon/event-types";
 import type { StateDir } from "../daemon/state-dir";
 import {
   encodeFrame,
@@ -12,11 +13,16 @@ import {
 import {
   isSessionInitFrame,
   isToolCallFrame,
+  isWillReconnectFrame,
+  type ChannelNotificationFrame,
   type DisconnectReason,
   type InboundPushFrame,
+  type QuarantineReplyResolvedNotificationFrame,
+  type QuarantineStateChangedFrame,
   type SessionInitFrame,
   type ToolCallFrame,
   type ToolResultFrame,
+  type WillReconnectFrame,
 } from "./frame-types";
 import { SessionMap, type SocketLike } from "./session-map";
 
@@ -35,6 +41,11 @@ export class MCPDaemonAcceptor {
   private server: net.Server | null = null;
   private sessionMap = new SessionMap();
   private toolHandlers = new Map<string, ToolHandler>();
+  // REQ-045 AC-23 — proxy_id → {expiryMs, timer}; entries set on will_reconnect receipt,
+  // consumed on next session_init from same proxy_id within 60s, deleted on expiry.
+  private scriptedReconnectMap = new Map<string, { expiryMs: number; timer: TimerHandle }>();
+  // REQ-045 AC-25/AC-26 — EventBus subscription handles, registered in start(), released in stop().
+  private quarantineSubs: Unsubscribe[] = [];
 
   constructor(cfg: MCPAcceptorConfig) {
     this.cfg = {
@@ -73,17 +84,132 @@ export class MCPDaemonAcceptor {
       process.stderr.write(`mcp-acceptor: chmod 0600 failed for ${socketPath}: ${String(err)}\n`);
     }
     this.server = server;
+    // REQ-045 AC-25/AC-26 — subscribe to quarantine-related M002 events for MCP notification forwarding.
+    this.quarantineSubs.push(
+      this.cfg.eventBus.on("quarantine_replay_resolved", (payload) => this.onQuarantineReplayResolved(payload)),
+      this.cfg.eventBus.on("quarantine_enter", (payload) => this.onQuarantineStateChange("quarantine_enter", payload)),
+      this.cfg.eventBus.on("quarantine_exit", (payload) => this.onQuarantineStateChange("quarantine_exit", payload)),
+    );
   }
 
   async stop(): Promise<void> {
     if (!this.server) return;
     const server = this.server;
     this.server = null;
+    // Unregister EventBus subscriptions.
+    for (const unsub of this.quarantineSubs) unsub();
+    this.quarantineSubs = [];
+    // Clear scriptedReconnectMap timers to prevent leaks.
+    for (const v of this.scriptedReconnectMap.values()) v.timer.cancel();
+    this.scriptedReconnectMap.clear();
     // Disconnect all sessions gracefully.
     for (const entry of Array.from(this.sessionMap.values())) {
       this.closeSession(entry.session_id, "daemon_stop");
     }
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+
+  /**
+   * REQ-033 AC-19/20/28 — deliver a channel notification to a named session.
+   * - Unknown session_id → emit log_emit ERROR (no throw, no socket write).
+   * - Found → encode ChannelNotificationFrame, write to socket, emit channel_notification_emitted event.
+   */
+  async deliverChannelNotification(
+    sessionId: string,
+    payload: { text: string; image_path?: string; attachment_file_id?: string },
+    meta: { chat_id: number; message_id: number; user: string; ts: number },
+  ): Promise<{ ok: true } | { ok: false; error: "unknown_session" | "write_failed" }> {
+    const entry = this.sessionMap.get(sessionId);
+    if (!entry) {
+      this.cfg.eventBus.emit("log_emit", {
+        level: "ERROR",
+        event_type: "unknown_session_in_deliverChannelNotification",
+        fields: {
+          session_id: sessionId,
+          chat_id: meta.chat_id,
+          message_id: meta.message_id,
+        },
+      });
+      return { ok: false, error: "unknown_session" };
+    }
+    const frame: ChannelNotificationFrame = {
+      kind: "channel_notification",
+      text: payload.text,
+      ...(payload.image_path !== undefined ? { image_path: payload.image_path } : {}),
+      ...(payload.attachment_file_id !== undefined ? { attachment_file_id: payload.attachment_file_id } : {}),
+      chat_id: meta.chat_id,
+      message_id: meta.message_id,
+      user: meta.user,
+      ts: meta.ts,
+    };
+    try {
+      const encoded = encodeFrame(frame);
+      await entry.socket.write(encoded);
+      this.cfg.eventBus.emit("channel_notification_emitted", {
+        session_id: sessionId,
+        chat_id: meta.chat_id,
+        message_id: meta.message_id,
+      });
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "write_failed" };
+    }
+  }
+
+  // REQ-045 AC-25 — translate quarantine_replay_resolved EventBus event into a UDS frame
+  // to the originating requester_session's MCP transport. Drop silently if session gone.
+  private onQuarantineReplayResolved(payload: {
+    requester_session: string;
+    message_id?: number;
+    delivered: boolean;
+    queued_at: number;
+    replayed_at: number;
+    error_class?: string;
+  }): void {
+    const entry = this.sessionMap.get(payload.requester_session);
+    if (!entry) return;
+    const frame: QuarantineReplyResolvedNotificationFrame = {
+      kind: "quarantine_reply_resolved",
+      requester_session: payload.requester_session,
+      ...(payload.message_id !== undefined ? { message_id: payload.message_id } : {}),
+      delivered: payload.delivered,
+      queued_at: payload.queued_at,
+      replayed_at: payload.replayed_at,
+      ...(payload.error_class !== undefined ? { error_class: payload.error_class } : {}),
+    };
+    try {
+      const encoded = encodeFrame(frame);
+      void entry.socket.write(encoded);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // REQ-045 AC-26 — translate quarantine_enter/exit EventBus event into UDS frames to
+  // ALL active session sockets (broadcast). eta_hint forwarded verbatim (default 0 if absent).
+  private onQuarantineStateChange(
+    state: "quarantine_enter" | "quarantine_exit",
+    payload: { eta_hint?: number },
+  ): void {
+    const eta_hint = payload.eta_hint ?? 0;
+    const frame: QuarantineStateChangedFrame = {
+      kind: "quarantine_state_changed",
+      state,
+      eta_hint,
+    };
+    let encoded: Uint8Array;
+    try {
+      encoded = encodeFrame(frame);
+    } catch {
+      return;
+    }
+    for (const entry of Array.from(this.sessionMap.values())) {
+      try {
+        void entry.socket.write(encoded);
+      } catch {
+        /* best-effort per-session */
+      }
+    }
   }
 
   private handleConnection(sock: net.Socket): void {
@@ -190,6 +316,11 @@ export class MCPDaemonAcceptor {
         } else {
           if (isToolCallFrame(frame)) {
             void this.dispatchToolCall(sessionId!, frame as ToolCallFrame);
+          } else if (isWillReconnectFrame(frame)) {
+            // REQ-045 AC-23 — claude-side proxy is about to disconnect on /reload-plugins.
+            // Record proxy_id with 60s expiry; next session_init from same proxy_id
+            // within window classifies as 'reload_handshake' (scripted).
+            this.recordWillReconnect((frame as WillReconnectFrame).proxy_id);
           } else if (
             typeof frame === "object" &&
             frame !== null &&
@@ -231,6 +362,36 @@ export class MCPDaemonAcceptor {
 
   private acceptSession(sock: net.Socket, init: SessionInitFrame): string {
     const sessionId = this.sessionMap.allocateSessionId();
+
+    // REQ-045 AC-24/24b/24c — classify reconnect BEFORE emitting session_connected
+    // so subscribers receive classification + connection in the documented order.
+    let classification: "scripted" | "spurious";
+    let reason: "reload_handshake" | "sigterm" | "keepalive" | "spurious";
+    const scripted = init.proxy_id ? this.scriptedReconnectMap.get(init.proxy_id) : undefined;
+    if (scripted && scripted.expiryMs > this.cfg.clock.now()) {
+      classification = "scripted";
+      reason = "reload_handshake";
+      scripted.timer.cancel(); // race-safe — entry is being consumed before expiry fires
+      this.scriptedReconnectMap.delete(init.proxy_id!);
+    } else {
+      const ctx = this.cfg.stateDir.getPostBootShutdownContext();
+      if (ctx === "sigterm") {
+        classification = "scripted";
+        reason = "sigterm";
+      } else if (ctx === "keepalive") {
+        classification = "scripted";
+        reason = "keepalive";
+      } else {
+        classification = "spurious";
+        reason = "spurious";
+      }
+    }
+    this.cfg.eventBus.emit("mcp_reconnect_classified", {
+      session_id: sessionId,
+      classification,
+      reason,
+    });
+
     const socketLike: SocketLike = {
       write: (data) => sock.write(Buffer.from(data)),
       end: () => sock.end(),
@@ -251,6 +412,31 @@ export class MCPDaemonAcceptor {
       ts: this.cfg.clock.now(),
     });
     return sessionId;
+  }
+
+  // REQ-045 AC-23 — record a proxy_id → expiry mapping; auto-delete on timer fire.
+  private recordWillReconnect(proxyId: string): void {
+    // If a prior entry exists, cancel its timer first to avoid orphans.
+    const prior = this.scriptedReconnectMap.get(proxyId);
+    if (prior) prior.timer.cancel();
+    const expiryMs = this.cfg.clock.now() + 60_000;
+    const timer = this.cfg.clock.setTimeout(() => {
+      // Silent expiry; no event emitted.
+      this.scriptedReconnectMap.delete(proxyId);
+    }, 60_000);
+    this.scriptedReconnectMap.set(proxyId, { expiryMs, timer });
+  }
+
+  /** Test-visible: inspect scriptedReconnectMap state. */
+  scriptedReconnectMapSizeForTest(): number {
+    return this.scriptedReconnectMap.size;
+  }
+
+  /** Test-visible: get an entry from scriptedReconnectMap. */
+  scriptedReconnectEntryForTest(proxyId: string): { expiryMs: number } | undefined {
+    const e = this.scriptedReconnectMap.get(proxyId);
+    if (!e) return undefined;
+    return { expiryMs: e.expiryMs };
   }
 
   private async dispatchToolCall(sessionId: string, frame: ToolCallFrame): Promise<void> {

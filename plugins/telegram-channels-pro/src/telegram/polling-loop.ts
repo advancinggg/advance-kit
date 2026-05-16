@@ -117,7 +117,8 @@ export class PollingLoop {
         });
         if (probe.ok && probe.classified.kind === "ok") {
           const recoveredAfterMs = this.cfg.clock.now() - this.quarantineEnteredAt;
-          this.cfg.eventBus.emit("quarantine_exit", { recovered_after_ms: recoveredAfterMs });
+          // REQ-045 AC-32 — quarantine_exit carries eta_hint: 0 (cooldown done).
+          this.cfg.eventBus.emit("quarantine_exit", { recovered_after_ms: recoveredAfterMs, eta_hint: 0 });
           this.cfg.eventBus.emit("alert_emit", { severity: "warn", topic: "quarantine_exit" });
           this.state = "running";
           this.cfg.pollingStatus.setState("running");
@@ -129,6 +130,16 @@ export class PollingLoop {
           if (!probe.ok && probe.classified.kind === "fatal") {
             this.fatalWindow.record(this.cfg.clock.now());
           }
+          // REQ-045 AC-32 — re-emit quarantine_enter with fresh eta_hint on every cooldown restart.
+          // This ensures M003 forwards fresh eta_hint via tgcp/quarantine/state_changed even when
+          // the daemon stays in quarantine across multiple failed probes.
+          this.quarantineEnteredAt = this.cfg.clock.now();
+          this.cfg.eventBus.emit("quarantine_enter", {
+            reason: probe.ok ? "probe_non_ok_restart_cooldown" : "probe_fatal_restart_cooldown",
+            count_in_window: this.fatalWindow.count(),
+            window_ms: this.cfg.fatalWindowMs,
+            eta_hint: Math.ceil(this.cfg.quarantineCooldownMs / 1000),
+          });
         }
         continue;
       }
@@ -171,6 +182,8 @@ export class PollingLoop {
           reason: "fatal_window_threshold",
           count_in_window: this.fatalWindow.count(),
           window_ms: this.cfg.fatalWindowMs,
+          // REQ-045 AC-32 — eta_hint: cooldown_remaining_sec at quarantine entry.
+          eta_hint: Math.ceil(this.cfg.quarantineCooldownMs / 1000),
         });
         this.cfg.eventBus.emit("alert_emit", { severity: "warn", topic: "quarantine_enter" });
         this.backoffIdx = 0;

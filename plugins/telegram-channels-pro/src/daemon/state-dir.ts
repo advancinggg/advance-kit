@@ -13,10 +13,18 @@ export interface StateDirSpec {
   readonly offsetFile: string;
   readonly attachmentDir: string;
   readonly logDir: string;
+  readonly lastShutdownFile: string;
 }
 
 export interface StateDir extends StateDirSpec {
   initialize(): Promise<void>;
+  /**
+   * REQ-045 — one-shot read of the previous-shutdown cause for M003 reconnect classification.
+   * First call: reads lastShutdownFile (deleting on success → 'sigterm'); falls back to
+   * XPC_SERVICE_NAME env-var presence (launchd-spawned → 'keepalive'); else 'none'.
+   * Subsequent calls in the same daemon process return 'none' (cached one-shot).
+   */
+  getPostBootShutdownContext(): "sigterm" | "keepalive" | "none";
 }
 
 const DEFAULT_STATE_SUBPATH = "Library/Application Support/advance-kit/telegram-channels-pro";
@@ -38,6 +46,7 @@ export function resolveStateDir(env: NodeJS.ProcessEnv, homedir: string): StateD
     offsetFile: path.join(root, "offset.json"),
     attachmentDir: path.join(root, "attachments"),
     logDir,
+    lastShutdownFile: path.join(root, "last_shutdown.json"),
   };
 }
 
@@ -50,6 +59,11 @@ export class StateDirImpl implements StateDir {
   readonly offsetFile: string;
   readonly attachmentDir: string;
   readonly logDir: string;
+  readonly lastShutdownFile: string;
+
+  // REQ-045: one-shot post-boot shutdown-context cache. Null until first getPostBootShutdownContext()
+  // call resolves; thereafter holds the resolved value. After first read, subsequent calls return 'none'.
+  private shutdownContextResolved: "sigterm" | "keepalive" | "none" | null = null;
 
   constructor(spec: StateDirSpec, private eventBus: EventBus) {
     this.root = spec.root;
@@ -60,6 +74,51 @@ export class StateDirImpl implements StateDir {
     this.offsetFile = spec.offsetFile;
     this.attachmentDir = spec.attachmentDir;
     this.logDir = spec.logDir;
+    this.lastShutdownFile = spec.lastShutdownFile;
+  }
+
+  getPostBootShutdownContext(): "sigterm" | "keepalive" | "none" {
+    if (this.shutdownContextResolved !== null) {
+      // One-shot consumed: subsequent calls in the same daemon process return 'none'.
+      return "none";
+    }
+    let result: "sigterm" | "keepalive" | "none";
+    try {
+      // Check for last_shutdown.json marker (SIGTERM-written by shutdown.ts).
+      const _content = fs.readFileSync(this.lastShutdownFile, "utf8");
+      // Best-effort parse (don't fail if content is malformed — just trust the file's presence).
+      try { JSON.parse(_content); } catch { /* ignore */ }
+      try { fs.unlinkSync(this.lastShutdownFile); } catch { /* best-effort */ }
+      result = "sigterm";
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        // Unexpected error (perm denied, etc.) → treat as 'none' to avoid blocking boot.
+        result = "none";
+      } else if (process.env.XPC_SERVICE_NAME) {
+        // No SIGTERM marker + launchd-spawned process (XPC_SERVICE_NAME set by launchd) → KeepAlive restart.
+        result = "keepalive";
+      } else {
+        result = "none";
+      }
+    }
+    this.shutdownContextResolved = result;
+    return result;
+  }
+
+  /**
+   * Internal — invoked by shutdown.ts SIGTERM handler ONLY. Not part of the public StateDir
+   * interface (keeps the surface minimal; prevents downstream forgery of post-boot context).
+   */
+  writeShutdownMarker(reason: "sigterm"): void {
+    try {
+      fs.writeFileSync(
+        this.lastShutdownFile,
+        JSON.stringify({ reason, ts: Date.now(), daemon_pid: process.pid }),
+      );
+    } catch {
+      // Best-effort: if write fails, next reconnect classifies 'spurious' (true positive of unexpected death).
+    }
   }
 
   async initialize(): Promise<void> {

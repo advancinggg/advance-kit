@@ -13,11 +13,13 @@ const LEVEL_BY_TYPE: Record<EventTypeKey, "DEBUG" | "INFO" | "WARN" | "ERROR"> =
   inbound_update: "DEBUG",
   quarantine_enter: "WARN",
   quarantine_exit: "INFO",
+  quarantine_replay_resolved: "INFO",
   polling_health: "DEBUG",
   polling_event: "WARN",
   polling_status_snapshot: "DEBUG",
   session_connected: "INFO",
   session_disconnected: "INFO",
+  mcp_reconnect_classified: "INFO",
   frame_invalid: "WARN",
   tool_call: "DEBUG",
   tool_result: "DEBUG",
@@ -36,6 +38,7 @@ const LEVEL_BY_TYPE: Record<EventTypeKey, "DEBUG" | "INFO" | "WARN" | "ERROR"> =
   subscriber_queue_drop: "WARN",
   log_emit: "INFO",
   alert_emit: "INFO",
+  channel_notification_emitted: "DEBUG",
 };
 
 // Event types fed to the AlertDispatcher.

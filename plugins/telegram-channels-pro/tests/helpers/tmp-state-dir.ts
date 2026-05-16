@@ -27,6 +27,7 @@ export function makeTmpStateDir(eventBus?: EventBus): TmpStateDir {
     offsetFile: path.join(root, "offset.json"),
     attachmentDir: path.join(root, "attachments"),
     logDir,
+    lastShutdownFile: path.join(root, "last_shutdown.json"),
   };
   const bus = eventBus ?? new EventBus();
   const stateDir = new StateDirImpl(spec, bus);

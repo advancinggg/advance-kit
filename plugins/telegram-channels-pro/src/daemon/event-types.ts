@@ -2,11 +2,13 @@ export type EventTypeKey =
   | "inbound_update"
   | "quarantine_enter"
   | "quarantine_exit"
+  | "quarantine_replay_resolved"
   | "polling_health"
   | "polling_event"
   | "polling_status_snapshot"
   | "session_connected"
   | "session_disconnected"
+  | "mcp_reconnect_classified"
   | "frame_invalid"
   | "tool_call"
   | "tool_result"
@@ -24,7 +26,8 @@ export type EventTypeKey =
   | "cli_command"
   | "subscriber_queue_drop"
   | "log_emit"
-  | "alert_emit";
+  | "alert_emit"
+  | "channel_notification_emitted";
 
 export type DeploymentMode = "launchd" | "lazy-spawn";
 
@@ -47,8 +50,22 @@ export type RegistrationEventKind =
 
 export interface EventPayloadMap {
   inbound_update: { update_id: number; type: "message" | "callback_query"; payload: unknown };
-  quarantine_enter: { reason: string; count_in_window: number; window_ms: number };
-  quarantine_exit: { recovered_after_ms: number };
+  quarantine_enter: { reason: string; count_in_window: number; window_ms: number; eta_hint?: number };
+  quarantine_exit: { recovered_after_ms: number; eta_hint?: number };
+  quarantine_replay_resolved: {
+    requester_session: string;
+    message_id?: number;
+    delivered: boolean;
+    queued_at: number;
+    replayed_at: number;
+    error_class?: string;
+  };
+  mcp_reconnect_classified: {
+    session_id: string;
+    classification: "scripted" | "spurious";
+    reason: "reload_handshake" | "sigterm" | "keepalive" | "spurious";
+  };
+  channel_notification_emitted: { session_id: string; chat_id: number; message_id: number };
   polling_health: { ts: number; state: PollingState };
   polling_event: { kind: "conflict_409" | "rate_limited_429" | "transient_error"; detail?: unknown };
   polling_status_snapshot: {
@@ -84,11 +101,13 @@ export const ALL_EVENT_TYPES: EventTypeKey[] = [
   "inbound_update",
   "quarantine_enter",
   "quarantine_exit",
+  "quarantine_replay_resolved",
   "polling_health",
   "polling_event",
   "polling_status_snapshot",
   "session_connected",
   "session_disconnected",
+  "mcp_reconnect_classified",
   "frame_invalid",
   "tool_call",
   "tool_result",
@@ -107,6 +126,7 @@ export const ALL_EVENT_TYPES: EventTypeKey[] = [
   "subscriber_queue_drop",
   "log_emit",
   "alert_emit",
+  "channel_notification_emitted",
 ];
 
 export type Unsubscribe = () => void;
