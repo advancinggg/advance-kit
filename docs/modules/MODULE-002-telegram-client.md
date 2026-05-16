@@ -778,13 +778,9 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 60% (21 passed / 35 active) | 2026-05-16 |
+| In Progress | 62% (22 passed / 35 active) | 2026-05-16 |
 
-Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 21/35 ≈ 60%. v1.1.0 amendment dropped apparent progress from pre-amendment 90% (19 passed + 2 untested = 21/21 ≈ 90%) by adding 14 new ACs all marked untested per /spec stability rules.
-
-| Status | Progress | Last Updated |
-|--------|----------|--------------|
-| In Progress | 90% | 2026-05-14 |
+Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 22/35 ≈ 62%. /dev channel-protocol slice (REQ-033/037/045) verified 3 v1.1.0 ACs in 2026-05-16: AC-31 (quarantine_replay_resolved payload schema), AC-32 (eta_hint on quarantine_enter/exit + probe-fail re-emit), AC-33 (sendChatAction fire-and-forget wrapper). Earlier v1.1.0 amendment baseline was 60% (21 passed / 35 active) after 14 new ACs landed as untested per /spec stability rules; pre-amendment progress was 90% (19 passed + 2 untested = 21/21 active).
 
 ### 3.2 File Structure
 
@@ -879,9 +875,9 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-002-AC-28 | Y | untested | — | — |
 | MODULE-002-AC-29 | Y | untested | — | — |
 | MODULE-002-AC-30 | Y | untested | — | — |
-| MODULE-002-AC-31 | Y | untested | — | — |
-| MODULE-002-AC-32 | Y | untested | — | — |
-| MODULE-002-AC-33 | Y | untested | — | — |
+| MODULE-002-AC-31 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-002-AC-32 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-002-AC-33 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-002-AC-34 | Y | untested | — | — |
 | MODULE-002-AC-35 | Y | untested | — | — |
 

@@ -663,7 +663,9 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 59% (17 passed / 29 active; v1.1.0 adds AC-18..AC-29) | 2026-05-16 |
+| In Progress | 90% (28 passed / 31 active) | 2026-05-16 |
+
+Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 28/31 ≈ 90%. /dev channel-protocol slice (REQ-033/037/045) verified 11 v1.1.0 ACs in 2026-05-16: AC-18 (channel capability shape `{}`), AC-19 (deliverChannelNotification), AC-20 (unknown-session error path), AC-21 (3-pillar instructions), AC-23 (will_reconnect handshake), AC-24/24b/24c (reconnect classification spurious/sigterm/keepalive), AC-25 (quarantine_replay_resolved MCP forwarding), AC-26 (quarantine state_changed broadcast), AC-28 (channel_notification_emitted event). Remaining 3 untested ACs: AC-22 (shortid daemon-authoritative — REQ-041), AC-27 (wait-for-reset disconnect carrier — REQ-047), AC-29 (A/B parity harness — v0.2 release gate).
 
 ### 3.2 File Structure
 
@@ -735,19 +737,19 @@ sequenceDiagram
 | MODULE-003-AC-15 | Y | passed | dev-tgcp-proxy-client-step2 | 2026-05-15 |
 | MODULE-003-AC-16 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-003-AC-17 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-003-AC-18 | Y | untested | — | — |
-| MODULE-003-AC-19 | Y | untested | — | — |
-| MODULE-003-AC-20 | Y | untested | — | — |
-| MODULE-003-AC-21 | Y | untested | — | — |
+| MODULE-003-AC-18 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-19 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-20 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-21 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-22 | Y | untested | — | — |
-| MODULE-003-AC-23 | Y | untested | — | — |
-| MODULE-003-AC-24 | Y | untested | — | — |
-| MODULE-003-AC-24b | Y | untested | — | — |
-| MODULE-003-AC-24c | Y | untested | — | — |
-| MODULE-003-AC-25 | Y | untested | — | — |
-| MODULE-003-AC-26 | Y | untested | — | — |
+| MODULE-003-AC-23 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-24 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-24b | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-24c | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-25 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
+| MODULE-003-AC-26 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-27 | Y | untested | — | — |
-| MODULE-003-AC-28 | Y | untested | — | — |
+| MODULE-003-AC-28 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-29 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record
