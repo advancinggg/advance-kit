@@ -63,7 +63,14 @@ describe("MODULE-003-AC-14: claude-side proxy uses MCP SDK; registers 5 tool han
     const evts = collector.byType("session_connected");
     expect(evts.length).toBe(1);
     const payload = evts[0]!.payload as { session_id: string; shortid: string; branch?: string };
-    expect(payload.shortid).toBe("abcd1234");
+    // REQ-041 — daemon is the sole shortid authority; the proxy-supplied
+    // "abcd1234" is overwritten. The daemon-assigned shortid is 12-char hex
+    // AND must match what the proxy stored via session_init_ack.
+    expect(payload.shortid).toMatch(/^[0-9a-f]{12}$/);
+    // ctx.shortid is `string | null`; the ACK round-trip must have populated
+    // it with the daemon-assigned value before buildProxyClient resolved.
+    expect(ctx.shortid).not.toBeNull();
+    expect(payload.shortid).toBe(ctx.shortid as string);
     expect(payload.branch).toBe("main");
 
     // Verify the 5 tool handlers are registered on the SDK Server (call ListTools internally)
@@ -126,9 +133,15 @@ describe("MODULE-003-AC-15: /reload-plugins → proxy restart → daemon emits s
 
     // Daemon-assigned session_id MUST differ between connects
     expect(secondSessionId).not.toBe(firstSessionId);
-    // Verify shortid difference too
-    expect((collector.byType("session_connected")[0]!.payload as { shortid: string }).shortid).toBe("session1");
-    expect((collector.byType("session_connected")[1]!.payload as { shortid: string }).shortid).toBe("session2");
+    // REQ-041 — daemon-authoritative shortids are 12-char hex AND must be
+    // distinct across the two concurrent sessions (the original literal
+    // assertions on "session1"/"session2" became invalid once the daemon
+    // started overwriting proxy-supplied shortids).
+    const firstShortid = (collector.byType("session_connected")[0]!.payload as { shortid: string }).shortid;
+    const secondShortid = (collector.byType("session_connected")[1]!.payload as { shortid: string }).shortid;
+    expect(firstShortid).toMatch(/^[0-9a-f]{12}$/);
+    expect(secondShortid).toMatch(/^[0-9a-f]{12}$/);
+    expect(firstShortid).not.toBe(secondShortid);
   });
 });
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { realClock } from "../../src/daemon/clock";
-import { encodeFrame, MAX_FRAME_BYTES } from "../../src/mcp/frame";
+import { encodeFrame, FrameDecoder, MAX_FRAME_BYTES } from "../../src/mcp/frame";
 import { MCPDaemonAcceptor } from "../../src/mcp/daemon-acceptor";
 import { makeTmpStateDir } from "../helpers/tmp-state-dir";
 import { EventCollector } from "../helpers/event-collector";
@@ -77,7 +77,10 @@ describe("MODULE-003-AC-03: session_connected on session_init frame", () => {
     const evt = collector.byType("session_connected")[0]!;
     const p = evt.payload as { session_id: string; shortid: string };
     expect(p.session_id).toMatch(/^[0-9a-f]{16}$/);
-    expect(p.shortid).toBe("abc1234");
+    // REQ-041 — daemon is the sole shortid authority; the proxy-supplied
+    // "abc1234" is overwritten before session_connected is emitted. The
+    // daemon-assigned shortid is 12-char hex.
+    expect(p.shortid).toMatch(/^[0-9a-f]{12}$/);
     sock.destroy();
     collector.stop();
   });
@@ -169,15 +172,17 @@ describe("MODULE-003-AC-09/AC-10: deliverToSession", () => {
       sock.once("connect", () => res());
       sock.once("error", rej);
     });
-    let received: unknown = null;
+    // REQ-041 — daemon writes session_init_ack BEFORE any other outbound
+    // frame, so multiple frames may arrive concatenated. Use a FrameDecoder
+    // to parse them robustly and capture the inbound_push frame by kind.
+    const decoder = new FrameDecoder(1_048_576);
+    let inboundPushFrame: unknown = null;
     sock.on("data", (chunk: Buffer) => {
-      if (chunk.byteLength < 4) return;
-      const len = chunk.readUInt32BE(0);
-      const body = chunk.subarray(4, 4 + len).toString("utf8");
-      try {
-        received = JSON.parse(body);
-      } catch {
-        /* ignore */
+      const r = decoder.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      for (const frame of r.frames) {
+        if ((frame as { kind?: string }).kind === "inbound_push") {
+          inboundPushFrame = frame;
+        }
       }
     });
     sock.write(Buffer.from(encodeFrame({ kind: "session_init", shortid: "s1" })));
@@ -189,8 +194,8 @@ describe("MODULE-003-AC-09/AC-10: deliverToSession", () => {
       payload: { hello: "world" },
     });
     expect(result.ok).toBe(true);
-    await waitFor(() => received !== null, 1000);
-    expect((received as { kind: string }).kind).toBe("inbound_push");
+    await waitFor(() => inboundPushFrame !== null, 1000);
+    expect((inboundPushFrame as { kind: string }).kind).toBe("inbound_push");
     sock.destroy();
     collector.stop();
   });

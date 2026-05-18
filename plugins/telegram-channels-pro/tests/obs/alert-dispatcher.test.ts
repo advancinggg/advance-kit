@@ -36,6 +36,9 @@ function makeStubTgClient(): { client: TelegramAPIClient; sentMessages: Array<{ 
     async getUpdates() {
       return { ok: true, result: [], classified: { kind: "ok" } };
     },
+    async getChat() {
+      return { ok: false, error: "stub" };
+    },
   };
   return { client, sentMessages: sent };
 }
@@ -160,6 +163,9 @@ describe("MODULE-008-AC-19: alert delivery failure logged", () => {
       },
       async getUpdates() {
         return { ok: true, result: [], classified: { kind: "ok" } };
+      },
+      async getChat() {
+        return { ok: false, error: "stub" };
       },
     };
     dispatcher.setTgClient(failingClient, 999);

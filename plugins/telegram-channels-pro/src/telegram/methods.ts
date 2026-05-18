@@ -60,6 +60,17 @@ export interface TelegramUpdate {
   [key: string]: unknown;
 }
 
+// REQ-035 — getChat result (only the two fields ChatTypeCache consumes).
+export interface GetChatResult {
+  id: number;
+  type: "private" | "group" | "supergroup" | "channel";
+}
+
+// REQ-035 — getChat envelope (discriminated union; mirrors getFile's impl shape).
+export type GetChatEnvelope =
+  | { ok: true; result: GetChatResult }
+  | { ok: false; error: string };
+
 export function buildMethodUrl(apiBase: string, token: string, method: string): string {
   // Telegram API path: /bot<token>/<method>
   return `${apiBase.replace(/\/+$/, "")}/bot${token}/${method}`;

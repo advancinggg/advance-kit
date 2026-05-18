@@ -38,6 +38,7 @@ import type {
   QuarantineReplyResolvedNotificationFrame,
   QuarantineStateChangedFrame,
 } from "./frame-types";
+import { isSessionInitAckFrame } from "./frame-types";
 
 // REQ-045 — stable proxy identifier derived from CLAUDE_PROJECT_PATH. Survives
 // /reload-plugins because claude-code does not restart its session on plugin reload.
@@ -258,12 +259,24 @@ export interface ProxyClientConfig {
   }) => Server;
   // Test seam: opt-out of the real SIGTERM handler (for tests that drive shutdown manually).
   installSigtermHandler?: boolean;
+  // REQ-041 — overrides the 2s fallback timeout for `session_init_ack`. Tests
+  // exercising the timeout / late-ACK paths set this to a small value
+  // (e.g. 50ms) so the suite doesn't wait the full 2s wall-clock. Production
+  // never sets this; the 2s default applies.
+  ackTimeoutMs?: number;
 }
 
 export interface ProxyClientCtx {
   server: Server;
   socket: net.Socket;
   sessionId: string | null;
+  /**
+   * Daemon-assigned shortid (REQ-041 — populated when the daemon's
+   * `session_init_ack` frame arrives; remains `null` if the 2s timeout
+   * fallback fires before any ACK is received). A late ACK after
+   * timeout still mutates this field on the same ctx reference.
+   */
+  shortid: string | null;
   pendingRequests: Map<string, { resolve: (r: ToolResultFrame) => void; reject: (e: Error) => void }>;
   setOnDaemonDisconnect: (cb: () => void) => void;
   dispose: () => Promise<void>;
@@ -309,6 +322,14 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
   const decoder = new FrameDecoder(1_048_576);
   const pendingRequests = new Map<string, { resolve: (r: ToolResultFrame) => void; reject: (e: Error) => void }>();
   let sessionId: string | null = null;
+  // REQ-041 — daemon-assigned shortid populated by the session_init_ack handler
+  // below. `returnedCtx` is null until the function builds the ctx object at
+  // the end; once non-null, late ACKs (after the 2s timeout fallback fires)
+  // continue to mutate `returnedCtx.shortid` so the caller's reference stays
+  // in sync.
+  let assignedShortid: string | null = null;
+  let returnedCtx: ProxyClientCtx | null = null;
+  let onAckArrived: (() => void) | null = null;
 
   sock.on("data", (chunk: Buffer) => {
     const result = decoder.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
@@ -359,6 +380,20 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
   };
 
   function handleFrame(frame: { kind?: string }): void {
+    // REQ-041 — daemon-assigned shortid arrives via session_init_ack BEFORE
+    // session_connected. Store on assignedShortid (and on returnedCtx if the
+    // ctx has been built — supports late ACK after the 2s timeout fired) and
+    // signal the build-time waiter so buildProxyClient can resolve.
+    if (isSessionInitAckFrame(frame)) {
+      assignedShortid = frame.shortid;
+      if (returnedCtx) returnedCtx.shortid = frame.shortid;
+      if (onAckArrived) {
+        const fn = onAckArrived;
+        onAckArrived = null;
+        fn();
+      }
+      return;
+    }
     if (frame.kind === "tool_result") {
       const tr = frame as ToolResultFrame;
       const pending = pendingRequests.get(tr.request_id);
@@ -426,6 +461,34 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
   };
   sock.write(Buffer.from(encodeFrame(initFrame)));
   sessionId = shortid; // proxy-side label; the daemon assigns its own session_id internally
+
+  // REQ-041 — wait for the daemon's session_init_ack (or fall back to a 2s
+  // timeout). The ACK handler in handleFrame above sets `assignedShortid` and
+  // signals via `onAckArrived`. A late ACK after the timeout still mutates
+  // `returnedCtx.shortid` on the same ctx reference the caller holds.
+  await new Promise<void>((resolve) => {
+    if (assignedShortid !== null) {
+      // ACK already arrived (race between data event and this await).
+      resolve();
+      return;
+    }
+    let resolved = false;
+    const ackTimeoutMs = cfg.ackTimeoutMs ?? 2000;
+    const fallback = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      process.stderr.write(
+        `proxy-client: session_init_ack not received within ${ackTimeoutMs}ms; shortid stays null until late ACK arrives\n`,
+      );
+      resolve();
+    }, ackTimeoutMs);
+    onAckArrived = (): void => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(fallback);
+      resolve();
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const toolName = req.params.name;
@@ -522,16 +585,18 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
     onDaemonDisconnect = cb;
   };
 
-  return {
+  returnedCtx = {
     server,
     socket: sock,
     sessionId,
+    shortid: assignedShortid,
     pendingRequests,
     setOnDaemonDisconnect,
     dispose,
     // REQ-045 — exposed for main() to await before exiting, avoiding double-SIGTERM race.
     triggerWillReconnect,
   };
+  return returnedCtx;
 }
 
 /**

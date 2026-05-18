@@ -2,10 +2,22 @@ export interface SessionInitFrame {
   kind: "session_init";
   project_path?: string;
   branch?: string;
+  // v1.1.0 — daemon overwrites this with its own assigned value (REQ-041);
+  // proxy still sends a placeholder for wire-schema stability. Authoritative
+  // value comes back via SessionInitAckFrame below.
   shortid: string;
   // v1.1.0 additive — sha256(CLAUDE_PROJECT_PATH).slice(0,16); used by daemon for
   // REQ-045 reconnect classification (matches against scriptedReconnectMap).
   proxy_id?: string;
+}
+
+// v1.1.0 — REQ-041 daemon→proxy shortid ACK. Daemon assigns the
+// authoritative shortid during session_init processing and writes this
+// frame BEFORE emitting session_connected. Proxy stores it on ctx for
+// /list / /session display.
+export interface SessionInitAckFrame {
+  kind: "session_init_ack";
+  shortid: string;
 }
 
 // v1.1.0 — REQ-033 channel notification frame (daemon → proxy → MCP notification).
@@ -68,13 +80,17 @@ export interface InboundPushFrame {
 
 export type DisconnectReason = "capacity_exceeded" | "session_terminated" | "daemon_stop" | "admin_rejected";
 
+// v1.1.0 — reason widened to accept the discrete enum OR a free-form
+// string (REQ-047 wait-for-reset hint). closeSession truncates to 256
+// chars (defense-in-depth, same cap pattern as will_reconnect.proxy_id).
 export interface DisconnectFarewellFrame {
   kind: "disconnect_farewell";
-  reason: DisconnectReason;
+  reason: DisconnectReason | string;
 }
 
 export type AnyFrame =
   | SessionInitFrame
+  | SessionInitAckFrame
   | ToolCallFrame
   | ToolResultFrame
   | InboundPushFrame
@@ -83,6 +99,15 @@ export type AnyFrame =
   | WillReconnectFrame
   | QuarantineReplyResolvedNotificationFrame
   | QuarantineStateChangedFrame;
+
+export function isSessionInitAckFrame(x: unknown): x is SessionInitAckFrame {
+  return (
+    typeof x === "object" &&
+    x !== null &&
+    (x as { kind?: unknown }).kind === "session_init_ack" &&
+    typeof (x as { shortid?: unknown }).shortid === "string"
+  );
+}
 
 export function isChannelNotificationFrame(x: unknown): x is ChannelNotificationFrame {
   return (

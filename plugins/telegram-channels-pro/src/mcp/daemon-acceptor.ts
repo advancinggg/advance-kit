@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import type { Clock, TimerHandle } from "../daemon/clock";
@@ -392,14 +393,28 @@ export class MCPDaemonAcceptor {
       reason,
     });
 
+    // REQ-041 — daemon is the sole shortid authority. Allocate a 12-char hex
+    // shortid unique within the active session set; the proxy-supplied
+    // init.shortid is a placeholder and is overwritten here. Write the
+    // session_init_ack frame to the socket BEFORE emitting session_connected
+    // so the proxy can resolve buildProxyClient with the authoritative value
+    // before any downstream observer sees the session.
+    const assignedShortid = this.assignUniqueShortid();
+
     const socketLike: SocketLike = {
       write: (data) => sock.write(Buffer.from(data)),
       end: () => sock.end(),
       destroy: () => sock.destroy(),
     };
+    try {
+      sock.write(Buffer.from(encodeFrame({ kind: "session_init_ack", shortid: assignedShortid })));
+    } catch {
+      /* ignore write errors — proxy may have already disconnected; session_connected
+         emission still proceeds (sessionMap update happens regardless). */
+    }
     this.sessionMap.add({
       session_id: sessionId,
-      shortid: init.shortid,
+      shortid: assignedShortid,
       branch: init.branch,
       socket: socketLike,
       pending: new Map(),
@@ -407,11 +422,37 @@ export class MCPDaemonAcceptor {
     });
     this.cfg.eventBus.emit("session_connected", {
       session_id: sessionId,
-      shortid: init.shortid,
+      shortid: assignedShortid,
       branch: init.branch,
       ts: this.cfg.clock.now(),
     });
     return sessionId;
+  }
+
+  // REQ-041 — daemon-internal shortid allocator. NOT on the public CONTRACT-006
+  // MCPTransport surface (relocated from the v1.1.0 public-interface
+  // declaration to a private helper — see MODULE-003 §3.8). 12-char hex via
+  // crypto.randomBytes(6); regenerated on collision with any shortid currently
+  // present in the active session set. Released implicitly when the session-
+  // map entry is removed on disconnect.
+  private assignUniqueShortid(): string {
+    // Bounded by the active session set size (max 8 per REQ-022), so a
+    // 12-char hex collision is astronomically unlikely; the loop is a
+    // correctness guarantee, not a performance concern.
+    // Cap iterations at a large constant to avoid an infinite loop on a
+    // misbehaving RNG mock; in practice this never triggers.
+    for (let i = 0; i < 1024; i++) {
+      const candidate = randomBytes(6).toString("hex");
+      let inUse = false;
+      for (const entry of this.sessionMap.values()) {
+        if (entry.shortid === candidate) {
+          inUse = true;
+          break;
+        }
+      }
+      if (!inUse) return candidate;
+    }
+    throw new Error("assignUniqueShortid: exhausted collision-regen attempts (suspect RNG)");
   }
 
   // REQ-045 AC-23 — record a proxy_id → expiry mapping; auto-delete on timer fire.
@@ -497,24 +538,26 @@ export class MCPDaemonAcceptor {
     }
   }
 
-  async disconnectSession(sessionId: string, reason: DisconnectReason): Promise<void> {
+  // v1.1.0 — reason widened to accept the discrete DisconnectReason enum OR a
+  // free-form string (REQ-047 wait-for-reset hint). Strict superset; all
+  // existing enum callers still type-check.
+  async disconnectSession(sessionId: string, reason: DisconnectReason | string): Promise<void> {
     this.closeSession(sessionId, reason);
   }
 
   private closeSession(sessionId: string, reason: DisconnectReason | string): void {
     const entry = this.sessionMap.get(sessionId);
     if (!entry) return;
-    const isKnownReason: DisconnectReason | null =
-      reason === "capacity_exceeded" || reason === "session_terminated" || reason === "daemon_stop" || reason === "admin_rejected"
-        ? (reason as DisconnectReason)
-        : null;
-    if (isKnownReason) {
-      try {
-        const farewell = encodeFrame({ kind: "disconnect_farewell", reason: isKnownReason });
-        void entry.socket.write(farewell);
-      } catch {
-        /* ignore — proceed to close */
-      }
+    // v1.1.0 (REQ-047) — write the farewell frame for ANY reason value. The
+    // prior `isKnownReason` allowlist gate silently dropped free-form reasons
+    // (a latent bug) and has been removed. Truncate to 256 chars as defense-
+    // in-depth, same cap pattern as will_reconnect.proxy_id.
+    const safeReason = String(reason).slice(0, 256);
+    try {
+      const farewell = encodeFrame({ kind: "disconnect_farewell", reason: safeReason });
+      void entry.socket.write(farewell);
+    } catch {
+      /* ignore — proceed to close */
     }
     try {
       entry.socket.end();

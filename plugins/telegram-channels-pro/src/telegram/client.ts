@@ -4,6 +4,8 @@ import type {
   AnswerCallbackQueryReq,
   ChatAction,
   EditMessageTextReq,
+  GetChatEnvelope,
+  GetChatResult,
   GetFileResult,
   GetUpdatesOpts,
   SendMessageReq,
@@ -21,7 +23,15 @@ export interface TelegramAPIClient {
   getFile(file_id: string): Promise<{ ok: true; result: GetFileResult } | { ok: false; error: string }>;
   sendChatAction(chat_id: number | string, action: ChatAction): Promise<{ ok: true } | { ok: false; error: string }>;
   getUpdates(opts: GetUpdatesOpts): Promise<{ ok: true; result: TelegramUpdate[]; classified: ClassifiedError } | { ok: false; classified: ClassifiedError }>;
+  // v1.1.0 — REQ-035 cold-start lazy-fetch for ChatTypeCache. Returns the
+  // {ok,...} envelope convention (same as getFile / answerCallbackQuery impl).
+  getChat(chat_id: number): Promise<GetChatEnvelope>;
 }
+
+// REQ-022 AC-34 — third independent capacity edge (alongside the
+// SessionRegistry 8-cap and PendingApprovalRegistry 50-cap). Default
+// capacity for OutboundReplayQueue (src/telegram/outbound-replay-queue.ts).
+export const QUARANTINE_QUEUE_CAP = 50;
 
 export type SendMessageEnvelope =
   | { delivered: true; message_id: number; result: SendMessageResult }
@@ -168,6 +178,27 @@ export class TelegramAPIClientImpl implements TelegramAPIClient {
     } catch (err) {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
+  }
+
+  async getChat(chat_id: number): Promise<GetChatEnvelope> {
+    let res;
+    try {
+      res = await this.post("getChat", { chat_id });
+    } catch {
+      return { ok: false, error: "fetch_failed" };
+    }
+    const c = classifyHttpResponse(res.status, res.headers, res.body);
+    if (c.kind === "ok") {
+      const body = res.body as { ok?: boolean; result?: GetChatResult; description?: string } | null;
+      // HTTP 2xx but Telegram-reported logical error (e.g. chat not found).
+      if (body && body.ok === false) {
+        return { ok: false, error: body.description ?? "unknown" };
+      }
+      const result = body?.result;
+      if (!result) return { ok: false, error: "ok_but_no_result" };
+      return { ok: true, result: { id: result.id, type: result.type } };
+    }
+    return { ok: false, error: c.kind === "fatal" ? c.reason : c.kind };
   }
 
   async getUpdates(opts: GetUpdatesOpts): Promise<{ ok: true; result: TelegramUpdate[]; classified: ClassifiedError } | { ok: false; classified: ClassifiedError }> {

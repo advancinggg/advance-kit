@@ -27,7 +27,8 @@ export type EventTypeKey =
   | "subscriber_queue_drop"
   | "log_emit"
   | "alert_emit"
-  | "channel_notification_emitted";
+  | "channel_notification_emitted"
+  | "chat_type_lookup";
 
 export type DeploymentMode = "launchd" | "lazy-spawn";
 
@@ -66,6 +67,12 @@ export interface EventPayloadMap {
     reason: "reload_handshake" | "sigterm" | "keepalive" | "spurious";
   };
   channel_notification_emitted: { session_id: string; chat_id: number; message_id: number };
+  chat_type_lookup: {
+    chat_id: number;
+    type?: "private" | "group" | "supergroup" | "channel";
+    source: "cache" | "lazy_fetch_getChat";
+    failed?: boolean;
+  };
   polling_health: { ts: number; state: PollingState };
   polling_event: { kind: "conflict_409" | "rate_limited_429" | "transient_error"; detail?: unknown };
   polling_status_snapshot: {
@@ -127,6 +134,7 @@ export const ALL_EVENT_TYPES: EventTypeKey[] = [
   "log_emit",
   "alert_emit",
   "channel_notification_emitted",
+  "chat_type_lookup",
 ];
 
 export type Unsubscribe = () => void;

@@ -214,9 +214,18 @@ Daemon stores the shortid + branch; `project_path` is logged once for debugging 
   "payload": { ...Telegram update object... }
 }
 // disconnect_farewell (daemon → claude, before disconnectSession close)
+// reason: DisconnectReason | string (free-form). The discrete enum names
+// structured causes; a free-form string carries REQ-047's wait-for-reset
+// hint. closeSession truncates reason to 256 chars before writing.
 {
   "kind": "disconnect_farewell",
-  "reason": "capacity_exceeded" | "session_terminated" | "daemon_stop"
+  "reason": "<DisconnectReason enum value> | <free-form string, ≤256 chars>"
+}
+// session_init_ack (daemon → proxy, REQ-041 — daemon-assigned shortid,
+// written BEFORE session_connected is emitted)
+{
+  "kind": "session_init_ack",
+  "shortid": "<12-char hex, daemon-authoritative>"
 }
 ```
 
@@ -230,7 +239,13 @@ Daemon stores the shortid + branch; `project_path` is logged once for debugging 
 
 **disconnectSession(session_id, reason)**:
 1. Look up connection.
-2. Write `disconnect_farewell` frame.
+2. Write `disconnect_farewell` frame. `reason` accepts the discrete
+   `DisconnectReason` enum OR a free-form string (REQ-047 wait-for-reset
+   hint). `closeSession` truncates `reason` to 256 chars
+   (`String(reason).slice(0, 256)`) before encoding the frame, and writes
+   the frame for ANY reason value (no enum-allowlist gating — a prior
+   `isKnownReason` predicate that silently dropped free-form reasons was
+   removed in v1.1.0).
 3. Call `socket.end()`; on close, emit `session_disconnected` with reason.
 4. Clean up in-flight tool calls (resolve any pending `request_approval` for this session with a special "session_terminated" error so M004 can edit the corresponding TG button per CONTRACT-011 cleanupBySession).
 
@@ -276,7 +291,7 @@ connection is established with a fresh session_id; `session_connected` re-emitte
 | MODULE-003-AC-24c | REQ-045 | CONTRACT-001 ext | Reconnect after launchd KeepAlive auto-restart → emits `mcp_reconnect_classified` with reason='keepalive'; excluded from SLO. **Detection mechanism**: M001 boot phase inspects (a) presence of `XPC_SERVICE_NAME` env var (set by launchd-spawned processes) AND (b) absence of `last_shutdown.json` (KeepAlive restart is involuntary — no SIGTERM handler ran). When both conditions hold AND daemon is in launchd deployment mode (CONTRACT-002 → 'launchd'), M001's post-boot shutdown-context is 'keepalive'. The first session-init after boot reads this via the same CONTRACT-001 ext method as AC-24b. | unit test |
 | MODULE-003-AC-25 | REQ-037 + Decision A18 | CONTRACT-003 + CONTRACT-006 | M003 subscribes to M002's `quarantine_replay_resolved` events; per event, emits `tgcp/quarantine/reply_resolved` JSON-RPC notification to the named requester_session via existing MCP transport | unit test |
 | MODULE-003-AC-26 | REQ-045 + Decision A18 | CONTRACT-003 + CONTRACT-006 | M003 subscribes to M002's `quarantine_enter` + `quarantine_exit` events; per event, emits `tgcp/quarantine/state_changed` JSON-RPC notification to ALL active sessions with `{state, eta_hint}` payload. **eta_hint source**: read directly from M002 event payload field `eta_hint` (M002 §1.4.1 pseudocode + AC-32 guarantee both enter and exit carry this field). M003 does NOT compute or recalculate; it forwards verbatim | unit test |
-| MODULE-003-AC-27 | REQ-047 | CONTRACT-006 | When M005 calls `disconnectSession(id, "registration timed out; run reset-admin to retry")` on the `session_connected` event during M006 wait-for-reset state, M003 writes the disconnect_farewell frame with the reason string + closes socket — claude session terminal output shows the hint | integration test |
+| MODULE-003-AC-27 | REQ-047 | CONTRACT-006 | M003 carrier obligation: `disconnectSession(id, reason)` accepts a free-form `reason` string (REQ-047 wait-for-reset hint, e.g. `"registration timed out; run reset-admin to retry"`); `closeSession` truncates it to 256 chars and writes the `disconnect_farewell` frame carrying the reason verbatim for ANY reason value (enum OR free-form — no allowlist gate), then closes the socket. (The end-to-end trigger chain — M005 invoking this on `session_connected` during M006 wait-for-reset, and the claude terminal rendering the hint — is verified by the separate MODULE-005-AC-27 integration test; this AC verifies only M003's frame-carrier contract.) | unit test |
 | MODULE-003-AC-28 | REQ-033 | CONTRACT-006 | `channel_notification_emitted` event emitted per `deliverChannelNotification` call with payload `{session_id, chat_id, message_id}` for M008 observability audit | unit test |
 | MODULE-003-AC-29 | REQ-033 + A15 | CONTRACT-006 | Behavior-parity A/B verification harness: run 5 inbound samples (happy path + 1 image + 1 attachment + 1 prompt-injection + 1 multi-session race) through tgcp vs upstream `external_plugins/telegram` (0.0.6); model behavior must match on reply tool call / chat_id correctness / injection rejection. **Harness location**: `tests/integration/ab-parity/{happy_path,image,attachment,injection,multi-session}.test.ts`; expected fixture set at `tests/integration/ab-parity/fixtures/upstream-0.0.6.{snapshot,json}` (manually captured against upstream during pre-release). **Tooling**: shape-compare claude tool-call outputs (reply chat_id, react emoji selection, edit_message text); diff non-empty → fail. **Cadence**: gate-only — runs once at v0.2 release; not part of CI for every commit (cost: 5 live API conversations × 2 plugins) | integration test (v0.2 release gate) |
 
@@ -342,7 +357,7 @@ connection is established with a fresh session_id; `session_connected` re-emitte
 | Module | Doc Link | Dependency Content |
 |--------|----------|--------------------|
 | MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | Registers tool handlers via CONTRACT-006 |
-| MODULE-005 routing | [MODULE-005](./MODULE-005-routing.md) | Calls deliverToSession / disconnectSession via CONTRACT-006; **v1.1.0**: also calls `deliverChannelNotification` for inbound REQ-033 + `assignUniqueShortid` for session shortid allocation REQ-041; M005 also invokes `disconnectSession` with REQ-047 wait-for-reset hint string when M006 isWaitForReset on session_connected events |
+| MODULE-005 routing | [MODULE-005](./MODULE-005-routing.md) | Calls deliverToSession / disconnectSession via CONTRACT-006; **v1.1.0**: also calls `deliverChannelNotification` for inbound REQ-033; M005 invokes `disconnectSession` with the REQ-047 wait-for-reset hint string when M006 `isWaitForReset` on session_connected events. **Note (REQ-041 correction)**: M005 does NOT call `assignUniqueShortid` — shortid allocation is daemon-internal (M003 `MCPDaemonAcceptor` private helper, invoked during session_init processing; the daemon-assigned value is returned to the proxy via `SessionInitAckFrame`). The proxy does not pre-generate a shortid. |
 
 #### External Dependencies
 
@@ -371,9 +386,12 @@ connection is established with a fresh session_id; `session_connected` re-emitte
 export interface MCPTransport {
   registerToolHandler(tool_name: string, handler: ToolHandler): void;
   deliverToSession(session_id: string, payload: InboundPushFrame): Promise<{ok: true} | {ok: false, error: 'unknown_session' | 'write_failed'}>;
-  disconnectSession(session_id: string, reason: DisconnectReason): Promise<void>;
+  // reason accepts the discrete DisconnectReason enum OR a free-form string
+  // (REQ-047 wait-for-reset hint). Widened v1.1.0 — strict superset, all
+  // existing enum callers still type-check.
+  disconnectSession(session_id: string, reason: DisconnectReason | string): Promise<void>;
 
-  // v1.1.0 additive methods (REQ-033, REQ-041, REQ-037, REQ-045) — signature-stable for existing consumers
+  // v1.1.0 additive methods (REQ-033, REQ-037, REQ-045) — signature-stable for existing consumers
 
   /** REQ-033: Emit JSON-RPC `notifications/claude/channel` to a named session. CC client transforms into LLM-visible <channel> tag. */
   deliverChannelNotification(
@@ -382,8 +400,13 @@ export interface MCPTransport {
     meta: { chat_id: number; message_id: number; user: string; ts: number }
   ): Promise<{ok: true} | {ok: false, error: 'unknown_session' | 'write_failed'}>;
 
-  /** REQ-041: Allocate a 12-char hex shortid unique within the active session set. */
-  assignUniqueShortid(): string;
+  // REQ-041 shortid allocation is NOT on the public MCPTransport surface.
+  // `assignUniqueShortid()` is a PRIVATE helper internal to
+  // MCPDaemonAcceptor (the daemon is the sole shortid authority — no
+  // external module calls it). See §3.8 Implementation Notes "Internal
+  // daemon helpers". The daemon assigns a shortid during session_init
+  // processing and returns it to the proxy via the SessionInitAckFrame
+  // (see frame schema below).
 
   // capabilities + instructions provided at MCP server construction time (not a runtime API):
   //   capabilities.experimental['claude/channel'] = {}      // OBJECT (NOT boolean) — SDK Zod schema
@@ -413,22 +436,33 @@ export interface MCPTransport {
   //   { state, eta_hint } payload.
 }
 type ToolHandler = (session_id: string, params: unknown) => Promise<unknown>;
-type DisconnectReason = 'capacity_exceeded' | 'session_terminated' | 'daemon_stop' | 'admin_rejected';
-type InboundPushFrame =
-  | { kind: 'inbound_push'; type: 'message'; payload: TgMessage }
-  | { kind: 'inbound_push'; type: 'callback_query'; payload: TgCallbackQuery }
-  | { kind: 'disconnect_farewell'; reason: DisconnectReason };
 
-// v1.1.0 — DisconnectReason union extended to carry REQ-047 wait-for-reset hint string
+// CANONICAL DisconnectReason (v1.1.0 — single declaration; the prior
+// duplicate enum-only + extended-union pair was collapsed here).
+// The discrete enum names the well-known structured causes; the
+// `| string` widening carries REQ-047's free-form wait-for-reset hint
+// ("registration timed out; run reset-admin to retry"). `closeSession`
+// truncates any reason to 256 chars (defense-in-depth, same cap pattern
+// as will_reconnect.proxy_id) before writing the frame.
 export type DisconnectReason =
   | 'capacity_exceeded'
   | 'session_terminated'
   | 'daemon_stop'
-  | 'admin_rejected'
-  | 'registration_timeout';  // REQ-047 — M005 passes the literal hint string
-                              // "registration timed out; run reset-admin to retry" as the
-                              // disconnect frame body; this tag identifies the cause for
-                              // observability + claude-side handling
+  | 'admin_rejected';
+
+type InboundPushFrame =
+  | { kind: 'inbound_push'; type: 'message'; payload: TgMessage }
+  | { kind: 'inbound_push'; type: 'callback_query'; payload: TgCallbackQuery }
+  | { kind: 'disconnect_farewell'; reason: DisconnectReason | string };
+
+// v1.1.0 — REQ-041 daemon→proxy shortid ACK. Daemon assigns the
+// authoritative shortid during session_init processing and returns it
+// here BEFORE emitting session_connected; proxy stores it for
+// /list / /session display. Proxy no longer pre-generates the shortid.
+export interface SessionInitAckFrame {
+  kind: 'session_init_ack';
+  shortid: string;  // 12-char hex, daemon-assigned, unique in active set
+}
 ```
 
 #### Required External Interfaces
@@ -534,13 +568,38 @@ moving-target mitigation).
 stateDiagram-v2
     [*] --> Accepted: Bun.listen accept
     Accepted --> AwaitingInit: session_id allocated; FrameDecoder ready
-    AwaitingInit --> Active: session_init frame parsed → session_connected emitted
+    AwaitingInit --> Active: session_init parsed → assignUniqueShortid() → write session_init_ack → emit session_connected (with daemon-assigned shortid)
     AwaitingInit --> Closed: non-init frame OR timeout → frame_invalid + close
     Active --> Active: tool_call frames dispatched; deliverToSession writes inbound_push
     Active --> Closed: socket close / EPIPE → session_disconnected emitted
     Active --> Closed: disconnectSession called → disconnect_farewell + close → session_disconnected
     Closed --> [*]
 ```
+
+**REQ-041 daemon-authoritative shortid sequence** (the `AwaitingInit →
+Active` transition, expanded): on a valid `session_init` frame, the
+daemon-side acceptor calls the private `assignUniqueShortid()` helper
+(12-char hex via `crypto.randomBytes(6)`, regenerated on collision with
+the active session set), writes a `session_init_ack` frame carrying that
+shortid to the socket, stores the daemon-assigned shortid in the session
+map, and only THEN emits `session_connected` (whose payload carries the
+same daemon-assigned shortid — not the proxy-supplied placeholder). The
+claude-side proxy receives `session_init_ack`, stores the shortid on its
+ctx, and resolves `buildProxyClient` (a 2s fallback timeout resolves with
+`shortid: null` if no ACK arrives; a late ACK still populates the ctx).
+The proxy no longer pre-generates a shortid — it sends a placeholder in
+`session_init` for wire-schema stability, which the daemon overwrites.
+The shortid is released implicitly when the session map entry is removed
+on disconnect (no explicit free call).
+
+**REQ-047 disconnect-reason carrier**: `disconnectSession(id, reason)`
+accepts the discrete `DisconnectReason` enum OR a free-form string;
+`closeSession` truncates to 256 chars and writes the
+`disconnect_farewell` frame for ANY reason (the prior enum-allowlist
+gate that silently dropped non-enum reasons was removed). This lets
+M005 pass the literal wait-for-reset hint
+("registration timed out; run reset-admin to retry") through to the
+claude session terminal.
 
 **Tool call sequence**:
 
@@ -575,6 +634,8 @@ sequenceDiagram
 | EPIPE / ECONNRESET on write | client side closed | emit session_disconnected; cleanup in-flight tool calls |
 | Tool handler throws | M004 handler error | encode tool_result with `ok: false, error: ...`; continue connection |
 | Daemon shutdown | daemon_stop event from M001 | write disconnect_farewell to all sessions; close all sockets; resolve gracefully |
+| `disconnect_farewell` free-form reason (REQ-047) | M005 calls `disconnectSession(id, "<free-form hint>")` | `closeSession` truncates `reason` to 256 chars (`String(reason).slice(0,256)` — defense-in-depth, same cap as `will_reconnect.proxy_id`) and writes the frame for ANY reason value (enum OR string). The v1.1.0 change removed the prior `isKnownReason` allowlist gate that silently dropped non-enum reasons. |
+| `session_init_ack` write failure (REQ-041) | socket EPIPE before ACK flushed | proxy's 2s fallback timeout resolves `buildProxyClient` with `shortid: null` + warning log; a late ACK (if the socket recovers) still populates `ctx.shortid`. Daemon-side proceeds to emit `session_connected` regardless (the daemon-assigned shortid is already in the session map). |
 
 ### 2.9 Security Considerations
 
@@ -705,14 +766,14 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-003-T19 | Unit | AC-19 | deliverChannelNotification emit | call with payload + meta | socket receives `notifications/claude/channel` frame with correct schema | P0 |
 | MODULE-003-T20 | Unit | AC-20 | unknown session error | call with bogus session_id | structured error event; no socket write | P1 |
 | MODULE-003-T21 | Integration | AC-21 | instructions field content | start MCP server, fetch instructions | 3 pillars present: prompt-injection rejection / slash-prefix / approval-boundary | P0 |
-| MODULE-003-T22 | Unit | AC-22 | shortid uniqueness | request 100 shortids in succession in active set | all 100 distinct; on collision (mocked) regenerator runs; release on disconnect frees | P0 |
+| MODULE-003-T22 | Unit | AC-22 | daemon-authoritative shortid (`tests/mcp/assign-unique-shortid.test.ts`) | 6 sub-cases: (a) `session_connected.shortid` matches `/^[0-9a-f]{12}$/` and is NOT the proxy-supplied placeholder; (b) two concurrent sessions receive distinct shortids (uniqueness invariant — exercises collision-regen transitively without module-level RNG mocking); (c) `session_init_ack` frame written to socket BEFORE `session_connected` event fires (interleaved-log order check); (d) `buildProxyClient` ctx.shortid round-trip — matches the daemon-side `session_connected.shortid` after the ACK arrives; (e) `buildProxyClient` ACK-timeout fallback — fake daemon that never writes ACK → `ctx.shortid===null` after the (test-overridden) `ackTimeoutMs`; (f) late ACK after timeout still mutates `ctx.shortid` on the same ctx reference | daemon is sole authority; proxy-supplied placeholder overwritten; ACK precedes session_connected; proxy resilient to missing/late ACK | P0 |
 | MODULE-003-T23 | Unit | AC-23 | reload handshake scripted | emit `tgcp/proxy/will_reconnect`; reconnect within 60s | `mcp_reconnect_classified` event with reason='reload_handshake' | P0 |
 | MODULE-003-T24 | Unit | AC-24 | spurious reconnect classification | reconnect WITHOUT prior handshake AND no SIGTERM/KeepAlive context | `mcp_reconnect_classified` with reason='spurious' | P0 |
 | MODULE-003-T24b | Unit | AC-24b | sigterm reconnect classification | M001 SIGTERM → KeepAlive restart → reconnect | `mcp_reconnect_classified` with reason='sigterm' | P0 |
 | MODULE-003-T24c | Unit | AC-24c | keepalive reconnect classification | daemon process pid changes between disconnect + reconnect (auto-restart by launchd) | `mcp_reconnect_classified` with reason='keepalive' | P0 |
 | MODULE-003-T25 | Unit | AC-25 | quarantine drain notification | publish `quarantine_replay_resolved` event | `tgcp/quarantine/reply_resolved` JSON-RPC emitted to named requester_session | P0 |
 | MODULE-003-T26 | Unit | AC-26 | quarantine state_changed broadcast | publish `quarantine_enter` event | `tgcp/quarantine/state_changed` JSON-RPC emitted to ALL active sessions with `{state, eta_hint}` | P0 |
-| MODULE-003-T27 | Integration | AC-27 | wait-for-reset disconnect | M005 calls `disconnectSession(id, "registration timed out; run reset-admin to retry")` during wait-for-reset | disconnect_farewell frame carries the hint; claude terminal shows it | P0 |
+| MODULE-003-T27 | Unit | AC-27 | disconnect_farewell free-form reason (`tests/mcp/disconnect-farewell-reason.test.ts`) | 3 sub-cases: (1) free-form `"registration timed out; run reset-admin to retry"` → frame `reason` field carries it verbatim; (2) enum value `"capacity_exceeded"` → still works (back-compat); (3) 300-char string → frame `reason` truncated to exactly 256 chars (prefix of input) | frame written for ANY reason (no enum gate); 256-char cap enforced | P0 |
 | MODULE-003-T28 | Unit | AC-28 | channel_notification_emitted audit | call deliverChannelNotification | event with `{session_id, chat_id, message_id}` emitted | P0 |
 | MODULE-003-T29 | Integration | AC-29 | A/B parity gate (v0.2 release) | run 5 inbound samples through tgcp + upstream 0.0.6 | model behavior matches on reply tool call / chat_id / injection rejection | P0 (v0.2 gate) |
 
@@ -777,6 +838,8 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 channel-protocol amendments. 12 new ACs (AC-18..AC-29): capability decl (REQ-033), deliverChannelNotification + unknown-session error + channel_notification_emitted audit, MCP `instructions` 3-pillar system prompt (anti-injection + slash-prefix + approval-boundary REQ-036), shortid uniqueness (REQ-041), reload-handshake (REQ-045 scripted + spurious), quarantine drain notifications (REQ-037 + Decision A18: subscribes to M002's 3 quarantine events, emits tgcp/quarantine/reply_resolved + state_changed), wait-for-reset disconnect carrier (REQ-047), A/B parity gate (v0.2 release). 17 existing AC-01..AC-17 statuses preserved (merge-preserve per /spec stability rules). Progress drops from 100% → 59% reflecting 12 new untested rows. M005 invokes the new methods; M002 publishes the quarantine events M003 subscribes to. |
 | 2026-05-16 | /dev task — channel-protocol slice (REQ-033/037/045). **In-scope ACs (11)**: AC-18 (capabilities.experimental.claude/channel = {} object, NOT boolean — SDK Zod requires AssertObjectSchema), AC-19 (deliverChannelNotification daemon-side UDS frame + proxy-side MCP notification translation), AC-20 (unknown-session error path emits `log_emit` ERROR; no socket write), AC-21 (MCP `instructions` field carries 3-pillar locked text verbatim from §2.7), AC-23 (`tgcp/proxy/will_reconnect` handshake: proxy-side SIGTERM handler writes `WillReconnectFrame` on existing socket before `sock.end()`; daemon-side post-init dispatcher records `proxy_id → scripted_until_ts: now+60s` with timer-cancellation on consume + on `stop()`), AC-24/24b/24c (reconnect classification: scripted/spurious by reload-handshake → sigterm → keepalive → spurious; one-shot consumption of M001 `getPostBootShutdownContext()`; emit `mcp_reconnect_classified` BEFORE `session_connected`), AC-25 (subscribe `quarantine_replay_resolved` → `QuarantineReplyResolvedNotificationFrame` to requester_session socket → proxy MCP `tgcp/quarantine/reply_resolved`), AC-26 (subscribe `quarantine_enter`/`quarantine_exit` → `QuarantineStateChangedFrame` broadcast to ALL sessions → proxy MCP `tgcp/quarantine/state_changed`), AC-28 (emit `channel_notification_emitted` post-write). EventBus subscriptions registered in `start()`, unregistered in `stop()`. 4 new frame types added to `src/mcp/frame-types.ts` + optional `proxy_id?: string` on `SessionInitFrame`. proxy-side uses `(server as unknown as {...}).notification(...)` cast (SDK SendNotificationT typed union; runtime accepts arbitrary method names). `serverFactory?:` added to `ProxyClientConfig` as test seam. |
 
+| 2026-05-17 | /dev task `dev-advance-kit-20260517-40bb2ae` — REQ-041 + REQ-047 slice. **In-scope ACs**: AC-22 (daemon-authoritative shortid — `assignUniqueShortid()` private `MCPDaemonAcceptor` helper, 12-char hex via `crypto.randomBytes(6)`, collision-regen against active set, released on session-map cleanup; new `SessionInitAckFrame` carries the daemon-assigned shortid to the proxy BEFORE `session_connected` is emitted; both `sessionMap.add` and the `session_connected` payload use the assigned shortid, not the proxy placeholder; proxy `buildProxyClient` resolves on ACK-or-2s-timeout, late ACK still populates `ctx.shortid`), AC-27 (`disconnect_farewell` free-form reason carrier — `disconnectSession` widened to `reason: DisconnectReason \| string`, `closeSession` `isKnownReason` allowlist gate REMOVED so the frame is written for any reason, 256-char truncation). §2.3 collapsed the two duplicate `DisconnectReason` declarations into one canonical enum + documented the `| string` widening at the call sites; `assignUniqueShortid` relocated off the public `MCPTransport` interface into §3.8 (private helper). §1.4.3 frame schema + §1.4.4 + §2.2 + §2.7 + §2.8 updated for the carrier + ACK frame. AC-27 verification reframed from "integration test" to "unit test" (M003 carrier obligation only; the M005→M006→terminal chain is MODULE-005-AC-27's surface — req_ac_map/in_scope_ac_ids unchanged). |
+
 ### 3.8 Implementation Notes
 
 | Decision | Rationale | Alternatives considered | Trade-off |
@@ -786,3 +849,6 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | session_init handshake (not first-tool-call inference) | Explicit handshake makes pre-init rejection clean; gives daemon authoritative identity from start | Infer identity from first tool call | Explicit is clearer + permits init-time rejection without burning tool dispatch |
 | In-memory session map (not persisted) | Sessions are ephemeral by design; reload re-establishes; no value in persisting | Persist to file | Reload semantics already require re-handshake; persisting adds churn |
 | 1 MiB cap | RISK-011 mitigation + adequate for tool params (Telegram messages cap 4096 chars; attachment file_id is small) | 100 KiB / 10 MiB | 1 MiB is large enough for any realistic payload + small enough to cap memory pressure |
+| `assignUniqueShortid()` is a PRIVATE `MCPDaemonAcceptor` helper (NOT on the public CONTRACT-006 `MCPTransport` surface) | The daemon is the sole shortid authority (REQ-041); no external module calls it. The prior v1.1.0 spec declared it on the public interface anticipating an external caller that never materialized — declaring an unused public method misleads downstream consumers. | Keep it on the public MCPTransport surface | Public-but-unused widens the contract surface for no consumer; private keeps CONTRACT-006 honest. The daemon→proxy handoff is via `SessionInitAckFrame`, not a method call. |
+| Proxy↔daemon shipped as one bundled distribution unit (no version skew) | telegram-channels-pro packages daemon + proxy in the same plugin per CONTRACT-014; a new proxy is never paired with an old daemon in supported deployments. So the `session_init_ack` handshake needs no backward-compat fallback for an ACK-unaware daemon. | Version-negotiation handshake; dual-path proxy that works with both old + new daemons | Version negotiation is real complexity for a deployment topology that cannot occur (bundled shipping). The only fallback is the 2s timeout (covers a genuinely-stuck socket, not a version mismatch). |
+| `disconnect_farewell.reason` truncated to 256 chars; frame written for ANY reason (no enum allowlist gate) | REQ-047 needs a free-form hint string in the frame; the prior `isKnownReason` gate silently dropped non-enum reasons (a latent correctness bug surfaced by this slice). 256-char cap is defense-in-depth against degenerate input (same cap rationale as `will_reconnect.proxy_id`). | Keep enum-only + add `registration_timeout` as a discrete tag | A discrete tag can't carry the actual user-facing hint text; free-form string + cap is the minimal correct design. Enum still names the structured causes for observability. |
