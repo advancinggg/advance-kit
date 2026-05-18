@@ -229,7 +229,7 @@ async function persistOffset(offset: number) {
 **Configuration (Decision A16 implicit /spec bindings)**:
 - TTL: **1 hour** (chat type rarely changes; promotion group→supergroup is the only practical mutation and requires re-auth).
 - LRU max entries: **1000** (single-user single-machine scale never approaches; safety margin against group-bot DoS where attacker adds bot to many groups).
-- On cache-write race (two concurrent lazy-fetch calls for the same chat_id): both fetches succeed, second-writer's result overwrites first (same value, no harm).
+- On concurrent miss for the same chat_id (e.g. an M005 inbound burst + an M004 outbound check both cold-starting the same chat): the ChatTypeCacheImpl coalesces all concurrent callers onto a **single** in-flight `getChat` call via an internal `inFlight: Map<number, Promise<ChatType>>`. The first miss-path caller registers the fetch promise; subsequent callers await the same promise (no duplicate Telegram API call — satisfies AC-24 "invokes getChat once"). The in-flight entry is cleared in a `finally` on both success and rejection, so a failed fetch is not poisoned-cached and the next call retries via a fresh lazy-fetch (AC-25). Concurrent callers that piggyback on the in-flight fetch observe the single `lazy_fetch_getChat` telemetry event (not a per-caller `cache` event), since a concurrent miss is by definition not a cache hit.
 
 **Telemetry**: emit `chat_type_lookup` event per call with payload `{chat_id, type, source: 'cache' | 'lazy_fetch_getChat'}`; M008 subscribes to populate StatusReporter's `chat_type_cache_size` and `chat_type_lazy_fetch_failures_24h` fields.
 
@@ -509,7 +509,7 @@ export interface PollingSnapshot {
 | POST | `/bot{token}/getUpdates` | URL token | Long-poll for incoming updates |
 | **POST (v1.1.0)** | `/bot{token}/getChat` | URL token | REQ-035 cold-start lazy-fetch via ChatTypeCache; `chat_id` in JSON body (per the §2.4 POST convention below); returns `GetChatEnvelope` (`{ok:true, result:{id,type}}` / `{ok:false, error}`) |
 
-Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error. **Convention**: all 7 endpoints use POST. **6 of them** (`sendMessage` / `editMessageText` / `answerCallbackQuery` / `getFile` / `sendChatAction` / `getChat`) send parameters in a JSON request body (`content-type: application/json`, `JSON.stringify(...)` — `src/telegram/client.ts` `post()` helper). **`getUpdates` is the exception**: it uses POST with parameters in the URL query string (`url.searchParams.set(...)` — see `client.ts` `get()` helper) because the long-poll handler does not need a JSON body and the existing Slice B impl predates the JSON-body convention. Telegram Bot API accepts both forms; the divergence is preserved for backward-compatibility with Slice B's tests but is worth re-aligning in a future cleanup.
+Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error. **Convention**: all 7 endpoints use POST. **6 of them** (`sendMessage` / `editMessageText` / `answerCallbackQuery` / `getFile` / `sendChatAction` / `getChat`) send parameters in a JSON request body (`content-type: application/json`, `JSON.stringify(...)` — `src/telegram/client.ts` `post()` helper). **`getUpdates` is the exception**: it uses POST with parameters in the URL query string (`url.searchParams.set(...)` — see `client.ts` `get()` helper). The long-poll handler does not need a JSON body; Telegram Bot API accepts both forms and treats them identically, so the `get()`-helper form is a functionally-equivalent transport choice for this one endpoint, not a defect.
 
 ### 2.5 Data Models
 
@@ -527,7 +527,11 @@ File path: `<state_dir>/offset.json`. Perms: 0600. Atomic write via `mktemp` + `
 
 ```ts
 // In-memory only — NOT persisted; rebuilt empty on daemon restart.
-Map<number /* chat_id */, { type: 'private' | 'group' | 'supergroup' | 'channel'; insertedAt: number /* epoch ms */ }>
+cache:    Map<number /* chat_id */, { type: 'private' | 'group' | 'supergroup' | 'channel'; insertedAt: number /* epoch ms */ }>
+// In-flight dedup: concurrent miss-path callers for the same chat_id share
+// one fetch promise (AC-24 "invokes getChat once"); cleared in finally on
+// success OR rejection so AC-25 retry semantics hold.
+inFlight: Map<number /* chat_id */, Promise<ChatType>>
 ```
 
 LRU mechanism: the `Map` insertion order IS the recency order. On a
