@@ -36,6 +36,11 @@ export class ChatTypeFetchError extends Error {
 
 export class ChatTypeCacheImpl implements ChatTypeCache {
   private readonly cache: Map<number, CacheEntry> = new Map();
+  // In-flight dedup: a single fetch is shared across concurrent miss-path
+  // callers for the same chat_id (per AC-24 "invokes getChat once"). Prevents
+  // a burst of M005 inbound + M004 outbound callers from each issuing
+  // independent getChat calls for the same cold chat_id.
+  private readonly inFlight: Map<number, Promise<ChatType>> = new Map();
   private readonly ttlMs: number;
   private readonly maxEntries: number;
 
@@ -59,7 +64,21 @@ export class ChatTypeCacheImpl implements ChatTypeCache {
       return existing.type;
     }
 
-    // Miss (absent or TTL-expired). Lazy-fetch via CONTRACT-004.
+    // Miss (absent or TTL-expired). Coalesce concurrent callers onto a single
+    // lazy-fetch via the in-flight map.
+    const pending = this.inFlight.get(chat_id);
+    if (pending) return pending;
+
+    const fetchPromise = this.doFetch(chat_id);
+    this.inFlight.set(chat_id, fetchPromise);
+    try {
+      return await fetchPromise;
+    } finally {
+      this.inFlight.delete(chat_id);
+    }
+  }
+
+  private async doFetch(chat_id: number): Promise<ChatType> {
     let env;
     try {
       env = await this.apiClient.getChat(chat_id);

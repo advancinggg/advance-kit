@@ -509,7 +509,7 @@ export interface PollingSnapshot {
 | POST | `/bot{token}/getUpdates` | URL token | Long-poll for incoming updates |
 | **POST (v1.1.0)** | `/bot{token}/getChat` | URL token | REQ-035 cold-start lazy-fetch via ChatTypeCache; `chat_id` in JSON body (per the §2.4 POST convention below); returns `GetChatEnvelope` (`{ok:true, result:{id,type}}` / `{ok:false, error}`) |
 
-Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error. **Convention**: all 7 endpoints use POST with the parameters (`chat_id` / `offset` / `file_id` etc.) in a JSON request body (`content-type: application/json`, `JSON.stringify(...)` — see `src/telegram/client.ts` `post()` helper) — Telegram Bot API accepts both GET and POST; the wrapper standardizes on POST + JSON body for consistency + body-size headroom.
+Token sourced from `TELEGRAM_BOT_TOKEN` env var (required). Failure to read → daemon-core boot error. **Convention**: all 7 endpoints use POST. **6 of them** (`sendMessage` / `editMessageText` / `answerCallbackQuery` / `getFile` / `sendChatAction` / `getChat`) send parameters in a JSON request body (`content-type: application/json`, `JSON.stringify(...)` — `src/telegram/client.ts` `post()` helper). **`getUpdates` is the exception**: it uses POST with parameters in the URL query string (`url.searchParams.set(...)` — see `client.ts` `get()` helper) because the long-poll handler does not need a JSON body and the existing Slice B impl predates the JSON-body convention. Telegram Bot API accepts both forms; the divergence is preserved for backward-compatibility with Slice B's tests but is worth re-aligning in a future cleanup.
 
 ### 2.5 Data Models
 
@@ -842,12 +842,15 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | `src/telegram/fatal-window.ts` | Sliding window data structure |
 | `src/telegram/error-classify.ts` | 409 / 429 / 5xx / network classifier |
 | **`src/telegram/chat-type-cache.ts` (v1.1.0)** | CONTRACT-016 ChatTypeCache implementation (LRU map + 1h TTL + lazy-fetch via getChat) |
-| **`src/telegram/quarantine-queue.ts` (v1.1.0)** | REQ-037 in-memory FIFO replay queue (50-cap) + drain emission of `quarantine_replay_resolved` events |
-| **`src/telegram/get-chat.ts` (v1.1.0)** | `getChat(chat_id)` wrapper used by ChatTypeCache cold-start path |
+| **`src/telegram/outbound-replay-queue.ts` (v1.1.0)** | REQ-022 AC-34 cap-only `OutboundReplayQueue` (50-cap, `CapacityExceededError`). The full REQ-037 drain semantics (per-session bookkeeping + `quarantine_replay_resolved` emission) are a separate verification surface — AC-28/29/30 remain `untested` until a dedicated slice lands the drain orchestration. |
 | `tests/telegram/*.test.ts` | Unit + integration tests |
 | `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification — partially covered by `tests/telegram/methods.test.ts` (shape check of all 7 wrappers including v1.1.0 `getChat`); full upstream-0.0.6 JSON-Schema validation ships in subsequent task. Note: AC-21 scope is the 4 official-compatible tools (`reply`/`react`/`edit_message`/`download_attachment`) of upstream 0.0.6 — `getChat` is a tgcp-specific add (REQ-035 outbound DiD cache) so it is excluded from the 0.0.6 compat suite and only needs the shape-check in `methods.test.ts`. |
-| **`tests/telegram/chat-type-cache.test.ts` (v1.1.0)** | AC-22..AC-27 unit tests for ChatTypeCache hit/miss/eviction/TTL |
-| **`tests/telegram/quarantine-queue.test.ts` (v1.1.0)** | AC-28..AC-32 unit tests for cap, drain, drain event payloads |
+| **`tests/telegram/get-chat.test.ts` (v1.1.0)** | AC-22 unit tests for `getChat(chat_id)` envelope wrapper (4 cases: happy / HTTP 5xx / fetch_failed / Telegram-reported `ok:false`). `getChat()` itself lives on `TelegramAPIClientImpl` in `client.ts` (no separate per-method file). |
+| **`tests/telegram/chat-type-cache.test.ts` (v1.1.0)** | AC-23..AC-27 unit tests for ChatTypeCache hit/miss/miss-failure/LRU/TTL. |
+| **`tests/telegram/capacity-independence.test.ts` (v1.1.0)** | AC-34 unit tests for the three independent capacity edges (SessionRegistry 8-cap + PendingApprovalRegistry 50-cap + OutboundReplayQueue 50-cap) — saturation + configurability + distinct module paths. |
+| **`tests/telegram/quarantine-eta-hint.test.ts` (v1.1.0)** | AC-32 unit tests — `eta_hint` field on `quarantine_enter` / `quarantine_exit` event payloads. |
+| **`tests/telegram/quarantine-replay-resolved.test.ts` (v1.1.0)** | AC-31 unit tests — `quarantine_replay_resolved` event payload schema, verified via synthetic emission (drain semantics not yet implemented; AC-28..AC-30 remain untested). |
+| **`tests/telegram/send-chat-action.test.ts` (v1.1.0)** | AC-33 unit tests — `sendChatAction(typing)` fire-and-forget wrapper. |
 
 ### 3.3 Test Cases
 
@@ -872,7 +875,7 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-002-T17 | Unit | AC-17 | sendMessage during quarantine | quarantine active; call sendMessage | returns `{delivered: false, queued: true, eta_hint}` | P0 |
 | MODULE-002-T18 | Integration | AC-18 | daemon_stop offset flush | emit daemon_stop; observe offset.json | offset.json reflects latest in-memory value before exit | P0 |
 | MODULE-002-T19 | Unit | AC-19 | 429 default Retry-After | HTTP 429 with no Retry-After header | sleeps 5s (default) | P1 |
-| MODULE-002-T20 | Unit | AC-20 | all 6 method wrappers | call each; mock response | correct HTTP method, path with token, body shape | P0 |
+| MODULE-002-T20 | Unit | AC-20 | all 7 method wrappers (incl v1.1.0 getChat) | call each; mock response | correct HTTP method, path with token, body shape | P0 |
 | MODULE-002-T21 | Integration | AC-21 | compat schema suite | run compat-suite against upstream 0.0.6 schemas | all 4 official-compatible method I/O schemas validate | P0 |
 | MODULE-002-T22 | Unit | AC-22 | getChat method wrapper (`tests/telegram/get-chat.test.ts`) | 4 cases: (a) mock 200 `{ok:true,result:{id:12345,type:'private'}}`; (b) HTTP 503; (c) `fetchFn` throws; (d) 200 `{ok:false,description:'chat not found'}` | (a) `{ok:true,result:{id:12345,type:'private'}}`; (b) `{ok:false,error:'http_503'}`; (c) `{ok:false,error:'fetch_failed'}`; (d) `{ok:false,error:'chat not found'}`; JSON body + correct path/token | P0 |
 | MODULE-002-T23 | Unit | AC-23 | ChatTypeCache hit (`tests/telegram/chat-type-cache.test.ts`) | primeCache(999,'private'); call getChatType(999) | returns 'private' in O(1) (no getChat call); `chat_type_lookup` source='cache' emitted | P0 |

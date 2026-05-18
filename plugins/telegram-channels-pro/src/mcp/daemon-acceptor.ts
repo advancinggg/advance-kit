@@ -399,7 +399,32 @@ export class MCPDaemonAcceptor {
     // session_init_ack frame to the socket BEFORE emitting session_connected
     // so the proxy can resolve buildProxyClient with the authoritative value
     // before any downstream observer sees the session.
-    const assignedShortid = this.assignUniqueShortid();
+    let assignedShortid: string;
+    try {
+      assignedShortid = this.assignUniqueShortid();
+    } catch (err) {
+      // Astronomically unlikely — `assignUniqueShortid` only throws after
+      // 1024 consecutive randomBytes collisions (suspect RNG / malicious
+      // mock). Refuse this session gracefully instead of letting the throw
+      // escape the `sock.on("data")` callback as an uncaughtException that
+      // kills the daemon. Existing sessions stay intact.
+      this.cfg.eventBus.emit("log_emit", {
+        level: "ERROR",
+        event_type: "shortid_allocation_failed",
+        fields: { detail: String(err) },
+      });
+      try {
+        sock.end();
+      } catch {
+        /* ignore */
+      }
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+      return sessionId;
+    }
 
     const socketLike: SocketLike = {
       write: (data) => sock.write(Buffer.from(data)),

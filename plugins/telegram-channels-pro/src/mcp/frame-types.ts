@@ -101,12 +101,17 @@ export type AnyFrame =
   | QuarantineStateChangedFrame;
 
 export function isSessionInitAckFrame(x: unknown): x is SessionInitAckFrame {
-  return (
-    typeof x === "object" &&
-    x !== null &&
-    (x as { kind?: unknown }).kind === "session_init_ack" &&
-    typeof (x as { shortid?: unknown }).shortid === "string"
-  );
+  if (typeof x !== "object" || x === null) return false;
+  if ((x as { kind?: unknown }).kind !== "session_init_ack") return false;
+  const shortid = (x as { shortid?: unknown }).shortid;
+  if (typeof shortid !== "string") return false;
+  // REQ-041 — defense-in-depth length cap (same pattern as
+  // isWillReconnectFrame proxy_id cap). Daemon-assigned shortid is always
+  // 12-char hex by construction; 256 is generous slack for any future
+  // protocol evolution while denying memory-amplification on a misbehaving
+  // or malicious daemon socket.
+  if (shortid.length === 0 || shortid.length > 256) return false;
+  return true;
 }
 
 export function isChannelNotificationFrame(x: unknown): x is ChannelNotificationFrame {
