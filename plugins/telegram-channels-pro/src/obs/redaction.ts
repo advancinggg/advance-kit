@@ -10,6 +10,12 @@ const USER_ID_KEYS = new Set([
   "admin_user_id",
   "sender_id",
   "callback_from_id",
+  // REQ-044 — chat_id is user-correlatable for DM chats (chat_id ≡ user_id
+  // in Telegram's private-chat protocol). Hash on the structured log
+  // boundary so chat-type-lookup / channel-notification / route-decision
+  // events don't ship plaintext chat IDs (was a redaction gap surfaced by
+  // the v1.1.0 chat_type_lookup event).
+  "chat_id",
 ]);
 
 const TEXT_KEYS = new Set(["text", "message_text", "dm_text", "tool_params"]);

@@ -385,6 +385,14 @@ export async function buildProxyClient(cfg: ProxyClientConfig = {}): Promise<Pro
     // ctx has been built — supports late ACK after the 2s timeout fired) and
     // signal the build-time waiter so buildProxyClient can resolve.
     if (isSessionInitAckFrame(frame)) {
+      // First-ACK-only: ignore any subsequent ACKs (defense against a
+      // misbehaving or compromised same-uid daemon shipping multiple
+      // session_init_ack frames with different shortids). Late ACK after
+      // the 2s timeout still passes — assignedShortid is still null at
+      // that point.
+      if (assignedShortid !== null) {
+        return;
+      }
       assignedShortid = frame.shortid;
       if (returnedCtx) returnedCtx.shortid = frame.shortid;
       if (onAckArrived) {

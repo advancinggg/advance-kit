@@ -26,6 +26,7 @@ import {
   type WillReconnectFrame,
 } from "./frame-types";
 import { SessionMap, type SocketLike } from "./session-map";
+import { redactString } from "../obs/redaction";
 
 export interface MCPAcceptorConfig {
   eventBus: EventBus;
@@ -481,10 +482,31 @@ export class MCPDaemonAcceptor {
   }
 
   // REQ-045 AC-23 — record a proxy_id → expiry mapping; auto-delete on timer fire.
+  // Hard upper bound on the scriptedReconnectMap size — defends against
+  // a same-uid rogue process that sends a sustained rate of valid
+  // `will_reconnect` frames with distinct proxy_ids (each frame consumes
+  // a 60s-timer entry; without a cap the map grows unbounded). 256 is
+  // comfortably above the 24 entries a busy 8-session × 3-reloads-per-min
+  // pattern would generate within the 60s expiry window. When full, the
+  // OLDEST entry (by insertion order, which is `Map`'s iteration order)
+  // is evicted FIFO-style: its timer is cancelled and the entry removed.
+  private static readonly SCRIPTED_RECONNECT_MAX_ENTRIES = 256;
+
   private recordWillReconnect(proxyId: string): void {
     // If a prior entry exists, cancel its timer first to avoid orphans.
     const prior = this.scriptedReconnectMap.get(proxyId);
     if (prior) prior.timer.cancel();
+    // FIFO evict the oldest entry when at the cap (entries always insert at
+    // the end; oldest is the first iteration key). The prior entry above is
+    // already deleted (will be re-inserted as the newest below), so the
+    // cap check runs against entries we are NOT about to overwrite.
+    while (this.scriptedReconnectMap.size >= MCPDaemonAcceptor.SCRIPTED_RECONNECT_MAX_ENTRIES) {
+      const oldestKey = this.scriptedReconnectMap.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = this.scriptedReconnectMap.get(oldestKey);
+      if (oldest) oldest.timer.cancel();
+      this.scriptedReconnectMap.delete(oldestKey);
+    }
     const expiryMs = this.cfg.clock.now() + 60_000;
     const timer = this.cfg.clock.setTimeout(() => {
       // Silent expiry; no event emitted.
@@ -575,9 +597,13 @@ export class MCPDaemonAcceptor {
     if (!entry) return;
     // v1.1.0 (REQ-047) — write the farewell frame for ANY reason value. The
     // prior `isKnownReason` allowlist gate silently dropped free-form reasons
-    // (a latent bug) and has been removed. Truncate to 256 chars as defense-
-    // in-depth, same cap pattern as will_reconnect.proxy_id.
-    const safeReason = String(reason).slice(0, 256);
+    // (a latent bug) and has been removed. Defense-in-depth layering:
+    // 1) `redactString` strips bot tokens + registration codes inline (in
+    //    case a future caller accidentally plumbs sensitive data through
+    //    the now-widened reason field — the type signature
+    //    `DisconnectReason | string` invites that misuse);
+    // 2) 256-char truncation cap (same pattern as will_reconnect.proxy_id).
+    const safeReason = redactString(String(reason)).slice(0, 256);
     try {
       const farewell = encodeFrame({ kind: "disconnect_farewell", reason: safeReason });
       void entry.socket.write(farewell);
