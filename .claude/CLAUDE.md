@@ -43,13 +43,18 @@ defines when to bump patch / minor / major.
 ## Test command
 
 There is no automated test suite — this repo is markdown + shell + JSON. Syntax-lint
-only:
+plus a runtime smoke for the read-only `/dev board` aggregator:
 
 ```bash
 bash -n plugins/dev/bin/*.sh && \
   jq -e . .claude-plugin/marketplace.json plugins/dev/.claude-plugin/plugin.json \
-    plugins/dev/hooks/hooks.json > /dev/null
+    plugins/dev/hooks/hooks.json > /dev/null && \
+  bash plugins/dev/bin/board.sh > /dev/null
 ```
+
+The board.sh runtime smoke (2.9.0+) catches awk/jq pipeline regressions that
+`bash -n` cannot, while remaining side-effect-free (board.sh is read-only by
+contract — see `plugins/dev/skills/dev/SKILL.md` §7.2).
 
 Semantic correctness for skill-markdown changes falls on dual-model evaluator review
 (the `/dev` workflow handles this automatically).

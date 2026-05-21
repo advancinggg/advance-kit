@@ -51,7 +51,7 @@ agent cannot skip ahead or silently mutate files outside the current step.
 
 **Skills:**
 - `/dev [task description]` — run the full enforced workflow
-- `/dev status | resume | abort | doctor` — inspect, resume, or reset an in-progress run
+- `/dev status | board | resume | abort | doctor` — inspect (incl. read-only `board` snapshot dashboard, 2.9.0+), resume, or reset an in-progress run
 - `/dev worktree-new | worktree-list | worktree-finish | worktree-remove` — manage parallel worktrees for concurrent /dev tasks (2.8.0+)
 - `/spec [path/to/PRD.md]` — generate architecture and MECE module specs from a PRD
 
@@ -139,7 +139,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.8.2` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.8.0 worktree-parallel (4 `worktree-*` subcommands; `/spec` + `/prd` stay single-flight). **Earlier:** 2.5.0 ADR system, 2.6.0 /prd scope discipline, 2.7.0 upstream-alignment escape hatches. |
+| `dev` | `2.9.0` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev, read-only `/dev board` snapshot dashboard. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.9.0 `/dev board` snapshot dashboard. **Earlier:** 2.6.0 /prd scope discipline, 2.7.0 upstream-alignment escape hatches, 2.8.0 worktree-parallel /dev. |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 | `telegram-channels-pro` | `0.1.3` | v0.1 complete (macOS only) — 8 modules: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 MCP tools) + routing (LRU + admin gate + slash commands) + deployment (launchd CLI + control socket + ROLLBACK.md). |
