@@ -263,6 +263,32 @@ describe("MODULE-006-AC-19: isInRegistrationWindow", () => {
   });
 });
 
+// REQ-047 stream (c) support — M005 WaitForResetHandshakeHandler queries this on every
+// session_connected to drive the wait-for-reset disconnect handshake.
+describe("REQ-047 support: isWaitForReset", () => {
+  test("isWaitForReset — false in closed; false in open; true in waiting_for_reset; false after forceReopenForReset", async () => {
+    const { gate, tmp } = makeGate();
+    await tmp.stateDir.initialize();
+    // closed
+    expect(gate.state()).toBe("closed");
+    expect(gate.isWaitForReset()).toBe(false);
+    // open
+    gate.openWindow();
+    expect(gate.state()).toBe("open");
+    expect(gate.isWaitForReset()).toBe(false);
+    // waiting_for_reset (global-trip)
+    for (let i = 0; i < 30; i++) {
+      await gate.processRegistrationDM(3000 + i, "register WRONGY");
+    }
+    expect(gate.state()).toBe("waiting_for_reset");
+    expect(gate.isWaitForReset()).toBe(true);
+    // forceReopenForReset → back to open
+    gate.forceReopenForReset();
+    expect(gate.state()).toBe("open");
+    expect(gate.isWaitForReset()).toBe(false);
+  });
+});
+
 describe("MODULE-006-AC-16: case sensitivity (smoke)", () => {
   test("MODULE-006-T16b — REGISTER (uppercase verb) → fail_format", async () => {
     const { gate, tmp } = makeGate();

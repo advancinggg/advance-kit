@@ -28,7 +28,8 @@ export type EventTypeKey =
   | "log_emit"
   | "alert_emit"
   | "channel_notification_emitted"
-  | "chat_type_lookup";
+  | "chat_type_lookup"
+  | "outbound_chat_type_denied";
 
 export type DeploymentMode = "launchd" | "lazy-spawn";
 
@@ -72,6 +73,11 @@ export interface EventPayloadMap {
     type?: "private" | "group" | "supergroup" | "channel";
     source: "cache" | "lazy_fetch_getChat";
     failed?: boolean;
+  };
+  outbound_chat_type_denied: {
+    chat_id: number;
+    observed_type: string;
+    tool: string;
   };
   polling_health: { ts: number; state: PollingState };
   polling_event: { kind: "conflict_409" | "rate_limited_429" | "transient_error"; detail?: unknown };
@@ -135,6 +141,7 @@ export const ALL_EVENT_TYPES: EventTypeKey[] = [
   "alert_emit",
   "channel_notification_emitted",
   "chat_type_lookup",
+  "outbound_chat_type_denied",
 ];
 
 export type Unsubscribe = () => void;

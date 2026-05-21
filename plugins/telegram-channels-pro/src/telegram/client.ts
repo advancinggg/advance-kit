@@ -15,9 +15,17 @@ import type {
 import { buildMethodUrl } from "./methods";
 import { classifyHttpResponse, classifyNetworkError, type ClassifiedError } from "./error-classify";
 import type { PollingStatusImpl } from "./polling-status";
+import type { OutboundReplayQueue } from "./outbound-replay-queue";
+
+// v1.1.0 — REQ-037: opts.requester_session is metadata only; never spread into the HTTP
+// POST body. When provided + polling state is quarantine, sendMessage routes the entry
+// into outboundReplayQueue for drain on quarantine_exit.
+export interface SendMessageOpts {
+  requester_session?: string;
+}
 
 export interface TelegramAPIClient {
-  sendMessage(req: SendMessageReq): Promise<SendMessageEnvelope>;
+  sendMessage(req: SendMessageReq, opts?: SendMessageOpts): Promise<SendMessageEnvelope>;
   editMessageText(req: EditMessageTextReq): Promise<SendMessageEnvelope>;
   answerCallbackQuery(req: AnswerCallbackQueryReq): Promise<{ ok: true } | { ok: false; error: string }>;
   getFile(file_id: string): Promise<{ ok: true; result: GetFileResult } | { ok: false; error: string }>;
@@ -36,6 +44,7 @@ export const QUARANTINE_QUEUE_CAP = 50;
 export type SendMessageEnvelope =
   | { delivered: true; message_id: number; result: SendMessageResult }
   | { delivered: false; queued: true; eta_hint: number }
+  | { delivered: false; error: "capacity_exceeded" }
   | { delivered: false; error: "rate_limited"; retry_after_sec: number }
   | { delivered: false; error: "disconnected"; reason: string };
 
@@ -46,17 +55,29 @@ export interface TelegramClientConfig {
   pollingStatus: PollingStatusImpl;
   apiBase?: string;
   fetchFn?: typeof globalThis.fetch;
+  /**
+   * v1.1.0 — REQ-037 quarantine outbound replay queue. OPTIONAL: when present + caller
+   * passes opts.requester_session + polling state is quarantine, sendMessage enqueues for
+   * drain on quarantine_exit. Existing test files unchanged because field is optional.
+   */
+  outboundReplayQueue?: OutboundReplayQueue;
 }
 
 const DEFAULT_API_BASE = "https://api.telegram.org";
 
 export class TelegramAPIClientImpl implements TelegramAPIClient {
-  private cfg: Required<TelegramClientConfig>;
+  // outboundReplayQueue stays optional; everything else is fully populated by the
+  // constructor defaults below. Hand-write the type to avoid Required<> over an
+  // intentionally-optional field.
+  private cfg: Omit<Required<TelegramClientConfig>, "outboundReplayQueue"> & {
+    outboundReplayQueue?: OutboundReplayQueue;
+  };
 
   constructor(cfg: TelegramClientConfig) {
     this.cfg = {
       apiBase: DEFAULT_API_BASE,
       fetchFn: globalThis.fetch.bind(globalThis),
+      outboundReplayQueue: cfg.outboundReplayQueue,
       ...cfg,
     };
   }
@@ -96,9 +117,33 @@ export class TelegramAPIClientImpl implements TelegramAPIClient {
     return { delivered: false, queued: true, eta_hint: cooldown };
   }
 
-  async sendMessage(req: SendMessageReq): Promise<SendMessageEnvelope> {
+  async sendMessage(req: SendMessageReq, opts?: SendMessageOpts): Promise<SendMessageEnvelope> {
     const snapshot = this.cfg.pollingStatus.getSnapshot();
-    if (snapshot.state === "quarantine") return this.quarantineEnvelope();
+    if (snapshot.state === "quarantine") {
+      // v1.1.0 — REQ-037 quarantine outbound replay queue. Route through queue when both
+      // requester_session and the queue are present; otherwise fall back to the existing
+      // stub envelope (preserves back-compat for M005 admin acks + tests without queue).
+      const queue = this.cfg.outboundReplayQueue;
+      if (queue !== undefined && opts?.requester_session !== undefined) {
+        try {
+          queue.enqueue({
+            requester_session: opts.requester_session,
+            params: req,
+            queued_at: this.cfg.clock.now(),
+          });
+          return this.quarantineEnvelope();
+        } catch (e) {
+          // Avoid `instanceof CapacityExceededError` — circular import (outbound-replay-queue
+          // imports QUARANTINE_QUEUE_CAP from this file) could yield an undefined class
+          // binding during module init. Name-based check is robust.
+          if ((e as Error)?.name === "CapacityExceededError") {
+            return { delivered: false, error: "capacity_exceeded" };
+          }
+          throw e;
+        }
+      }
+      return this.quarantineEnvelope();
+    }
     let res;
     try {
       res = await this.post("sendMessage", req);

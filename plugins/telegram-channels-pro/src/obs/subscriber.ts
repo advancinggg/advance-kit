@@ -40,6 +40,7 @@ const LEVEL_BY_TYPE: Record<EventTypeKey, "DEBUG" | "INFO" | "WARN" | "ERROR"> =
   alert_emit: "INFO",
   channel_notification_emitted: "DEBUG",
   chat_type_lookup: "DEBUG",
+  outbound_chat_type_denied: "WARN",
 };
 
 // Event types fed to the AlertDispatcher.
