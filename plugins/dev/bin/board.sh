@@ -185,9 +185,13 @@ _resolve_script_base() {
     return 0
   fi
 
-  # Step 5: current branch (non-detached)
+  # Step 5: current branch (non-detached). Gate via _is_safe_ref so the
+  # safety guarantee in §7.4 holds across ALL chain steps — git ref-name
+  # rules are restrictive but the chain-design promise in the doc says
+  # every candidate that survives passed _is_safe_ref, not "trust git's
+  # ref-name rules for this one step".
   cand=$(git symbolic-ref --short HEAD 2>/dev/null || true)
-  if [ -n "$cand" ]; then
+  if [ -n "$cand" ] && _is_safe_ref "$cand"; then
     printf '%s' "$cand"
     return 0
   fi

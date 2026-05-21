@@ -2397,28 +2397,40 @@ behaviour does not diverge):
 
 ### 7.4 Sanitisation contract
 
-Two distinct mechanisms (NOT one) handle externally-sourced strings:
+Two distinct mechanisms (NOT one) handle externally-sourced strings.
+Both reject **the same metachar set** — what differs is the action
+(substitute vs reject) and the empty-string handling.
 
-**`_sanitize` — display-substitution form**: same contract as
-`worktree-helper.sh list_cmd`'s `_sanitize`. Used for display fields whose
-provenance is partially trusted but where a malicious value should not
-become copy-paste-runnable text: state.json values
-(`task_id`/`phase`/`eval_round`/`updated_at`), git ref names (the branch
-list in Section 3), and module titles. Tainted values are replaced with
-`?` and a stderr warning is emitted; the row is still printed so operators
-retain visibility.
+**Rejected metachar set (shared)**: any of `$`, backtick, `;`, `|`, `&`,
+`\n`, `\r`, `\t`, `<`, `>`, `\033` (ESC — ANSI / terminal-injection
+introducer), `\x7f` (DEL). The ESC + DEL additions are STRICTER than
+the original `worktree-helper.sh list_cmd` `_sanitize` (which rejected
+only the first 8 of the 12); board.sh extends the set because the board
+also displays `base_branch` values which can carry ANSI escapes.
 
-**`_is_safe_ref` — reject-on-metachar control-flow form**: stricter than
-`_sanitize`. Used for any value that flows into git invocations
-(`git rev-parse --verify`, `git rev-list --left-right --count`). If the
-candidate contains any of `;`, `|`, `&`, `$`, backtick, `\n`, `\r`, `\t`,
-`<`, `>`, OR is empty → reject → the chain falls through to the next
-fallback. Tainted values therefore NEVER reach git.
+**`_sanitize` — display-substitution form**: used for display fields
+whose provenance is partially trusted but where a malicious value
+should not become copy-paste-runnable text: state.json values
+(`task_id`/`phase`/`eval_round`/`updated_at`/`base_branch` when shown
+as the per-branch `(base: X)` annotation), git ref names (the branch
+list in Section 3), and module titles. Tainted values are replaced
+with `?` and a stderr warning is emitted; the row is still printed so
+operators retain visibility.
+
+**`_is_safe_ref` — reject-on-metachar control-flow form**: used for any
+value that flows into git invocations (`git rev-parse --verify`,
+`git rev-list --left-right --count`) AND for any value used in the
+Section 3 base-resolution chain. If the candidate hits the shared
+metachar set above OR is empty → reject → the chain falls through to
+the next fallback. Tainted values therefore NEVER reach git.
 
 The footer disclaimer renders the resolved base name as-is (no
-`?`-substitution) because by construction every candidate that survived
-the resolution chain already passed `_is_safe_ref`. This is safe by
-chain-design, not by output-time sanitisation.
+`?`-substitution) because every candidate that survives the
+resolution chain in §7.2 — including step 5 (current branch via
+`git symbolic-ref --short HEAD`), which is also gated by `_is_safe_ref`
+in code — passed the safety check. This is safe by chain-design, not
+by output-time sanitisation. Step 6 (unresolved) is the only path
+where the footer prints a special-case literal string.
 
 ---
 
