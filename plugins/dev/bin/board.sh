@@ -48,17 +48,18 @@ fi
 # Helpers
 # ──────────────────────────────────────────────────────────────
 
-# Sanitise externally-sourced display strings — replace shell-metachars +
-# control chars with `?` and emit a stderr warning. Same contract as
+# Sanitise externally-sourced display strings — replace shell-metachars,
+# control chars (including ESC for ANSI), and other terminal-injection
+# vectors with `?` and emit a stderr warning. Same contract shape as
 # worktree-helper.sh list_cmd. NEVER used for control-flow values that
-# flow into git invocations — those use a reject-on-metachar pre-check
-# instead (see _is_safe_ref).
+# flow into git invocations — those use the reject-on-metachar pre-check
+# in _is_safe_ref instead.
 _sanitize() {
   local val="$1"
   local source_label="${2:-(unknown)}"
   case "$val" in
-    *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*|*$'\r'*|*$'\t'*|*'<'*|*'>'*)
-      echo "board.sh: WARNING — field for $source_label contains shell metacharacter; displayed as ?" >&2
+    *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*|*$'\r'*|*$'\t'*|*'<'*|*'>'*|*$'\033'*|*$'\x7f'*)
+      echo "board.sh: WARNING — field for $source_label contains shell metacharacter or control char; displayed as ?" >&2
       printf '?'
       return ;;
   esac
@@ -66,24 +67,29 @@ _sanitize() {
 }
 
 # Strict reject-on-metachar test for values flowing into git ref-spec
-# parsing. Returns 0 if value is safe to pass to git rev-parse / rev-list,
-# non-zero otherwise.
+# parsing OR into display interpolation that bypasses _sanitize. Returns
+# 0 if value is safe, non-zero otherwise. Rejects the same metachar set
+# as _sanitize (including ESC and DEL — ANSI / terminal-injection
+# vectors) PLUS the empty string. Action differs (return vs substitute);
+# the metachar coverage is intentionally identical.
 _is_safe_ref() {
   local val="$1"
   [ -n "$val" ] || return 1
   case "$val" in
-    *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*|*$'\r'*|*$'\t'*|*'<'*|*'>'*)
+    *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*|*$'\r'*|*$'\t'*|*'<'*|*'>'*|*$'\033'*|*$'\x7f'*)
       return 1 ;;
   esac
   return 0
 }
 
 # Render path with $HOME → ~ shortening (display only; path is
-# filesystem-trusted).
+# filesystem-trusted). The `"$HOME"` quoting inside the parameter
+# expansion is REQUIRED — without it, glob metachars in $HOME would be
+# treated as a pattern, not a literal prefix.
 _short_path() {
   local p="$1"
-  if [ -n "${HOME:-}" ] && [ "${p#$HOME}" != "$p" ]; then
-    printf '~%s' "${p#$HOME}"
+  if [ -n "${HOME:-}" ] && [ "${p#"$HOME"}" != "$p" ]; then
+    printf '~%s' "${p#"$HOME"}"
   else
     printf '%s' "$p"
   fi
@@ -102,10 +108,16 @@ _jq_field() {
 
 # Walk git worktree list --porcelain and emit `<path>\t<branch>` rows.
 # Detached HEAD worktrees emit `<path>\tdetached`. Branch is short name.
+# Path may contain whitespace — the porcelain format is `worktree <path>`
+# with `<path>` extending to end-of-line; we strip the literal `worktree `
+# prefix instead of relying on `$2`.
 _worktree_rows() {
   git worktree list --porcelain 2>/dev/null | awk '
-    /^worktree / { p=$2; next }
-    /^branch / { b=$2; sub("refs/heads/", "", b); print p "\t" b; p=""; b=""; next }
+    /^worktree / { sub(/^worktree /, ""); p=$0; next }
+    /^branch / {
+      b=$2; sub("refs/heads/", "", b);
+      print p "\t" b; p=""; b=""; next
+    }
     /^detached/ { print p "\tdetached"; p=""; next }
   '
 }
@@ -232,7 +244,7 @@ print_section_1() {
 
   local total_passed=0
   local total_active=0
-  local f title id passed active pct status_label color
+  local f title passed active pct status_label color
   for f in "${files[@]}"; do
     [ -e "$f" ] || continue
 
@@ -434,18 +446,22 @@ print_section_3() {
       behind="?"
     fi
 
-    # Dirty count.
-    if [ -n "$owning_wt" ] && [ -d "$owning_wt" ]; then
-      dcount=$( ( git -C "$owning_wt" status --porcelain 2>/dev/null | wc -l | tr -d ' ' ) || echo "?" )
-      if [ "$dcount" = "?" ] || [ -z "$dcount" ]; then
-        dirty="?"
-        dirty_color="$DIM"
-      elif [ "$dcount" -gt 0 ]; then
+    # Dirty count. Gate on `is-inside-work-tree` first so we distinguish
+    # "git worked, 0 modified files" (→ N) from "git failed, can't tell"
+    # (→ ?). The old subshell pattern silently misclassified the failure
+    # case as N because `wc -l` always prints `0` even on an empty pipe.
+    if [ -n "$owning_wt" ] && [ -d "$owning_wt" ] \
+       && git -C "$owning_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      dcount=$(git -C "$owning_wt" status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "")
+      if [ -n "$dcount" ] && [ "$dcount" -gt 0 ] 2>/dev/null; then
         dirty="Y ($dcount)"
         dirty_color="$YELLOW"
-      else
+      elif [ "$dcount" = "0" ]; then
         dirty="N"
         dirty_color=""
+      else
+        dirty="?"
+        dirty_color="$DIM"
       fi
     elif [ -n "$owning_wt" ]; then
       dirty="?"
@@ -459,7 +475,13 @@ print_section_3() {
     if [ -n "$owning_wt" ]; then
       wt_label=$(_short_path "$owning_wt")
       if [ -n "$per_branch_base" ] && [ "$per_branch_base" != "$script_base" ]; then
-        wt_label="${wt_label}  (base: ${per_branch_base})"
+        # Sanitise per_branch_base before display interpolation —
+        # _is_safe_ref accepts only what's safe for git, but the
+        # display layer must also resist ANSI / control injection
+        # from a tampered state.json. _sanitize handles that.
+        local pbb_display
+        pbb_display=$(_sanitize "$per_branch_base" "owning-worktree:base_branch")
+        wt_label="${wt_label}  (base: ${pbb_display})"
       fi
     else
       wt_label="${DIM}(stale — no worktree)${RESET}"

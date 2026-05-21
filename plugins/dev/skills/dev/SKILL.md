@@ -2319,7 +2319,8 @@ sections of repository state to stdout.
 `pct = (passed × 100 + active / 2) ÷ active`. Render
 `module title  passed/active  pct  derived status` per module + a trailing
 overall AC-weighted aggregate row `sum_passed / sum_active`. Denominator-zero
-guard everywhere: zero `Active=Y` AC → `—  —%  Not Started` (never `0%`).
+guard everywhere: zero `Active=Y` AC → percentage cell renders as `—`
+(NOT `0%`, NOT `—%`); status text "Not Started".
 
 **Section 2 — Worktree status.** For every `git worktree list --porcelain` entry,
 overlay `<path>/.dev-state/state.json` if present and valid (`jq empty`). Render
