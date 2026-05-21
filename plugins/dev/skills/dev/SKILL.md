@@ -2396,18 +2396,28 @@ behaviour does not diverge):
 
 ### 7.4 Sanitisation contract
 
-The `_sanitize` helper (same contract as `worktree-helper.sh list_cmd`'s
-`_sanitize`) is reused for ALL externally-sourced strings that flow into
-stdout — state.json values, git ref names (branch list in Section 3), and
-the resolved base-branch name when rendered in the footer.
+Two distinct mechanisms (NOT one) handle externally-sourced strings:
 
-Tainted values are replaced with `?` and a stderr warning is emitted; the row
-is still printed so operators retain visibility. The base-branch
-**control-flow** check (the value passed into `git rev-parse --verify` and
-`git rev-list`) uses a stricter reject-on-metachar pre-check (any of `;`,
-`|`, `&`, `$`, backtick, `\n`, `\r`, `\t`, `<`, `>` → fall through to next
-fallback) so tainted values never reach git. The `?`-substitution form is
-only for display fields.
+**`_sanitize` — display-substitution form**: same contract as
+`worktree-helper.sh list_cmd`'s `_sanitize`. Used for display fields whose
+provenance is partially trusted but where a malicious value should not
+become copy-paste-runnable text: state.json values
+(`task_id`/`phase`/`eval_round`/`updated_at`), git ref names (the branch
+list in Section 3), and module titles. Tainted values are replaced with
+`?` and a stderr warning is emitted; the row is still printed so operators
+retain visibility.
+
+**`_is_safe_ref` — reject-on-metachar control-flow form**: stricter than
+`_sanitize`. Used for any value that flows into git invocations
+(`git rev-parse --verify`, `git rev-list --left-right --count`). If the
+candidate contains any of `;`, `|`, `&`, `$`, backtick, `\n`, `\r`, `\t`,
+`<`, `>`, OR is empty → reject → the chain falls through to the next
+fallback. Tainted values therefore NEVER reach git.
+
+The footer disclaimer renders the resolved base name as-is (no
+`?`-substitution) because by construction every candidate that survived
+the resolution chain already passed `_is_safe_ref`. This is safe by
+chain-design, not by output-time sanitisation.
 
 ---
 

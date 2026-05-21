@@ -286,13 +286,19 @@ print_section_1() {
       color="$DIM"
     else
       pct=$(( (passed * 100 + active / 2) / active ))
-      if [ "$pct" -ge 100 ]; then
-        status_label="Production"
-      elif [ "$pct" -gt 0 ]; then
-        status_label="In Progress"
-      else
+      # Derived status keyed off RAW counts (matches SKILL.md §6.1.1
+      # table), NOT the rounded percentage — so passed=1, active=201
+      # (pct rounds to 0) correctly renders "In Progress", not
+      # "Not Started".
+      if [ "$passed" -eq 0 ]; then
         status_label="Not Started"
+      elif [ "$passed" -ge "$active" ]; then
+        status_label="Production"
+      else
+        status_label="In Progress"
       fi
+      # Percentage colour band is independent of status text (see
+      # SKILL.md §7.3 "two-axis classification").
       if [ "$pct" -ge 85 ]; then
         color="$GREEN"
       elif [ "$pct" -ge 70 ]; then
