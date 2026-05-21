@@ -485,6 +485,39 @@ sequenceDiagram
 
 **Inbound callback dispatch**: similar pattern but admin-verify → M004 lookup → resolve.
 
+**v1.1.0 — Inbound chat-type cache prime (REQ-035 + CONTRACT-016 consumer — AC-22)**:
+
+Every inbound `handleInbound` (both message and callback_query branches) calls `chatTypeCache.primeCache(chat.id, chat.type as ChatType)` as the FIRST observable side-effect, BEFORE any routing decision (admin check, registration gate, command parse). Per CONTRACT-016 (M002 §1.4.5), ALL observed types are cached including non-private (so outbound DiD can short-circuit on any future model attempt to address a known-non-private chat_id without lazy-fetch). REQ-034 chat-type inbound gate is OUT OF SCOPE for this slice; AC-22 placement is forward-compatible: when REQ-034 lands and adds a non-private gate, primeCache will already be positioned before it.
+
+**v1.1.0 — Wait-for-reset handshake disconnect (REQ-047 + CONTRACT-010 ext — AC-27)**:
+
+```mermaid
+sequenceDiagram
+    participant EB as EventBus
+    participant WH as WaitForResetHandshakeHandler
+    participant RG as M006 RegistrationGate
+    participant SP as M003 MCP acceptor
+    participant CL as claude session
+
+    Note over WH: registered BEFORE SessionRegistry per Set-insertion-order
+    EB->>WH: session_connected{session_id, ...}
+    WH->>RG: isWaitForReset()
+    alt true
+        RG-->>WH: true
+        WH->>WH: disconnecting.add(session_id) [idempotency guard]
+        WH->>SP: disconnectSession(session_id, "registration timed out; run reset-admin to retry")
+        Note over WH: fire-and-forget; .finally() clears disconnecting set
+        SP->>CL: disconnect frame with reason carried via M003-AC-27 free-form disconnect_farewell path
+        Note over CL: claude --channels prompt sees disconnect_reason; user runs reset-admin CLI
+    else false
+        RG-->>WH: false
+        Note over WH: no action (normal session admission proceeds via SessionRegistry)
+    end
+```
+
+**v10 boot-race mitigation**: WaitForResetHandshakeHandler is constructed + installed in `src/daemon/main.ts` at NEW step L14b (between `new MCPDaemonAcceptor(...)` construction and `await mcpAcceptor.start()`), so the subscription exists before any session_connected event can fire. `src/routing/index.ts`'s `installRouting` accepts the already-installed instance via `waitForResetHandshake?` arg and skips re-install (just tracks dispose).
+
+
 **Session capacity FSM**:
 
 ```mermaid
@@ -696,6 +729,7 @@ sequenceDiagram
 | 2026-05-12 | Initial creation |
 | 2026-05-15 | /dev Slice 2 begins: SessionRegistry + InboundDispatcher (text + callback branches) + AdminChatRegistry + commands (/session /list /status) + NoSessionReplyThrottle + capacity guard + pendingRegistry cleanup trigger; event payload shapes aligned to event-types.ts (route_decision uses update_id sentinel -1 for non-update events; auth_deny_routing uses sender_hash field); §1.4.3 spec-vs-test mismatch corrected (silent drop, no answerCallbackQuery to attacker); AC-19 benchmark relaxed to in-process micro-bench (max<5ms vs production E2E budget 50ms); §2.7 mermaid event payloads will be regenerated to match the table (deferred to future /spec rerun) |
 | 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 11 new ACs (AC-21..AC-30 + AC-26b): inbound chat-type gating with `chat_type_inbound_denied` (REQ-034); cache prime side-effect on inbound (REQ-035 + CONTRACT-016 consumer); `/session` strict full-line regex (REQ-040); auth-reject aggregated alert with sliding-window thresholds (REQ-043); first-listed-admin routing for outbound notifications + ops alerts (REQ-046 via CONTRACT-009 ext); wait-for-reset handshake disconnect carrier (REQ-047 via CONTRACT-010 ext); popup throttle dispatcher (REQ-039 via CONTRACT-011 ext); typing-indicator dispatcher (REQ-033 + Decision A15 fire-and-forget); architectural enforcement of text-typed-approval-NOT-approval (REQ-036); `/session` UX one-shot snapshot annotation; `/list` Branch trade-off doc. 20 existing ACs preserved (merge-preserve per /spec stability rules). |
+| 2026-05-21 | /dev task `dev-advance-kit-20260521-0edfd84f` — REQ-035 primeCache + REQ-047 wait-for-reset handshake. **In-scope ACs**: AC-22 (InboundDispatcher.handleInbound calls `chatTypeCache.primeCache(chat.id, chat.type)` as FIRST observable side-effect on every inbound — both message and callback_query branches — BEFORE admin/registration routing per CONTRACT-016 cache-population invariant; AC-22 ordering is forward-compatible with future REQ-034 chat-type inbound gate which is OUT OF SCOPE), AC-27 (NEW `WaitForResetHandshakeHandler` subscribes to `session_connected`; queries `M006.isWaitForReset()`; on true calls `mcpAcceptor.disconnectSession(session_id, "registration timed out; run reset-admin to retry")` via CONTRACT-006; idempotency guard via internal `disconnecting: Set<string>`; installed at main.ts L14b BEFORE `mcpAcceptor.start()` to close boot-race per v10 plan). §2.7 gains primeCache + WaitForResetHandshake subsections. `InstallRoutingArgs` extends with `chatTypeCache, registrationGate, waitForResetHandshake?` (handshake is pre-installed instance from main.ts; routing skips re-install). |
 
 ### 3.8 Implementation Notes
 

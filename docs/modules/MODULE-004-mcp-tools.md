@@ -491,6 +491,20 @@ sequenceDiagram
     MT->>MT: remove entry; emit pending_capacity_snapshot
 ```
 
+**v1.1.0 — Outbound chat-type defense-in-depth (REQ-035 — AC-20/21/29)**:
+
+All 4 outbound tools (`reply`, `react`, `edit_message`, `request_approval`) gate every chat_id through CONTRACT-016 ChatTypeCache before any TG API call. Gate semantics (verified by tests `M004-T20-private`, `M004-T20-deny`, `M004-T21-cold`, `M004-T21-fetch-fail-retry`, `M004-T29-hit`, `M004-T29-fetch-fail`):
+
+1. **chat_id normalization**: convert to numeric. `number` → use directly. Numeric string (`/^-?\d+$/`) within `[Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]` (BigInt-validated) → `Number()`. Otherwise (`@username`, out-of-safe-range, garbage) → treat as unresolvable: emit `outbound_chat_type_denied{chat_id: -1, observed_type: 'unresolvable', tool}` + return InvalidChatTypeError envelope. This satisfies AC-20 literal "non-private chat type → InvalidChatTypeError" by extending "non-private" to "cannot prove private".
+2. **Cache lookup**: `await chatTypeCache.getChatType(chatIdNumeric)`. Hit path returns type in O(1). Miss path triggers CONTRACT-004 lazy-fetch via `getChat` (single in-flight dedup per cache; AC-21 cold-start).
+3. **Failure path**: lazy-fetch `ChatTypeFetchError` is caught at the tool: emit `outbound_chat_type_denied{chat_id, observed_type: 'unknown', tool}` + return InvalidChatTypeError envelope. **Cache NOT populated** (AC-21: "does NOT cache; next call retries"). Next call re-triggers a fresh lazy-fetch.
+4. **Denial path**: `observedType !== 'private'` → emit `outbound_chat_type_denied{chat_id, observed_type, tool}` + return InvalidChatTypeError envelope.
+5. **Per-tool envelope shape** (AC-20 interpretation): `reply`/`edit_message` use `{delivered: false, error: 'InvalidChatTypeError'}` (existing ReplyResult/EditResult types use `delivered` field); `react` uses `{ok: false, error: 'InvalidChatTypeError'}`; `request_approval` uses its existing envelope shape with `error: 'InvalidChatTypeError'`. Common invariant verified by tests: every denial envelope carries `error: 'InvalidChatTypeError'` as a literal string value, alongside the tool-specific success/failure flag.
+
+The gate runs at the TOP of each handler — BEFORE any sendMessage / setReaction / editMessageText / answerCallbackQuery call. Tools never throw InvalidChatTypeError; they return the structured envelope. MCP dispatch (`daemon-acceptor.dispatchToolCall`) sees a normal `{ok: <flag>, result: <envelope>}` tool-result frame.
+
+`request_approval` quarantine semantics: continues current behavior (calls `tg.sendMessage` WITHOUT the new `opts.requester_session` parameter — preserves the PendingApprovalRegistry add-after-send invariant; replay queueing would break that ordering by sending a re-prompt with no registry entry). Acceptable per REQ-009's "stateful tool — must be requested while daemon is healthy".
+
 ### 2.8 Error Handling
 
 | Error | Trigger | Surfaced to claude |
@@ -683,6 +697,7 @@ stateDiagram-v2
 | 2026-05-12 | Initial creation |
 | 2026-05-15 | /dev Slice 2 begins: 5 MCP tools (reply / react / edit_message / download_attachment / request_approval) + PendingApprovalRegistry (CONTRACT-011) + AttachmentJanitor + SnapshotEmitter; CONTRACT-011 signature includes `(callback_query_id, tg)` on resolveApproval and `(tg)` on cleanupBySession; PendingEntry adds `chat_id` field; new TG_ADMIN_CHAT_ID env documented |
 | 2026-05-16 | v1.1.0 — /spec update merges PRD v1.6→v2.0 amendments. 10 new ACs (AC-20..AC-29): outbound chat-type DiD on 4 outbound tools via CONTRACT-016 (REQ-035) including cold-start lazy-fetch path; download_attachment 0700/0600 + filename random-hash sanitization (REQ-042); janitor TTL bound to 4h (A8 implicit /spec decision); capacity-full TG admin alert at pending=50 with 5-min throttle (REQ-038); popup throttle CONTRACT-011 ext (REQ-039); architectural text-typed-approval enforcement (REQ-036 — no code path exists from text to resolveApproval); outbound_chat_type_denied event schema. 19 existing ACs preserved (merge-preserve per /spec stability rules). |
+| 2026-05-21 | /dev task `dev-advance-kit-20260521-0edfd84f` — REQ-035 outbound chat-type DiD impl on 4 tools. **In-scope ACs**: AC-20 (gate at top of each handler before TG API call; returns per-tool envelope with `error: 'InvalidChatTypeError'`), AC-21 (cold-start lazy-fetch via CONTRACT-016 with single in-flight dedup; ChatTypeFetchError → emit + envelope, cache NOT populated, next call retries), AC-29 (`outbound_chat_type_denied` event with `{chat_id, observed_type, tool}` payload — emitted on every denial path including unresolvable chat_id + lazy-fetch failure). Per-tool envelope shapes preserved (reply/edit_message use `delivered:false`, react uses `ok:false`, request_approval uses its existing shape). reply.ts text-only path adds `requester_session: ctx.sessionId` to `tg.sendMessage(req, opts)` for REQ-037 queue routing. `request_approval` continues calling `sendMessage` WITHOUT opts to preserve PendingApprovalRegistry add-after-send invariant. §2.7 gains outbound chat-type DiD core-logic subsection. CONTRACT-003 catalog gains `outbound_chat_type_denied` event type. CONTRACT-004 SendMessageEnvelope union widens with `capacity_exceeded` variant + sendMessage signature gains metadata-only `opts.requester_session` (NOT POSTed to TG). |
 
 ### 3.8 Implementation Notes
 

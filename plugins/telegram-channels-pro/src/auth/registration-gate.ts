@@ -31,6 +31,12 @@ export interface RegistrationGate {
    * counters, transitions state to 'open', emits registration_event{window_opened, detail:{code_hash, trigger:'admin_reset'}}.
    */
   forceReopenForReset(): void;
+  /**
+   * v1.1.0 (REQ-047 stream c): wait-for-reset state query. Returns true iff state === 'waiting_for_reset'.
+   * M005 WaitForResetHandshakeHandler calls this on every session_connected to drive the disconnect
+   * handshake with "registration timed out; run reset-admin to retry" hint string.
+   */
+  isWaitForReset(): boolean;
   /** Stop timer (e.g., on daemon_stop). */
   stop(): void;
 }
@@ -144,6 +150,10 @@ export class RegistrationGateImpl implements RegistrationGate {
 
   isInRegistrationWindow(): boolean {
     return this.currentState === "open";
+  }
+
+  isWaitForReset(): boolean {
+    return this.currentState === "waiting_for_reset";
   }
 
   currentCodeForTest(): string | null {
