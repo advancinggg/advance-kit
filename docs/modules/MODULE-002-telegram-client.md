@@ -830,9 +830,9 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 62% (22 passed / 35 active) | 2026-05-16 |
+| In Progress | 83% (29 passed / 35 active) | 2026-05-21 |
 
-Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 22/35 ≈ 62%. /dev channel-protocol slice (REQ-033/037/045) verified 3 v1.1.0 ACs in 2026-05-16: AC-31 (quarantine_replay_resolved payload schema), AC-32 (eta_hint on quarantine_enter/exit + probe-fail re-emit), AC-33 (sendChatAction fire-and-forget wrapper). Earlier v1.1.0 amendment baseline was 60% (21 passed / 35 active) after 14 new ACs landed as untested per /spec stability rules; pre-amendment progress was 90% (19 passed + 2 untested = 21/21 active).
+Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 29/35 ≈ 83%. /dev task `dev-advance-kit-20260517-40bb2ae` (REQ-035 / REQ-022 slice) verified 7 ACs in 2026-05-21: AC-22 (`getChat(chat_id)` envelope wrapper), AC-23..27 (ChatTypeCache hit / miss-lazy-fetch / miss-failure / LRU-1000 / TTL-1h), AC-34 (REQ-022 three independent capacity edges — SessionRegistry / PendingApprovalRegistry / OutboundReplayQueue). Prior 2026-05-16 channel-protocol slice (REQ-033/037/045) verified 3 v1.1.0 ACs (AC-31/32/33). Earlier v1.1.0 amendment baseline was 60% (21 passed / 35 active) after 14 new ACs landed as untested per /spec stability rules; pre-amendment progress was 90% (19 passed + 2 untested = 21/21 active). Remaining 6 untested: AC-13, AC-14 (REQ-020 E2E latency), AC-28, AC-29, AC-30 (REQ-037 quarantine replay queue per-session bookkeeping + drain), AC-35 (REQ-017 stability soak).
 
 ### 3.2 File Structure
 
@@ -921,19 +921,19 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-002-AC-19 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-002-AC-20 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
 | MODULE-002-AC-21 | Y | passed | dev-tgcp-2026-05-13-slice-infra | 2026-05-14 |
-| MODULE-002-AC-22 | Y | untested | — | — |
-| MODULE-002-AC-23 | Y | untested | — | — |
-| MODULE-002-AC-24 | Y | untested | — | — |
-| MODULE-002-AC-25 | Y | untested | — | — |
-| MODULE-002-AC-26 | Y | untested | — | — |
-| MODULE-002-AC-27 | Y | untested | — | — |
+| MODULE-002-AC-22 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
+| MODULE-002-AC-23 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
+| MODULE-002-AC-24 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
+| MODULE-002-AC-25 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
+| MODULE-002-AC-26 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
+| MODULE-002-AC-27 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-002-AC-28 | Y | untested | — | — |
 | MODULE-002-AC-29 | Y | untested | — | — |
 | MODULE-002-AC-30 | Y | untested | — | — |
 | MODULE-002-AC-31 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-002-AC-32 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-002-AC-33 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
-| MODULE-002-AC-34 | Y | untested | — | — |
+| MODULE-002-AC-34 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-002-AC-35 | Y | untested | — | — |
 
 ### 3.5 Feature Implementation Record

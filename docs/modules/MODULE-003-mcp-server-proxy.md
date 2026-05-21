@@ -725,9 +725,9 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 90% (28 passed / 31 active) | 2026-05-16 |
+| In Progress | 97% (30 passed / 31 active) | 2026-05-21 |
 
-Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 28/31 ≈ 90%. /dev channel-protocol slice (REQ-033/037/045) verified 11 v1.1.0 ACs in 2026-05-16: AC-18 (channel capability shape `{}`), AC-19 (deliverChannelNotification), AC-20 (unknown-session error path), AC-21 (3-pillar instructions), AC-23 (will_reconnect handshake), AC-24/24b/24c (reconnect classification spurious/sigterm/keepalive), AC-25 (quarantine_replay_resolved MCP forwarding), AC-26 (quarantine state_changed broadcast), AC-28 (channel_notification_emitted event). Remaining 3 untested ACs: AC-22 (shortid daemon-authoritative — REQ-041), AC-27 (wait-for-reset disconnect carrier — REQ-047), AC-29 (A/B parity harness — v0.2 release gate).
+Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 30/31 ≈ 97%. /dev task `dev-advance-kit-20260517-40bb2ae` (REQ-041 / REQ-047 slice) verified 2 ACs in 2026-05-21: AC-22 (daemon-authoritative shortid + `SessionInitAckFrame` round-trip), AC-27 (`disconnect_farewell` free-form reason carrier — `closeSession` `isKnownReason` allowlist gate removed; redaction + 256-truncation defense-in-depth). Prior 2026-05-16 channel-protocol slice (REQ-033/037/045) verified 11 v1.1.0 ACs (AC-18/19/20/21/23/24/24b/24c/25/26/28). Remaining 1 untested: AC-29 (REQ-033 + A15 v0.2 release-gate A/B parity harness — runs live upstream API calls, release-time concern).
 
 ### 3.2 File Structure
 
@@ -803,14 +803,14 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-003-AC-19 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-20 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-21 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
-| MODULE-003-AC-22 | Y | untested | — | — |
+| MODULE-003-AC-22 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-003-AC-23 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-24 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-24b | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-24c | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-25 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-26 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
-| MODULE-003-AC-27 | Y | untested | — | — |
+| MODULE-003-AC-27 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-003-AC-28 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-003-AC-29 | Y | untested | — | — |
 
