@@ -56,7 +56,8 @@ ni mutar en silencio archivos fuera del paso actual.
 
 **Skills:**
 - `/dev [descripción de la tarea]` — ejecuta el flujo forzado completo
-- `/dev status | resume | abort | doctor` — inspeccionar, retomar o reiniciar un flujo en curso
+- `/dev status | board | resume | abort | doctor` — inspeccionar (incluye `board`, panel snapshot de solo lectura, 2.9.0+), retomar o reiniciar un flujo en curso
+- `/dev worktree-new | worktree-list | worktree-finish | worktree-remove` — gestionar worktrees paralelos para tareas /dev concurrentes (2.8.0+)
 - `/spec [ruta/al/PRD.md]` — genera arquitectura y especificaciones MECE de módulos a partir de un PRD
 
 **Agentes:**
@@ -147,7 +148,7 @@ Luego añade a `~/.claude/settings.json`:
 
 | Plugin | Versión | Estado |
 |---|---|---|
-| `dev` | `2.8.2` | Estable — flujo /dev + /spec + /prd con evaluadores duales, progreso MODULE por AC, ADR system y /dev paralelo por worktree. Incluye skills `dev` / `spec` / `prd` + statusline opcional. **Más reciente:** 2.8.0 /dev paralelo por worktree (4 subcomandos `worktree-*`; `/spec` + `/prd` mantienen single-flight). **Anterior:** 2.5.0 ADR system, 2.6.0 disciplina de alcance /prd, 2.7.0 alineación upstream. |
+| `dev` | `2.9.0` | Estable — flujo /dev + /spec + /prd con evaluadores duales, progreso MODULE por AC, ADR system, /dev paralelo por worktree, panel snapshot de solo lectura `/dev board`. Incluye skills `dev` / `spec` / `prd` + statusline opcional. **Más reciente:** 2.9.0 panel snapshot `/dev board`. **Anterior:** 2.6.0 disciplina de alcance /prd, 2.7.0 alineación upstream, 2.8.0 /dev paralelo por worktree. |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
 | `telegram-channels-pro` | `0.1.3` | v0.1 completo (solo macOS) — 8 módulos: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 herramientas MCP) + routing (LRU + control de admin + comandos slash) + deployment (CLI launchd + socket de control + ROLLBACK.md). |

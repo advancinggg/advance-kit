@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "2.8.2",
-  "description": "Enforced dev workflow (/dev + /spec + /prd) with dual-model review, independent evaluator architecture, AC-driven MODULE progress, aligned §N.M section numbering, ADR (Architecture Decision Records) system, upstream-alignment escape hatches, and worktree-parallel /dev. Includes `dev`, `spec`, `prd` skills plus opt-in statusline. Latest: 2.8.0 worktree-parallel /dev — 4 `worktree-*` subcommands backed by `worktree-helper.sh`; per-worktree `.dev-state/` via shared `.git/`; `/spec` + `/prd` stay single-flight. Earlier: 2.5.0 ADR system + 22-pair semantic conflict detection, 2.6.0 /prd scope discipline + Phase 3.0 boundary block, 2.7.0 upstream-alignment escape hatches (/dev §2.1.2 PRD/Spec change, §2.1.3 Core Logic drift, /spec §0.6 PRD-gap escalation).",
+  "version": "2.9.0",
+  "description": "Enforced dev workflow (/dev + /spec + /prd) with dual-model review, independent evaluator architecture, AC-driven MODULE progress, aligned §N.M section numbering, ADR (Architecture Decision Records) system, upstream-alignment escape hatches, worktree-parallel /dev, and read-only `/dev board` snapshot dashboard. Includes `dev`, `spec`, `prd` skills plus opt-in statusline. Latest: 2.9.0 `/dev board` snapshot dashboard — read-only stdout aggregator over MODULE §3.4 progress, per-worktree state.json overlay, and `dev-task-*` ahead/behind + dirty + stale flagging. Earlier: 2.6.0 /prd scope discipline + Phase 3.0 boundary block, 2.7.0 upstream-alignment escape hatches (/dev §2.1.2 PRD/Spec change, §2.1.3 Core Logic drift, /spec §0.6 PRD-gap escalation), 2.8.0 worktree-parallel /dev (4 `worktree-*` subcommands).",
   "author": { "name": "Advance Studio" }
 }

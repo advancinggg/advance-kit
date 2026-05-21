@@ -44,7 +44,8 @@
 
 **Skills：**
 - `/dev [任务描述]` —— 运行完整的强制工作流
-- `/dev status | resume | abort | doctor` —— 查看、恢复或重置进行中的工作流
+- `/dev status | board | resume | abort | doctor` —— 查看（含只读 `board` 快照看板，2.9.0+）、恢复或重置进行中的工作流
+- `/dev worktree-new | worktree-list | worktree-finish | worktree-remove` —— 为并发 /dev 任务管理并行 worktree (2.8.0+)
 - `/spec [PRD 路径]` —— 从 PRD 生成架构文档和 MECE 模块规范
 
 **Agents：**
@@ -127,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.8.2` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.8.0 worktree 并行（4 个 `worktree-*` 子命令；`/spec` + `/prd` 保持单飞行）。**早期：** 2.5.0 ADR 系统、2.6.0 /prd 范围纪律、2.7.0 上游对齐机制。 |
+| `dev` | `2.9.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.9.0 `/dev board` 快照看板。**早期：** 2.6.0 /prd 范围纪律、2.7.0 上游对齐机制、2.8.0 worktree 并行 /dev。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

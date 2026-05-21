@@ -9,8 +9,8 @@
   "plugins": [
     {
       "name": "dev",
-      "description": "Enforced dev workflow (/dev + /spec + /prd) with dual-model review, independent evaluator architecture, AC-driven MODULE progress, aligned \u00a7N.M section numbering, ADR (Architecture Decision Records) system, upstream-alignment escape hatches, and worktree-parallel /dev. Includes `dev`, `spec`, `prd` skills plus opt-in statusline. Latest: 2.8.0 worktree-parallel /dev \u2014 4 `worktree-*` subcommands backed by `worktree-helper.sh`; per-worktree `.dev-state/` via shared `.git/`; `/spec` + `/prd` stay single-flight. Earlier: 2.5.0 ADR system + 22-pair semantic conflict detection, 2.6.0 /prd scope discipline + Phase 3.0 boundary block, 2.7.0 upstream-alignment escape hatches (/dev \u00a72.1.2 PRD/Spec change, \u00a72.1.3 Core Logic drift, /spec \u00a70.6 PRD-gap escalation).",
-      "version": "2.8.2",
+      "description": "Enforced dev workflow (/dev + /spec + /prd) with dual-model review, independent evaluator architecture, AC-driven MODULE progress, aligned §N.M section numbering, ADR (Architecture Decision Records) system, upstream-alignment escape hatches, worktree-parallel /dev, and read-only `/dev board` snapshot dashboard. Includes `dev`, `spec`, `prd` skills plus opt-in statusline. Latest: 2.9.0 `/dev board` snapshot dashboard — read-only stdout aggregator over MODULE §3.4 progress, per-worktree state.json overlay, and `dev-task-*` ahead/behind + dirty + stale flagging. Earlier: 2.6.0 /prd scope discipline + Phase 3.0 boundary block, 2.7.0 upstream-alignment escape hatches (/dev §2.1.2 PRD/Spec change, §2.1.3 Core Logic drift, /spec §0.6 PRD-gap escalation), 2.8.0 worktree-parallel /dev (4 `worktree-*` subcommands).",
+      "version": "2.9.0",
       "author": {
         "name": "Advance Studio"
       },
@@ -36,7 +36,7 @@
     },
     {
       "name": "telegram-channels-pro",
-      "description": "Telegram-channels-pro daemon: single-instance Telegram bot daemon + Unix-socket MCP transport for claude sessions, sliding-window quarantine reliability (RC#1 fix), watchdog (orphan/stuck/idle), first-run admin registration window, structured JSON logs with redaction. v0.1 infrastructure slice \u2014 daemon-core + telegram-client + mcp-server-proxy (daemon side) + admin-auth + observability. M004 mcp-tools, M005 routing, M007 deployment ship in a subsequent release.",
+      "description": "Telegram-channels-pro daemon: single-instance Telegram bot daemon + Unix-socket MCP transport for claude sessions, sliding-window quarantine reliability (RC#1 fix), watchdog (orphan/stuck/idle), first-run admin registration window, structured JSON logs with redaction. v0.1 infrastructure slice — daemon-core + telegram-client + mcp-server-proxy (daemon side) + admin-auth + observability. M004 mcp-tools, M005 routing, M007 deployment ship in a subsequent release.",
       "version": "0.1.3",
       "author": {
         "name": "Advance Studio"
