@@ -58,7 +58,15 @@ describe("MODULE-004-AC-06: compat suite — upstream 0.0.6 schema agreement (ke
     const tg = new TelegramAPIClientImpl({ token: "t", eventBus: bus, clock, pollingStatus: ps, fetchFn: mock.fetch });
     const r = await reply(
       { chat_id: 1, text: "hi" },
-      { tg, apiBase: "https://api.example", token: "t", pollingStatus: ps, fetchFn: mock.fetch },
+      {
+        tg,
+        apiBase: "https://api.example",
+        token: "t",
+        pollingStatus: ps,
+        chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+        eventBus: bus,
+        fetchFn: mock.fetch,
+      },
     );
     const observed = keysOf(r);
     const expected = new Set(fix.result_keys_delivered);
@@ -78,7 +86,14 @@ describe("MODULE-004-AC-06: compat suite — upstream 0.0.6 schema agreement (ke
     mock.enqueue({ status: 200, headers: { "content-type": "application/json" }, body: { ok: true, result: true } });
     const r = await react(
       { chat_id: 1, message_id: 2, emoji: "👍" },
-      { apiBase: "https://api.example", token: "t", pollingStatus: ps, fetchFn: mock.fetch },
+      {
+        apiBase: "https://api.example",
+        token: "t",
+        pollingStatus: ps,
+        chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+        eventBus: bus,
+        fetchFn: mock.fetch,
+      },
     );
     const observed = keysOf(r);
     expect(observed.has("ok")).toBe(true);
@@ -93,7 +108,14 @@ describe("MODULE-004-AC-06: compat suite — upstream 0.0.6 schema agreement (ke
     const mock = makeMockFetch();
     mock.enqueue({ status: 200, headers: { "content-type": "application/json" }, body: { ok: true, result: { message_id: 7, date: 0, chat: { id: 1, type: "private" } } } });
     const tg = new TelegramAPIClientImpl({ token: "t", eventBus: bus, clock, pollingStatus: ps, fetchFn: mock.fetch });
-    const r = await editMessage({ chat_id: 1, message_id: 7, text: "x" }, { tg });
+    const r = await editMessage(
+      { chat_id: 1, message_id: 7, text: "x" },
+      {
+        tg,
+        chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+        eventBus: bus,
+      },
+    );
     const observed = keysOf(r);
     expect(observed.has("delivered")).toBe(true);
   });

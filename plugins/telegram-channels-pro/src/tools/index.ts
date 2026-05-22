@@ -3,6 +3,7 @@ import type { EventBus } from "../daemon/event-bus";
 import type { StateDir } from "../daemon/state-dir";
 import type { TelegramAPIClient } from "../telegram/client";
 import type { PollingStatusImpl } from "../telegram/polling-status";
+import type { ChatTypeCache } from "../telegram/chat-type-cache";
 import type { MCPDaemonAcceptor } from "../mcp/daemon-acceptor";
 import type { ToolCallFrame } from "../mcp/frame-types";
 import type { AdminChatRegistry } from "../routing/admin-chat-registry";
@@ -28,6 +29,8 @@ export interface InstallToolHandlersArgs {
   stateDir: StateDir;
   clock: Clock;
   adminChatRegistry: AdminChatRegistry;
+  // v1.1.0 — REQ-035 outbound chat-type DiD.
+  chatTypeCache: ChatTypeCache;
   pendingCapacity?: number;
   attachmentTtlHours?: number;
   janitorIntervalMin?: number;
@@ -69,18 +72,19 @@ export function installToolHandlers(args: InstallToolHandlersArgs): ToolsCtx {
   });
   janitor.start();
 
-  const replyCtx = {
-    tg: args.tg,
-    apiBase: args.apiBase,
-    token: args.token,
-    pollingStatus: args.pollingStatus,
-    fetchFn: args.fetchFn,
-  };
+  // Note: replyCtx is built per-call to inject the sessionId (REQ-037 propagation).
   const reactCtx = {
     apiBase: args.apiBase,
     token: args.token,
     pollingStatus: args.pollingStatus,
+    chatTypeCache: args.chatTypeCache,
+    eventBus: args.eventBus,
     fetchFn: args.fetchFn,
+  };
+  const editCtx = {
+    tg: args.tg,
+    chatTypeCache: args.chatTypeCache,
+    eventBus: args.eventBus,
   };
   const downloadCtx = {
     tg: args.tg,
@@ -95,8 +99,22 @@ export function installToolHandlers(args: InstallToolHandlersArgs): ToolsCtx {
   // already emits both events around the wrapped handler invocation
   // (see daemon-acceptor.ts dispatchToolCall). Per-handler emits would
   // duplicate every event in the JSONL log.
-  args.acceptor.registerToolHandler("reply", async (_sessionId, frame: ToolCallFrame) => {
-    const r = await reply(frame.params as ReplyParams, replyCtx);
+  //
+  // v1.1.0 — only `reply` consumes `sessionId` (for REQ-037 requester_session
+  // propagation into the quarantine outbound replay queue). react / edit_message /
+  // download_attachment keep the `_sessionId` underscore convention to satisfy
+  // TypeScript's noUnusedParameters strict-mode check.
+  args.acceptor.registerToolHandler("reply", async (sessionId, frame: ToolCallFrame) => {
+    const r = await reply(frame.params as ReplyParams, {
+      tg: args.tg,
+      apiBase: args.apiBase,
+      token: args.token,
+      pollingStatus: args.pollingStatus,
+      chatTypeCache: args.chatTypeCache,
+      eventBus: args.eventBus,
+      sessionId,
+      fetchFn: args.fetchFn,
+    });
     return { ok: r.delivered === true, result: r };
   });
 
@@ -106,7 +124,7 @@ export function installToolHandlers(args: InstallToolHandlersArgs): ToolsCtx {
   });
 
   args.acceptor.registerToolHandler("edit_message", async (_sessionId, frame: ToolCallFrame) => {
-    const r = await editMessage(frame.params as EditMessageParams, { tg: args.tg });
+    const r = await editMessage(frame.params as EditMessageParams, editCtx);
     return { ok: r.delivered === true, result: r };
   });
 
@@ -122,6 +140,8 @@ export function installToolHandlers(args: InstallToolHandlersArgs): ToolsCtx {
       adminChatRegistry: args.adminChatRegistry,
       clock: args.clock,
       requesterSessionId: sessionId,
+      chatTypeCache: args.chatTypeCache,
+      eventBus: args.eventBus,
     });
     return { ok: r.ok, result: r };
   });

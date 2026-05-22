@@ -14,16 +14,19 @@ import { cleanupStaleSocket, installShutdownHandlers } from "./shutdown";
 import { Watchdog } from "./watchdog";
 import { E_HOMEDIR } from "./errors";
 import { installObservability } from "../obs";
-import { TelegramAPIClientImpl } from "../telegram/client";
+import { TelegramAPIClientImpl, QUARANTINE_QUEUE_CAP } from "../telegram/client";
 import { PollingStatusImpl } from "../telegram/polling-status";
 import { OffsetManager } from "../telegram/offset-manager";
 import { PollingLoop } from "../telegram/polling-loop";
+import { OutboundReplayQueue } from "../telegram/outbound-replay-queue";
+import { ChatTypeCacheImpl } from "../telegram/chat-type-cache";
 import { MCPDaemonAcceptor } from "../mcp/daemon-acceptor";
 import { resolveAdminBoot } from "../auth/boot-resolver";
 import { AdminStateResetImpl } from "../auth/state-reset";
 import { AdminChatRegistry } from "../routing/admin-chat-registry";
 import { installToolHandlers } from "../tools";
 import { installRouting } from "../routing";
+import { WaitForResetHandshakeHandler } from "../routing/wait-for-reset-handshake";
 import { ControlSocket } from "../deployment/control-socket";
 
 export async function main(): Promise<void> {
@@ -88,11 +91,32 @@ export async function main(): Promise<void> {
   // request_approval issued in the first MCP session.
   const adminChatRegistry = new AdminChatRegistry(env.TG_ADMIN_CHAT_ID);
 
-  // L9: Build TG client with pollingStatus already bound.
+  // L8c (v1.1.0 — REQ-037): construct OutboundReplayQueue BEFORE tgClient so the client
+  // can inject it via cfg. Production wiring with EventBus (drain emits
+  // `quarantine_replay_resolved` events) + clock (drain reads `replayed_at` for the event
+  // payload schema per CONTRACT-003).
+  const outboundReplayQueue = new OutboundReplayQueue({
+    capacity: QUARANTINE_QUEUE_CAP,
+    eventBus,
+    clock,
+  });
+
+  // L9: Build TG client with pollingStatus + outboundReplayQueue already bound.
   const apiBase = env.TELEGRAM_API_BASE && env.TELEGRAM_API_BASE.trim().length > 0
     ? env.TELEGRAM_API_BASE
     : "https://api.telegram.org";
-  const tgClient = new TelegramAPIClientImpl({ token, eventBus, clock, pollingStatus, apiBase });
+  const tgClient = new TelegramAPIClientImpl({
+    token,
+    eventBus,
+    clock,
+    pollingStatus,
+    apiBase,
+    outboundReplayQueue,
+  });
+
+  // L9c (v1.1.0 — REQ-035): construct ChatTypeCache after tgClient so it can inject the
+  // client for cold-start lazy-fetch via CONTRACT-004 getChat.
+  const chatTypeCache = new ChatTypeCacheImpl(tgClient, clock, eventBus);
 
   // L9a (Slice 2 / CCD-10): bind AlertDispatcher to current admin chat (env-bootstrapped
   // value if set, else 0 placeholder), AND subscribe AlertDispatcher to live updates
@@ -123,21 +147,40 @@ export async function main(): Promise<void> {
     bootTs,
   });
 
-  // L13: Polling loop.
+  // L13: Polling loop. v1.1.0 — REQ-037: inject outboundReplayQueue so probe-success
+  // branch can drain on quarantine_exit per M002 §1.4.5b (inline, NOT via self-subscription).
   const polling = new PollingLoop({
     tgClient,
     eventBus,
     offsetManager,
     pollingStatus,
     clock,
+    outboundReplayQueue,
   });
   polling.start();
 
-  // L14: UDS acceptor (MCP socket for claude sessions).
+  // L15 (v10 REORDER — was L15 / now BEFORE L14): Admin-auth boot resolver must run
+  // BEFORE L14b WaitForResetHandshakeHandler so registrationGate is available.
+  const adminCtx = await resolveAdminBoot({ stateDir, env, eventBus, deploymentMode, clock });
+
+  // L14: UDS acceptor (MCP socket for claude sessions). v10: split construct + start so
+  // L14b can register the wait-for-reset handshake subscriber BEFORE start() admits any
+  // session_connected. Closes the REQ-047 boot-race (round 8 Codex C1 finding).
   const mcpAcceptor = new MCPDaemonAcceptor({ eventBus, stateDir, clock });
-  await mcpAcceptor.start();
+
+  // L14b (v1.1.0 — REQ-047 stream c): install WaitForResetHandshakeHandler BEFORE
+  // mcpAcceptor.start(). Handshake subscribes to session_connected and disconnects with
+  // the literal "registration timed out; run reset-admin to retry" hint when M006 reports
+  // waiting_for_reset state.
+  const waitForResetHandshake = new WaitForResetHandshakeHandler({
+    eventBus,
+    registrationGate: adminCtx.registrationGate,
+    acceptor: mcpAcceptor,
+  });
+  waitForResetHandshake.install();
 
   // L14a (Slice 2): wire 5 MCP tool handlers + PendingApprovalRegistry + janitor + snapshot emitter.
+  // v1.1.0 — REQ-035: pass chatTypeCache for outbound DiD gate on 4 outbound tools.
   const toolsCtx = installToolHandlers({
     acceptor: mcpAcceptor,
     tg: tgClient,
@@ -148,16 +191,18 @@ export async function main(): Promise<void> {
     stateDir,
     clock,
     adminChatRegistry,
+    chatTypeCache,
   });
 
-  // L15: Admin-auth boot resolver (env / file / open-registration).
-  const adminCtx = await resolveAdminBoot({ stateDir, env, eventBus, deploymentMode, clock });
+  // L14 finish (v10): start the acceptor NOW that the handshake handler is subscribed.
+  await mcpAcceptor.start();
 
   // L15a (Slice 2 / CCD-6): construct AdminStateReset; bind admin source on StatusReporter.
   const adminStateReset = new AdminStateResetImpl(stateDir, adminCtx.allowlist, eventBus);
   obs.getStatusReporter().setAdminSource(adminCtx.allowlist.source());
 
-  // L15b (Slice 2): wire M005 routing.
+  // L15b (Slice 2): wire M005 routing. v1.1.0 — REQ-035 chatTypeCache for primeCache;
+  // pass the already-installed waitForResetHandshake so routing/index.ts doesn't re-install.
   const routingCtx = installRouting({
     acceptor: mcpAcceptor,
     tg: tgClient,
@@ -168,6 +213,8 @@ export async function main(): Promise<void> {
     statusReporter: obs.getStatusReporter(),
     pendingRegistry: toolsCtx.getPendingRegistry(),
     adminChatRegistry,
+    chatTypeCache,
+    waitForResetHandshake,
   });
 
   // L16: Watchdog probe loop.

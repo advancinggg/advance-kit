@@ -3,6 +3,9 @@ import type { TelegramAPIClient } from "../telegram/client";
 import type { Clock } from "../daemon/clock";
 import type { PendingApprovalRegistryImpl } from "./pending-registry";
 import type { AdminChatRegistry } from "../routing/admin-chat-registry";
+import type { ChatTypeCache, ChatType } from "../telegram/chat-type-cache";
+import { ChatTypeFetchError } from "../telegram/chat-type-cache";
+import type { EventBus } from "../daemon/event-bus";
 
 const MAX_OPTIONS = 10;
 const MIN_OPTIONS = 1;
@@ -18,6 +21,9 @@ export interface RequestApprovalContext {
   adminChatRegistry: AdminChatRegistry;
   clock: Clock;
   requesterSessionId: string;
+  // v1.1.0 — REQ-035 outbound chat-type DiD.
+  chatTypeCache: ChatTypeCache;
+  eventBus: EventBus;
 }
 
 export type RequestApprovalResult =
@@ -43,6 +49,32 @@ export async function requestApproval(
       hint: "send the bot any DM as admin first OR set TG_ADMIN_CHAT_ID env",
     };
   }
+
+  // v1.1.0 — REQ-035 outbound chat-type DiD (AC-20/21/29).
+  // adminChat is a numeric user_id; no normalization needed beyond the number guard.
+  let observedType: ChatType;
+  try {
+    observedType = await ctx.chatTypeCache.getChatType(adminChat);
+  } catch (e) {
+    if (e instanceof ChatTypeFetchError) {
+      ctx.eventBus.emit("outbound_chat_type_denied", {
+        chat_id: adminChat,
+        observed_type: "unknown",
+        tool: "request_approval",
+      });
+      return { ok: false, error: "InvalidChatTypeError" };
+    }
+    throw e;
+  }
+  if (observedType !== "private") {
+    ctx.eventBus.emit("outbound_chat_type_denied", {
+      chat_id: adminChat,
+      observed_type: observedType,
+      tool: "request_approval",
+    });
+    return { ok: false, error: "InvalidChatTypeError" };
+  }
+
   // Validate options
   if (!Array.isArray(params.options)) {
     return { ok: false, error: "InvalidOptionsLength" };

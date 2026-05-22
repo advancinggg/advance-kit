@@ -6,6 +6,7 @@ import type { AdminAllowlist } from "../auth/allowlist";
 import type { RegistrationGate } from "../auth/registration-gate";
 import type { StatusReporter } from "../obs/status-reporter";
 import type { PendingApprovalRegistry } from "../tools/pending-registry";
+import type { ChatTypeCache, ChatType } from "../telegram/chat-type-cache";
 import { shortHash } from "../common/hash";
 import { SessionRegistry } from "./session-registry";
 import { AdminChatRegistry } from "./admin-chat-registry";
@@ -46,6 +47,11 @@ export interface InboundDispatcherConfig {
   sessionRegistry: SessionRegistry;
   adminChatRegistry: AdminChatRegistry;
   throttle: NoSessionReplyThrottle;
+  // v1.1.0 — REQ-035 AC-22: M005 primes CONTRACT-016 ChatTypeCache on EVERY inbound
+  // (both message and callback_query branches) as the FIRST observable side-effect,
+  // BEFORE any admin/registration routing. Forward-compatible with future REQ-034
+  // chat-type inbound gate (out of scope for this slice).
+  chatTypeCache: ChatTypeCache;
 }
 
 export class InboundDispatcher {
@@ -81,12 +87,26 @@ export class InboundDispatcher {
     if (p.type === "message") {
       const msg = update.message;
       if (!msg) return; // malformed — type says message but no message field
+      // REQ-035 AC-22: prime CONTRACT-016 ChatTypeCache as FIRST observable side-effect
+      // before any routing. CONTRACT-016 caches ALL observed types (including non-private).
+      this.primeCacheFromChat(msg.chat);
       await this.handleText(updateId, msg);
     } else if (p.type === "callback_query") {
       const cb = update.callback_query;
       if (!cb) return;
+      // REQ-035 AC-22: prime cache for callback_query branch too.
+      this.primeCacheFromChat(cb.message?.chat);
       await this.handleCallback(updateId, cb);
     }
+  }
+
+  /**
+   * v1.1.0 — REQ-035 AC-22 prime helper. Writes any observed (chat_id, chat_type)
+   * pair into the cache. Defensive: skips if chat or fields are missing.
+   */
+  private primeCacheFromChat(chat: TgChat | undefined): void {
+    if (!chat || chat.id === undefined || !chat.type) return;
+    this.cfg.chatTypeCache.primeCache(chat.id, chat.type as ChatType);
   }
 
   private async handleText(updateId: number, msg: TgMessage): Promise<void> {

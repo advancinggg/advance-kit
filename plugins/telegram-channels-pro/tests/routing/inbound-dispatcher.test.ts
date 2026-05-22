@@ -122,6 +122,13 @@ async function makeHarness(opts?: { adminUserIds?: number[] }): Promise<Harness>
   reg.installSubscribers();
   const throttle = new NoSessionReplyThrottle(clock, 5 * 60_000);
   const { tg, calls: tgCalls } = makeMockTg();
+  const primeCalls: Array<{ chat_id: number; type: string }> = [];
+  const chatTypeCache = {
+    getChatType: async () => "private" as const,
+    primeCache: (chat_id: number, type: string) => {
+      primeCalls.push({ chat_id, type });
+    },
+  };
   const dispatcher = new InboundDispatcher({
     tg,
     eventBus: bus,
@@ -134,11 +141,12 @@ async function makeHarness(opts?: { adminUserIds?: number[] }): Promise<Harness>
     sessionRegistry: reg,
     adminChatRegistry: adminChatReg,
     throttle,
+    chatTypeCache,
   });
   dispatcher.install();
   return {
     bus, clock, reg, pendingReg, adminChatReg, allowlist, gate, sr, throttle,
-    dispatcher, tgCalls, acceptorStub: stub,
+    dispatcher, tgCalls, acceptorStub: stub, primeCalls,
     cleanup: () => {
       dispatcher.dispose();
       reg.dispose();
@@ -383,5 +391,55 @@ describe("MODULE-005-AC-19: dispatch latency micro-benchmark (AC-19)", () => {
     // We're measuring the in-process synchronous decision path (subscriber dispatch + admin
     // gate + LRU lookup).
     expect(maxMs).toBeLessThan(5);
+  });
+});
+
+// MODULE-005-AC-22 — REQ-035 primeCache on every inbound (any chat type).
+describe("MODULE-005-AC-22: primeCache on every inbound", () => {
+  test("MODULE-005-T22-prime — primeCache called for private + group + supergroup + channel inbound", async () => {
+    const h = await makeHarness({ adminUserIds: [99] });
+
+    // Emit 4 inbound message updates with 4 different chat types.
+    const types = ["private", "group", "supergroup", "channel"] as const;
+    for (let i = 0; i < types.length; i++) {
+      h.bus.emit("inbound_update", {
+        update_id: 5000 + i,
+        type: "message",
+        payload: {
+          message: {
+            message_id: i,
+            from: { id: 99 },
+            chat: { id: 100 + i, type: types[i]! },
+            text: "x",
+          },
+        },
+      });
+    }
+    // Plus a callback_query branch — should also prime.
+    h.bus.emit("inbound_update", {
+      update_id: 6000,
+      type: "callback_query",
+      payload: {
+        callback_query: {
+          id: "cbq",
+          from: { id: 99 },
+          message: { message_id: 1, chat: { id: 999, type: "private" } },
+          data: "cb_x",
+        },
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Verify primeCache was called for every inbound (5 = 4 message + 1 callback).
+    expect(h.primeCalls.length).toBe(5);
+    expect(h.primeCalls.map((c) => c.type)).toEqual([
+      "private",
+      "group",
+      "supergroup",
+      "channel",
+      "private",
+    ]);
+    expect(h.primeCalls.map((c) => c.chat_id)).toEqual([100, 101, 102, 103, 999]);
+    h.cleanup();
   });
 });

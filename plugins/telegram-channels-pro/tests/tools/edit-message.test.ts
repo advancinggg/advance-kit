@@ -29,7 +29,14 @@ describe("MODULE-004-AC-04: edit_message tool", () => {
       pollingStatus: ps,
       fetchFn: mock.fetch,
     });
-    const r = await editMessage({ chat_id: 1, message_id: 7, text: "updated" }, { tg });
+    const r = await editMessage(
+      { chat_id: 1, message_id: 7, text: "updated" },
+      {
+        tg,
+        chatTypeCache: { getChatType: async () => "private", primeCache: () => {} },
+        eventBus: bus,
+      },
+    );
     if (!("delivered" in r) || r.delivered !== true) throw new Error("expected delivered:true");
     expect(r.message_id).toBe(7);
     const calls = mock.callsMade();

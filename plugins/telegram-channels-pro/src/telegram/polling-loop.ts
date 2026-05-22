@@ -5,6 +5,7 @@ import type { OffsetManager } from "./offset-manager";
 import type { PollingStatusImpl } from "./polling-status";
 import type { TelegramAPIClient } from "./client";
 import type { TelegramUpdate } from "./methods";
+import type { OutboundReplayQueue } from "./outbound-replay-queue";
 
 export interface PollingLoopConfig {
   tgClient: TelegramAPIClient;
@@ -17,10 +18,20 @@ export interface PollingLoopConfig {
   fatalThreshold?: number;
   quarantineCooldownMs?: number;
   backoffCapMs?: number;
+  /**
+   * v1.1.0 — REQ-037 quarantine outbound replay queue. OPTIONAL: when present, drain runs
+   * INLINE in the probe-success quarantine→running transition immediately AFTER
+   * pollingStatus.setState('running') + quarantine_exit emit, BEFORE processUpdates(probe).
+   * Existing polling.test.ts compatible because the field is optional (drain block is gated).
+   */
+  outboundReplayQueue?: OutboundReplayQueue;
 }
 
 export class PollingLoop {
-  private cfg: Required<PollingLoopConfig>;
+  // outboundReplayQueue is intentionally optional — exclude from Required<>.
+  private cfg: Omit<Required<PollingLoopConfig>, "outboundReplayQueue"> & {
+    outboundReplayQueue?: OutboundReplayQueue;
+  };
   private fatalWindow: FatalWindow;
   private running = false;
   private stopRequested = false;
@@ -37,6 +48,7 @@ export class PollingLoop {
       fatalThreshold: 5,
       quarantineCooldownMs: 60_000,
       backoffCapMs: 60_000,
+      outboundReplayQueue: cfg.outboundReplayQueue,
       ...cfg,
     };
     this.fatalWindow = new FatalWindow(this.cfg.fatalWindowMs, this.cfg.fatalThreshold);
@@ -124,6 +136,22 @@ export class PollingLoop {
           this.cfg.pollingStatus.setState("running");
           this.fatalWindow.reset();
           this.backoffIdx = 0;
+          // v1.1.0 — REQ-037 AC-29 drain runs INLINE here per M002 §1.4.5b (NOT via
+          // self-subscription on quarantine_exit). pollingStatus.setState('running') above
+          // ensures replayFn's tgClient.sendMessage takes the real-POST path (not the
+          // quarantine stub). drain emits `quarantine_replay_resolved` per replayed entry.
+          if (this.cfg.outboundReplayQueue) {
+            await this.cfg.outboundReplayQueue.drain(async (entry) => {
+              const env = await this.cfg.tgClient.sendMessage(entry.params);
+              if (env.delivered === true) {
+                return { delivered: true, message_id: env.message_id };
+              }
+              return {
+                delivered: false,
+                error_class: "error" in env ? env.error : "unknown",
+              };
+            });
+          }
           await this.processUpdates(probe.result);
         } else {
           // probe fatal → restart cooldown.

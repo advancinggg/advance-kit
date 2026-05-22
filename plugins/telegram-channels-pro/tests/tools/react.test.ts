@@ -23,7 +23,14 @@ describe("MODULE-004-AC-03: react tool", () => {
     });
     const r = await react(
       { chat_id: 1, message_id: 42, emoji: "👍" },
-      { apiBase: "https://api.example", token: "test:token", pollingStatus: ps, fetchFn: mock.fetch },
+      {
+        apiBase: "https://api.example",
+        token: "test:token",
+        pollingStatus: ps,
+        chatTypeCache: { getChatType: async () => "private", primeCache: () => {} },
+        eventBus: bus,
+        fetchFn: mock.fetch,
+      },
     );
     expect(r.ok).toBe(true);
     const calls = mock.callsMade();

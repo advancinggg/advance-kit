@@ -105,17 +105,18 @@ describe("MODULE-002-AC-34: three independent capacity edges (REQ-022 + REQ-009 
   test("MODULE-002-T34c — OutboundReplayQueue 50-cap saturates at 50 and the 51st throws CapacityExceededError; configurable to 100", () => {
     const q = new OutboundReplayQueue();
     for (let i = 0; i < 50; i++) {
-      const r = q.enqueue({ i });
-      expect(r.queued).toBe(true);
+      // v1.1.0 — REQ-037 typed QueueEntry; enqueue returns void (no-throw = success).
+      q.enqueue({ requester_session: `s${i}`, params: { chat_id: 100, text: "hi" }, queued_at: Date.now() });
     }
     expect(q.size()).toBe(50);
-    expect(() => q.enqueue({ over: true })).toThrow(CapacityExceededError);
+    expect(() =>
+      q.enqueue({ requester_session: "over", params: { chat_id: 100, text: "hi" }, queued_at: Date.now() }),
+    ).toThrow(CapacityExceededError);
 
     // Re-instantiate with cfg.capacity=100 → 51 enqueues all succeed.
     const q2 = new OutboundReplayQueue({ capacity: 100 });
     for (let i = 0; i < 51; i++) {
-      const r = q2.enqueue({ i });
-      expect(r.queued).toBe(true);
+      q2.enqueue({ requester_session: `s${i}`, params: { chat_id: 100, text: "hi" }, queued_at: Date.now() });
     }
     expect(q2.size()).toBe(51);
   });

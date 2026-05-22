@@ -43,7 +43,15 @@ describe("MODULE-004-AC-01/AC-02: reply tool", () => {
     });
     const r = await reply(
       { chat_id: 1, text: "hi" },
-      { tg, apiBase: "https://api.example", token: "test:token", pollingStatus: ps, fetchFn: mock.fetch },
+      {
+        tg,
+        apiBase: "https://api.example",
+        token: "test:token",
+        pollingStatus: ps,
+        chatTypeCache: { getChatType: async () => "private", primeCache: () => {} },
+        eventBus: bus,
+        fetchFn: mock.fetch,
+      },
     );
     if (!("delivered" in r) || r.delivered !== true) throw new Error("expected delivered:true");
     expect(r.message_id).toBe(42);
@@ -72,7 +80,15 @@ describe("MODULE-004-AC-01/AC-02: reply tool", () => {
     const filePath = mkFakeFile();
     const r = await reply(
       { chat_id: 1, text: "screenshot", files: [filePath] },
-      { tg, apiBase: "https://api.example", token: "test:token", pollingStatus: ps, fetchFn: mock.fetch },
+      {
+        tg,
+        apiBase: "https://api.example",
+        token: "test:token",
+        pollingStatus: ps,
+        chatTypeCache: { getChatType: async () => "private", primeCache: () => {} },
+        eventBus: bus,
+        fetchFn: mock.fetch,
+      },
     );
     if (!("delivered" in r) || r.delivered !== true) throw new Error("expected delivered:true");
     expect(r.message_id).toBe(99);

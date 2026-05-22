@@ -40,6 +40,8 @@ describe("MODULE-004-AC-07: request_approval round-trip", () => {
       adminChatRegistry: adminChatReg,
       clock,
       requesterSessionId: "sess1",
+      chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+      eventBus: bus,
     };
     // Fire request_approval (async — the Promise resolves only when M005-side simulation calls resolveApproval)
     const promise = requestApproval({ text: "Confirm?", options: ["Yes", "No"] }, ctx);
@@ -76,7 +78,15 @@ describe("MODULE-004-AC-07: request_approval round-trip", () => {
     });
     const r = await requestApproval(
       { text: "Confirm?", options: ["Yes", "No"] },
-      { tg, registry, adminChatRegistry: adminChatReg, clock, requesterSessionId: "sess1" },
+      {
+        tg,
+        registry,
+        adminChatRegistry: adminChatReg,
+        clock,
+        requesterSessionId: "sess1",
+        chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+        eventBus: bus,
+      },
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
@@ -100,7 +110,15 @@ describe("MODULE-004-AC-07: request_approval round-trip", () => {
       pollingStatus: ps,
       fetchFn: mock.fetch,
     });
-    const ctx = { tg, registry, adminChatRegistry: adminChatReg, clock, requesterSessionId: "s" };
+    const ctx = {
+      tg,
+      registry,
+      adminChatRegistry: adminChatReg,
+      clock,
+      requesterSessionId: "s",
+      chatTypeCache: { getChatType: async () => "private" as const, primeCache: () => {} },
+      eventBus: bus,
+    };
     const r1 = await requestApproval({ text: "x", options: [] }, ctx);
     expect(r1.ok).toBe(false);
     if (!r1.ok) expect(r1.error).toBe("InvalidOptionsLength");
