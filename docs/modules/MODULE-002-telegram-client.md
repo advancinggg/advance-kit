@@ -243,7 +243,7 @@ The polling-loop pseudocode in §1.4.1 emits `quarantine_exit` inside the probe-
 1. claude session calls MCP `reply` tool (M004) during M002's quarantine state.
 2. M002's quarantine-aware sendMessage wrapper detects `state === 'quarantine'` → instead of immediate TG API call, push the message onto the **in-memory replay queue** (FIFO, 50-cap).
 3. If queue length already at 50 → return `CapacityExceededError` to M004 (M004 returns to claude). No enqueue.
-4. If under cap → enqueue with `{requester_session, chat_id, text, queued_at}`, return `{delivered: false, queued: true, eta_hint: <quarantine-cooldown-remaining-seconds>}` to the caller.
+4. If under cap → enqueue a `QueueEntry` `{requester_session, params, queued_at}` where `params` is the FULL `SendMessageReq` (deep-cloned via `structuredClone` at the client boundary so it preserves `chat_id` + `text` + `reply_markup` + `parse_mode` + `reply_to_message_id` for byte-equivalent replay, and is isolated from post-enqueue caller mutation), return `{delivered: false, queued: true, eta_hint: <quarantine-cooldown-remaining-seconds>}` to the caller.
 5. On `quarantine_exit` (state transition), M002 walks the queue in FIFO order; for each entry attempt TG sendMessage:
    - Success → emit `quarantine_replay_resolved` with `{requester_session, message_id: <new_tg_message_id>, delivered: true, queued_at, replayed_at: Date.now()}`.
    - Failure (non-retriable) → emit with `delivered: false, error_class`.
@@ -620,7 +620,7 @@ sequenceDiagram
     alt queue.length >= 50
         TC-->>MT: { delivered:false, error:'capacity_exceeded' }
     else under cap
-        TC->>Q: enqueue { requester_session, chat_id, text, queued_at }
+        TC->>Q: enqueue { requester_session, params: SendMessageReq, queued_at }
         TC-->>MT: { delivered:false, queued:true, eta_hint }
     end
     Note over TC: ... time passes ...
