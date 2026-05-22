@@ -128,8 +128,9 @@ async function pollLoop() {
       try {
         const probe = await getUpdates({ timeout: 5, offset: currentOffset });
         eventBus.emit('quarantine_exit', { recovered_after_ms: Date.now() - quarantineEnteredAt, eta_hint: 0 });  // v1.1.0 — eta_hint=0 signals quarantine exited for M003 tgcp/quarantine/state_changed
-        await drainReplayQueue();  // v1.1.0 (REQ-037 + Decision A18) — FIFO drain emits quarantine_replay_resolved per entry; runs synchronously in polling-loop path BEFORE processUpdates(probe)
         state = 'running';
+        pollingStatus.setState('running');  // v1.1.0 (REQ-037) — MUST precede drainReplayQueue so the drain's sendMessage replays take the real-POST path (not the quarantine stub which gates on pollingStatus.getSnapshot().state)
+        await drainReplayQueue();  // v1.1.0 (REQ-037 + Decision A18) — FIFO drain (dequeue-per-entry, abortable on daemon_stop) emits quarantine_replay_resolved per entry; runs synchronously in polling-loop path AFTER state='running' + BEFORE processUpdates(probe)
         fatalWindow.reset();
         backoffIdx = 0;
         // process probe updates if any

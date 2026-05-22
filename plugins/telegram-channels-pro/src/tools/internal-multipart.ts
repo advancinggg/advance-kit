@@ -25,10 +25,14 @@ export interface MultipartUploadArgs {
 }
 
 export async function uploadAttachment(args: MultipartUploadArgs): Promise<SendMessageEnvelope> {
-  // Quarantine-aware: mirror sendMessage's pre-flight check
+  // Quarantine-aware: mirror sendMessage's pre-flight check. v1.1.0 (REQ-037) — the quarantine
+  // outbound replay queue is text-only (§1.4.6 stores a SendMessageReq, not a multipart blob),
+  // so attachment replies are NOT queued during quarantine. Return an HONEST non-queued failure
+  // (not a misleading `queued:true`) so the claude session knows the attachment was not stored
+  // for replay and can retry after recovery.
   const snap = args.pollingStatus.getSnapshot();
   if (snap.state === "quarantine") {
-    return { delivered: false, queued: true, eta_hint: 0 };
+    return { delivered: false, error: "disconnected", reason: "quarantine_attachment_not_queued" };
   }
   const ext = path.extname(args.file_path).toLowerCase();
   const method = IMAGE_EXTS.has(ext) ? "sendPhoto" : "sendDocument";
