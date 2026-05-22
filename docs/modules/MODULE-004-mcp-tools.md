@@ -295,7 +295,7 @@ Background `setInterval` (every 5 min):
 | MODULE-004-AC-26 | REQ-038 | CONTRACT-011 ext + CONTRACT-004 | When pending count hits 50 → M004's `emitCapacityFullAlert(tg, adminUserId)` sends "Approval queue full (50 pending) — claude tool calls failing. Complete or cancel pending approvals." via M002 sendMessage. **adminUserId source**: M005 routing supplies it via CONTRACT-009 `firstListedAdminUserId()` at the call site (M005 observes the CapacityExceededError when handling inbound + invokes the alert path); M004 itself does NOT consume CONTRACT-009 per Decision A11. 5-min throttle on the alert (subsequent trips within window suppressed) | unit test |
 | MODULE-004-AC-27 | REQ-039 | CONTRACT-011 ext | PendingApprovalRegistry adds `recordPopupThrottle(callback_data, ts)` + `shouldEmitPopup(callback_data): boolean`: same callback_data within 5-min sliding window → shouldEmitPopup returns false; subsequent click answers callback without popup (info-leak defense per Decision A17) | unit test |
 | MODULE-004-AC-28 | REQ-036 | CONTRACT-011 | Architectural enforcement of text-typed-approval-not-approval: M004 state machine exposes ZERO API path from inbound text to pending resolution. Only inline-button callback_query advances pending. Tested by attempting to find a code path; static analysis or property test that proves no text → resolveApproval edge exists | static analysis / architectural review |
-| MODULE-004-AC-29 | REQ-035 | CONTRACT-003 | `outbound_chat_type_denied` event payload schema `{chat_id, observed_type, tool}` emitted on every InvalidChatTypeError throw; M008 subscribes for audit log | unit test |
+| MODULE-004-AC-29 | REQ-035 | CONTRACT-003 | `outbound_chat_type_denied` event payload schema `{chat_id, observed_type, tool}` emitted on every chat-type-DiD denial (the tool returns an `error: 'InvalidChatTypeError'` envelope — NOT a thrown exception); covers non-private, lazy-fetch-failure (`observed_type:'unknown'`), and unresolvable-chat_id (`observed_type:'unresolvable'`, `chat_id:-1`) paths; M008 subscribes for audit log | unit test |
 
 ### 1.6 Non-functional Requirements
 
@@ -424,7 +424,7 @@ export interface PendingApprovalRegistry {
 | `tool_call` | Tool handler invoked | `{ session_id, tool_name, params_hash }` | M008 (log; M005 for LRU update per Decision A12) |
 | `tool_result` | Tool handler returned | `{ session_id, tool_name, ok, error?, duration_ms }` | M008 |
 | `pending_capacity_snapshot` | Every 30s + on every add/resolve/cleanup | `{ current, max, oldest_age_ms }` | M008 |
-| **`outbound_chat_type_denied` (v1.1.0)** | Outbound tool call rejected because `chatTypeCache.getChatType(chat_id) !== 'private'` (REQ-035 DiD) | `{ chat_id, observed_type: 'group' \| 'supergroup' \| 'channel', tool: 'reply' \| 'react' \| 'edit_message' \| 'request_approval' }` | M008 (audit log) |
+| **`outbound_chat_type_denied` (v1.1.0)** | Outbound tool call rejected on any chat-type-DiD denial path (REQ-035): non-private chat type, OR cold-start lazy-fetch failure (`ChatTypeFetchError`), OR unresolvable chat_id (`@username` / out-of-safe-range numeric string) | `{ chat_id, observed_type: 'group' \| 'supergroup' \| 'channel' \| 'unknown' (fetch failure) \| 'unresolvable' (non-numeric chat_id; chat_id reported as -1), tool: 'reply' \| 'react' \| 'edit_message' \| 'request_approval' }` | M008 (audit log) |
 
 ### 2.4 API Endpoints
 

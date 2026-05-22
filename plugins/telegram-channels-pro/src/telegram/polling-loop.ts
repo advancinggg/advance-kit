@@ -141,16 +141,21 @@ export class PollingLoop {
           // ensures replayFn's tgClient.sendMessage takes the real-POST path (not the
           // quarantine stub). drain emits `quarantine_replay_resolved` per replayed entry.
           if (this.cfg.outboundReplayQueue) {
-            await this.cfg.outboundReplayQueue.drain(async (entry) => {
-              const env = await this.cfg.tgClient.sendMessage(entry.params);
-              if (env.delivered === true) {
-                return { delivered: true, message_id: env.message_id };
-              }
-              return {
-                delivered: false,
-                error_class: "error" in env ? env.error : "unknown",
-              };
-            });
+            await this.cfg.outboundReplayQueue.drain(
+              async (entry) => {
+                const env = await this.cfg.tgClient.sendMessage(entry.params);
+                if (env.delivered === true) {
+                  return { delivered: true, message_id: env.message_id };
+                }
+                return {
+                  delivered: false,
+                  error_class: "error" in env ? env.error : "unknown",
+                };
+              },
+              // Abort drain between entries if a graceful shutdown was requested — leaves
+              // remaining entries queued (best-effort; dropped on restart per REQ-037 §1.4.6).
+              () => this.stopRequested,
+            );
           }
           await this.processUpdates(probe.result);
         } else {

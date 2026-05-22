@@ -128,7 +128,11 @@ export class TelegramAPIClientImpl implements TelegramAPIClient {
         try {
           queue.enqueue({
             requester_session: opts.requester_session,
-            params: req,
+            // Deep-copy params so a caller mutating req (or nested reply_markup) AFTER
+            // sendMessage returns cannot alter the queued entry — guarantees the drain
+            // replays a byte-equivalent request (REQ-037 §1.4.6). structuredClone is
+            // available in Bun's global scope.
+            params: structuredClone(req),
             queued_at: this.cfg.clock.now(),
           });
           return this.quarantineEnvelope();

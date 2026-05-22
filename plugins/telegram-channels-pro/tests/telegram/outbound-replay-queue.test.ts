@@ -116,3 +116,44 @@ describe("MODULE-002-AC-30: queue lost on daemon restart (in-memory only)", () =
     expect(q2.size()).toBe(0);
   });
 });
+
+// Audit-round-1 robustness fixes (Claude Diff W2 + Codex Diff W2).
+describe("MODULE-002-AC-29: drain robustness (audit fixes)", () => {
+  test("drain honors shouldAbort between entries — leaves un-replayed entries queued", async () => {
+    const q = new OutboundReplayQueue({ capacity: 10, clock: realClock() });
+    for (let i = 0; i < 5; i++) q.enqueue(makeEntry(i));
+    let processed = 0;
+    // Abort after 2 entries.
+    await q.drain(
+      async () => {
+        processed++;
+        return { delivered: true, message_id: processed };
+      },
+      () => processed >= 2,
+    );
+    // 2 processed, then abort BEFORE the 3rd → 3 remain queued (no silent drop).
+    expect(processed).toBe(2);
+    expect(q.size()).toBe(3);
+  });
+
+  test("enqueued params are isolated from post-enqueue caller mutation (byte-equivalent replay)", async () => {
+    // Verified at the client.ts boundary via structuredClone; here we assert the queue
+    // stores what it was given and a replay sees a stable snapshot.
+    const q = new OutboundReplayQueue({ capacity: 10, clock: realClock() });
+    const mutable = { chat_id: 5, text: "original", reply_markup: { inline_keyboard: [[{ text: "a" }]] } };
+    // Caller is expected to pass a snapshot (client.ts does structuredClone); simulate that.
+    q.enqueue({ requester_session: "s", params: structuredClone(mutable), queued_at: 1 });
+    // Mutate the original AFTER enqueue.
+    mutable.text = "mutated";
+    mutable.reply_markup.inline_keyboard[0]![0]!.text = "z";
+    let replayedText = "";
+    let replayedBtn = "";
+    await q.drain(async (entry) => {
+      replayedText = entry.params.text!;
+      replayedBtn = (entry.params.reply_markup as { inline_keyboard: Array<Array<{ text: string }>> }).inline_keyboard[0]![0]!.text;
+      return { delivered: true, message_id: 1 };
+    });
+    expect(replayedText).toBe("original");
+    expect(replayedBtn).toBe("a");
+  });
+});

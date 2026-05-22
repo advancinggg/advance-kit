@@ -285,11 +285,13 @@ export interface RegistrationGate {
   isInRegistrationWindow(): boolean;
   processRegistrationDM(sender_user_id: number, text: string): RegistrationResult;
 
-  // v1.1.0 additive (REQ-047) — wait-for-reset state query. Returns true iff registration
-  // window has timed out in launchd mode AND no `forceReopenForReset()` has been called
-  // since. M005 queries this on every session_connected event to invoke the wait-for-reset
-  // disconnect handshake via M003 (passing the literal hint string "registration timed
-  // out; run reset-admin to retry" to the claude session terminal).
+  // v1.1.0 additive (REQ-047) — wait-for-reset state query. Returns true iff the gate is in
+  // the `waiting_for_reset` state. The gate enters `waiting_for_reset` via TWO paths: (a)
+  // registration window timeout in launchd mode (§1.4.4), OR (b) global brute-force trip — 30
+  // cumulative mismatched DMs (§1.4.3) — both hold `waiting_for_reset` until
+  // `forceReopenForReset()` is called. M005 queries this on every session_connected event to
+  // invoke the wait-for-reset disconnect handshake via M003 (passing the literal hint string
+  // "registration timed out; run reset-admin to retry" to the claude session terminal).
   isWaitForReset(): boolean;
   /**
    * Slice 2 additive: in-process reset-and-reopen for M007 reset-admin CLI.

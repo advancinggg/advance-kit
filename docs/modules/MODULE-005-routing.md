@@ -321,7 +321,7 @@ Throttle keyed by `chat_id` (admin sender's chat). Single-admin scenario degener
 |--------|----------|------------------|-------------------|------|
 | MODULE-001 daemon-core | [MODULE-001](./MODULE-001-daemon-core.md) | CONTRACT-003 | EventBus sub (inbound_update, session_*, tool_call) + pub (route_decision, auth_deny_routing, **v1.1.0**: `chat_type_inbound_denied`, `auth_reject_aggregated`, `popup_throttled`) | Hard |
 | MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | CONTRACT-004 | answerCallbackQuery for stale-button + no-session reply via sendMessage; **v1.1.0**: `sendChatAction(typing)` fire-and-forget for REQ-033 typing indicator dispatcher | Hard |
-| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | **CONTRACT-016 (v1.1.0)** | ChatTypeCache `primeCache(chat_id, type)` side-effect write on every accepted inbound (REQ-035 cache warm — supports M004 outbound DiD) | Hard (v1.1.0) |
+| MODULE-002 telegram-client | [MODULE-002](./MODULE-002-telegram-client.md) | **CONTRACT-016 (v1.1.0)** | ChatTypeCache `primeCache(chat_id, type)` side-effect write on EVERY inbound regardless of chat type (incl. would-be-denied entries; REQ-035 cache warm — supports M004 outbound DiD) | Hard (v1.1.0) |
 | MODULE-003 mcp-server-proxy | [MODULE-003](./MODULE-003-mcp-server-proxy.md) | CONTRACT-006 | deliverToSession, disconnectSession; **v1.1.0**: `deliverChannelNotification` for inbound REQ-033 channel-protocol; `disconnectSession` invoked with REQ-047 hint string when M006.isWaitForReset on session_connected | Hard |
 | MODULE-004 mcp-tools | [MODULE-004](./MODULE-004-mcp-tools.md) | CONTRACT-011 | lookupByPendingId, resolveApproval, cleanupBySession; **v1.1.0**: `recordPopupThrottle` + `shouldEmitPopup` for REQ-039 approval-expired popup throttle | Hard |
 | MODULE-006 admin-auth | [MODULE-006](./MODULE-006-admin-auth.md) | CONTRACT-009 + CONTRACT-010 | isAdmin, isInRegistrationWindow, processRegistrationDM; **v1.1.0**: `firstListedAdminUserId()` for REQ-046 first-listed-admin routing; `isWaitForReset()` for REQ-047 handshake disconnect gate | Hard |
@@ -353,7 +353,7 @@ M005 does NOT provide cross-module contracts. Its internal SessionRegistry is in
 | CONTRACT-010 RegistrationGate | M006 | isInRegistrationWindow, processRegistrationDM; **v1.1.0**: isWaitForReset (REQ-047 handshake disconnect gate) |
 | CONTRACT-011 PendingApprovalRegistry | M004 | lookupByPendingId, resolveApproval, cleanupBySession; **v1.1.0**: recordPopupThrottle + shouldEmitPopup (REQ-039 popup throttle) |
 | CONTRACT-014 StatusReporter | M008 | /status command output |
-| **CONTRACT-016 ChatTypeCache (v1.1.0)** | M002 | `primeCache(chat_id, type)` side-effect write on every accepted inbound (REQ-035 cache warm) |
+| **CONTRACT-016 ChatTypeCache (v1.1.0)** | M002 | `primeCache(chat_id, type)` side-effect write on EVERY inbound regardless of chat type (incl. would-be-denied entries; REQ-035 cache warm) |
 
 #### Events/Messages
 

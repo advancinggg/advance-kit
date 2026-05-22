@@ -103,12 +103,15 @@ export class OutboundReplayQueue {
    * `pollingStatus.setState('running')` so the replayFn's downstream `tgClient.sendMessage`
    * takes the real-POST path (NOT the quarantine stub).
    */
-  async drain(replayFn: ReplayFn): Promise<void> {
-    // Snapshot the entries + clear before iterating, so any concurrent enqueue (shouldn't
-    // happen post-state-transition but defensive) doesn't get visited twice or skipped.
-    const batch = this.entries.slice();
-    this.entries.length = 0;
-    for (const entry of batch) {
+  async drain(replayFn: ReplayFn, shouldAbort?: () => boolean): Promise<void> {
+    // Pop entries one at a time (shift) rather than snapshot-clear-all, so that if the
+    // caller aborts mid-drain (daemon_stop) the un-replayed entries REMAIN in the queue
+    // instead of being silently dropped. Each replay either delivers or emits a
+    // `quarantine_replay_resolved{delivered:false}` event — no silent loss within a drain.
+    while (this.entries.length > 0) {
+      // Honor a graceful-shutdown request between entries: leave the rest queued.
+      if (shouldAbort?.()) return;
+      const entry = this.entries.shift()!;
       let result: Awaited<ReturnType<ReplayFn>>;
       try {
         result = await replayFn(entry);
