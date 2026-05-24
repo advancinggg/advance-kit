@@ -390,9 +390,12 @@ The polling-loop pseudocode in §1.4.1 emits `quarantine_exit` inside the probe-
 | **CONTRACT-016 (v1.1.0)** | ChatTypeCache | `src/telegram/chat-type-cache.ts` | Async LRU cache of chat_id → chat_type with 1h TTL + 1000-entry LRU eviction; lazy-fetch via `getChat` on miss; rejects with `ChatTypeFetchError` on network failure. Serves M004 outbound DiD + M005 inbound side-effect cache warm. |
 
 ```ts
-// CONTRACT-004 — TelegramAPIClient (v1.1.0 — 7 methods including getChat)
+// CONTRACT-004 — TelegramAPIClient (v1.1.0 — 7 methods including getChat;
+// sendMessage gained an OPTIONAL metadata-only `opts` parameter for REQ-037
+// quarantine-queue session routing — opts.requester_session is NEVER spread
+// into the HTTP POST body, only used to tag the QueueEntry when state === quarantine).
 export interface TelegramAPIClient {
-  sendMessage(req: SendMessageReq): Promise<SendMessageResult>;
+  sendMessage(req: SendMessageReq, opts?: { requester_session?: string }): Promise<SendMessageResult>;
   editMessageText(req: EditMessageTextReq): Promise<EditMessageTextResult>;
   answerCallbackQuery(req: AnswerCallbackQueryReq): Promise<{ok: true}>;
   getFile(file_id: string): Promise<GetFileResult>;
