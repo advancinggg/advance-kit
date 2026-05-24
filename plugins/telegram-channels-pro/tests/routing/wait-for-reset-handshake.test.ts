@@ -17,11 +17,12 @@ function makeAcceptor(opts: { latencyMs?: number } = {}): MockAcceptor {
   const calls: Array<{ session_id: string; reason: string }> = [];
   return {
     calls,
-    disconnectSession: (session_id: string, reason: string) => {
+    disconnectSession: (session_id: string, reason: string): Promise<void> | void => {
       calls.push({ session_id, reason });
       if (opts.latencyMs) {
         return new Promise<void>((res) => setTimeout(res, opts.latencyMs));
       }
+      return undefined;
     },
   };
 }

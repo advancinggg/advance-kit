@@ -88,6 +88,8 @@ interface Harness {
   dispatcher: InboundDispatcher;
   tgCalls: TgCalls;
   acceptorStub: AcceptorStub;
+  // v1.1.0 — REQ-035 AC-22 primeCache call log captured by the dispatcher's injected stub.
+  primeCalls: Array<{ chat_id: number; type: string }>;
   cleanup: () => void;
 }
 

@@ -48,9 +48,11 @@ describe("MODULE-002-AC-29: drain on quarantine_exit (event schema)", () => {
     for (let i = 0; i < 5; i++) q.enqueue(makeEntry(i));
     const callOrder: number[] = [];
     const replayFn: ReplayFn = async (entry) => {
-      // Extract `i` from chat_id (1000 + i).
-      callOrder.push(entry.params.chat_id - 1000);
-      return { delivered: true, message_id: 9000 + (entry.params.chat_id - 1000) };
+      // Extract `i` from chat_id (1000 + i). chat_id is number|string in SendMessageReq;
+      // makeEntry sets it as a number, so coerce for the typecheck.
+      const cid = Number(entry.params.chat_id);
+      callOrder.push(cid - 1000);
+      return { delivered: true, message_id: 9000 + (cid - 1000) };
     };
     await q.drain(replayFn);
     expect(callOrder).toEqual([0, 1, 2, 3, 4]);
@@ -71,7 +73,7 @@ describe("MODULE-002-AC-29: drain on quarantine_exit (event schema)", () => {
     nowVal = 200; // drain occurs at t=200
     await q.drain(async (entry) => ({
       delivered: true,
-      message_id: entry.params.chat_id * 100,
+      message_id: Number(entry.params.chat_id) * 100,
     }));
     expect(events.length).toBe(2);
     // First entry: full payload schema verified.

@@ -23,7 +23,9 @@ interface DeniedEvent {
 function makeBus(): { bus: EventBus; denied: DeniedEvent[] } {
   const bus = new EventBus();
   const denied: DeniedEvent[] = [];
-  bus.on("outbound_chat_type_denied", (p) => denied.push(p as DeniedEvent));
+  bus.on("outbound_chat_type_denied", (p) => {
+    denied.push(p as DeniedEvent);
+  });
   return { bus, denied };
 }
 
@@ -158,7 +160,7 @@ describe("MODULE-004-AC-20: chat-type gate — non-private path denies", () => {
         eventBus: bus,
       },
     );
-    if (!("delivered" in r) || r.delivered) throw new Error("expected denial");
+    if (!("error" in r) || r.delivered !== false) throw new Error("expected denial envelope");
     expect(r.error).toBe("InvalidChatTypeError");
     expect(sendCount()).toBe(0);
     expect(denied.length).toBe(1);
@@ -196,7 +198,7 @@ describe("MODULE-004-AC-20: chat-type gate — non-private path denies", () => {
       { chat_id: 5, message_id: 2, text: "x" },
       { tg, chatTypeCache: makeCache("channel"), eventBus: bus },
     );
-    if (!("delivered" in r) || r.delivered) throw new Error("expected denial");
+    if (!("error" in r) || r.delivered !== false) throw new Error("expected denial envelope");
     expect(r.error).toBe("InvalidChatTypeError");
     expect(sendCount()).toBe(0);
     expect(denied[0]).toEqual({ chat_id: 5, observed_type: "channel", tool: "edit_message" });
@@ -261,7 +263,7 @@ describe("MODULE-004-AC-29: outbound_chat_type_denied event schema", () => {
         eventBus: bus,
       },
     );
-    if (!("delivered" in r) || r.delivered) throw new Error("expected denial");
+    if (!("error" in r) || r.delivered !== false) throw new Error("expected denial envelope");
     expect(r.error).toBe("InvalidChatTypeError");
     expect(sendCount()).toBe(0);
     expect(denied[0]).toEqual({ chat_id: 42, observed_type: "unknown", tool: "reply" });
@@ -281,7 +283,7 @@ describe("MODULE-004-AC-29: outbound_chat_type_denied event schema", () => {
         eventBus: bus,
       },
     );
-    if (!("delivered" in r) || r.delivered) throw new Error("expected denial");
+    if (!("error" in r) || r.delivered !== false) throw new Error("expected denial envelope");
     expect(r.error).toBe("InvalidChatTypeError");
     expect(sendCount()).toBe(0);
     expect(denied[0]).toEqual({ chat_id: -1, observed_type: "unresolvable", tool: "reply" });
@@ -359,7 +361,7 @@ describe("MODULE-004-AC-21: cold-start lazy-fetch path (cache miss → fetch →
       },
     );
     expect(calls).toBe(1);
-    if (!("delivered" in r1) || r1.delivered) throw new Error("expected denial");
+    if (!("error" in r1) || r1.delivered !== false) throw new Error("expected denial envelope");
     expect(r1.error).toBe("InvalidChatTypeError");
     expect(denied.length).toBe(1);
     // Call 2: fetch-fail again → denial (proves cache wasn't poisoned)
