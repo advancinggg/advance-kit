@@ -517,6 +517,8 @@ sequenceDiagram
 
 **v10 boot-race mitigation**: WaitForResetHandshakeHandler is constructed + installed in `src/daemon/main.ts` at NEW step L14b (between `new MCPDaemonAcceptor(...)` construction and `await mcpAcceptor.start()`), so the subscription exists before any session_connected event can fire. `src/routing/index.ts`'s `installRouting` accepts the already-installed instance via `waitForResetHandshake?` arg and skips re-install (just tracks dispose).
 
+**Frame-pipelining edge (CONTRACT-006 / M003 acceptor concern — out of REQ-047/AC-27 scope)**: a maliciously crafted local client could pipeline `session_init` + `tool_call` in a single TCP chunk. The M003 acceptor decodes both frames in one read, processes `session_init` (emits `session_connected`), the WaitForResetHandshakeHandler fires synchronously and invokes `disconnectSession`, but the frame loop's local `closed` flag is not set by `closeSession` — the next-frame dispatch (`dispatchToolCall`) can execute before the underlying socket actually closes. AC-27 is satisfied (the disconnect handshake IS called as spec'd); this gap is a CONTRACT-006 `disconnectSession` semantics question (should it immediately halt frame dispatch?) and lives in `src/mcp/daemon-acceptor.ts` (M003 — read-only downstream from this slice's modified_modules). The exploit requires same-uid local access (UDS socket is 0700) so it is not a privilege-escalation surface; it is a robustness gap. Documented as accepted limitation; a separate slice may tighten the acceptor's frame-dispatch-vs-disconnect ordering.
+
 
 **Session capacity FSM**:
 

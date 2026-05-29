@@ -243,14 +243,14 @@ The polling-loop pseudocode in §1.4.1 emits `quarantine_exit` inside the probe-
 **User flow**:
 1. claude session calls MCP `reply` tool (M004) during M002's quarantine state.
 2. M002's quarantine-aware sendMessage wrapper detects `state === 'quarantine'` → instead of immediate TG API call, push the message onto the **in-memory replay queue** (FIFO, 50-cap).
-3. If queue length already at 50 → return `CapacityExceededError` to M004 (M004 returns to claude). No enqueue.
+3. If queue length already at 50 → return `{delivered: false, error: 'capacity_exceeded'}` envelope to M004 (the cap-exceeded signal is conceptually `CapacityExceededError`; M002 throws that internally inside `enqueue()`, then the client wrapper catches via name-check and surfaces the `error: 'capacity_exceeded'` envelope variant to M004 per CONTRACT-004). M004 propagates the envelope to claude. No enqueue.
 4. If under cap → enqueue a `QueueEntry` `{requester_session, params, queued_at}` where `params` is the FULL `SendMessageReq` (deep-cloned via `structuredClone` at the client boundary so it preserves `chat_id` + `text` + `reply_markup` + `parse_mode` + `reply_to_message_id` for byte-equivalent replay, and is isolated from post-enqueue caller mutation), return `{delivered: false, queued: true, eta_hint: <quarantine-cooldown-remaining-seconds>}` to the caller.
 5. On `quarantine_exit` (state transition, after `state='running'`), M002 walks the queue in FIFO order (dequeue-per-entry; abortable between entries on `daemon_stop` so a graceful shutdown leaves un-replayed entries queued); for each entry attempt TG sendMessage using `entry.params` ONLY — `entry.requester_session` is NOT re-threaded into the replay POST (it is metadata used solely for the resolved-event payload below; the replay runs while `state='running'` so it takes the real-POST path, never re-enqueues):
    - Success → emit `quarantine_replay_resolved` with `{requester_session, message_id: <new_tg_message_id>, delivered: true, queued_at, replayed_at}` (`replayed_at` from the injected clock).
    - Failure (non-retriable) → emit with `delivered: false, error_class`.
 6. Entries are removed as they drain (dequeue-per-entry); on a graceful-shutdown abort the remainder stays queued (dropped on restart per crash semantics below).
 
-**Crash semantics**: queue is in-memory ONLY; daemon restart drops all queued messages. claude session attempting to reference a queued message after a restart will see the error on its next reply call when M002's send returns "no such queued message" via the normal MCP error path. This is intentional best-effort delivery semantics — pending state and outbound queue have same "lost on crash" treatment.
+**Crash semantics**: queue is in-memory ONLY; daemon restart drops all queued messages SILENTLY (the implementation returns no queued-message identifier to the caller, and exposes no lookup/reference API, so there is no per-queued-message error surfaceable on a later reply — the AC-28 envelope `{delivered: false, queued: true, eta_hint}` is the only signal returned to claude at enqueue time, and there is no follow-up resolution event after a crash since the event sink is also in-memory). This is intentional best-effort delivery semantics: claude observes that the original reply was "queued, eta ~60s"; if the daemon restarts mid-quarantine, the queued reply is gone and no `quarantine_replay_resolved` event will fire for it. Pending state and outbound queue have same "lost on crash" treatment. Operators should monitor `quarantine_replay_resolved` cardinality vs prior queued envelopes if cross-restart loss visibility is needed.
 
 **Capacity edge**: 50-cap matches REQ-022 capacity edges (≤8 sessions / ≤50 pending approvals / ≤50 quarantine queue). 51st reply does NOT enqueue.
 
@@ -549,20 +549,46 @@ and re-fetched. LRU eviction: after every `set`, while
 `map.size > maxEntries` (default 1000), delete the first
 (least-recently-used) map entry.
 
-**v1.1.0 — OutboundReplayQueue capacity model (REQ-022 AC-34 cap edge)**:
+**v1.1.0 — OutboundReplayQueue data model (REQ-022 AC-34 cap edge + REQ-037 AC-28/29/30 FIFO/drain)**:
 
 ```ts
-// In-memory cap-enforcement structure. Default capacity = QUARANTINE_QUEUE_CAP (50).
-// enqueue() throws CapacityExceededError at cap; size()/clear() helpers.
-class OutboundReplayQueue { constructor(cfg?: { capacity?: number }) }
+// Typed in-memory FIFO queue for quarantine replay (REQ-037).
+// Default capacity = QUARANTINE_QUEUE_CAP (50) — one of REQ-022's three independent caps.
+interface QueueEntry {
+  requester_session: string;             // REQUIRED — drives quarantine_replay_resolved routing
+  params: SendMessageReq;                // FULL deep-cloned request (preserves reply_markup/parse_mode)
+  queued_at: number;                     // clock.now() at enqueue
+}
+type ReplayFn = (entry: QueueEntry) => Promise<{
+  delivered: boolean;
+  message_id?: number;
+  error_class?: string;
+}>;
+class OutboundReplayQueue {
+  constructor(cfg: { capacity?: number; eventBus?: EventBus; clock?: Clock });
+  enqueue(entry: QueueEntry): void;       // throws CapacityExceededError at cap
+  async drain(replayFn: ReplayFn, shouldAbort?: () => boolean): Promise<void>;
+  size(): number;
+  clear(): void;
+}
 ```
 
-This slice ships the cap-enforcement mechanism as one of REQ-022's
-three independent capacity edges (the other two being the
-SessionRegistry 8-cap and the PendingApprovalRegistry 50-cap, each
-configured via its own constructor `cfg.capacity`). The full
-quarantine replay/drain semantics (REQ-037) are a separate
-verification surface tracked under MODULE-002-AC-28/29/30.
+REQ-037 AC-28/29/30 (full FIFO + drain + restart semantics) IS shipped:
+- AC-28: `enqueue(QueueEntry)` validates cap (50 default) → throws `CapacityExceededError` at cap;
+  `client.ts.sendMessage(req, opts)` catches it via `(e as Error)?.name === 'CapacityExceededError'`
+  and returns `{delivered:false, error:'capacity_exceeded'}` envelope to M004 (M004 then propagates
+  the envelope to claude; AC-28 wording "returns CapacityExceededError to M004" refers to the
+  conceptual capacity-exceeded signal, surfaced via the envelope variant — exception is
+  internal-to-M002 control-flow, envelope is the inter-module contract).
+- AC-29: `drain(replayFn, shouldAbort?)` walks FIFO via dequeue-per-entry (shift), emits
+  `quarantine_replay_resolved` per entry with full payload (requester_session, message_id?,
+  delivered, queued_at, replayed_at, error_class?); honors `shouldAbort` between entries so
+  graceful daemon_stop leaves remaining entries queued (dropped on restart per AC-30).
+- AC-30: in-memory only; daemon restart drops all queued messages (no persistence).
+
+REQ-022 AC-34 cap-edge independence (SessionRegistry 8-cap + PendingApprovalRegistry 50-cap +
+this 50-cap) is verified at the cap-only surface; each cap is independently configurable via
+its constructor `cfg.capacity` and lives in a distinct module path.
 
 ### 2.6 Database Functions & RPCs
 
@@ -850,14 +876,16 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | `src/telegram/fatal-window.ts` | Sliding window data structure |
 | `src/telegram/error-classify.ts` | 409 / 429 / 5xx / network classifier |
 | **`src/telegram/chat-type-cache.ts` (v1.1.0)** | CONTRACT-016 ChatTypeCache implementation (LRU map + 1h TTL + lazy-fetch via getChat) |
-| **`src/telegram/outbound-replay-queue.ts` (v1.1.0)** | REQ-022 AC-34 cap-only `OutboundReplayQueue` (50-cap, `CapacityExceededError`). The full REQ-037 drain semantics (per-session bookkeeping + `quarantine_replay_resolved` emission) are a separate verification surface — AC-28/29/30 remain `untested` until a dedicated slice lands the drain orchestration. |
+| **`src/telegram/outbound-replay-queue.ts` (v1.1.0)** | REQ-022 AC-34 cap-edge + REQ-037 AC-28/29/30 full implementation: typed `QueueEntry` (REQUIRED `requester_session` + full-`SendMessageReq` `params` + `queued_at`), `enqueue(entry): void` (throws `CapacityExceededError` at 50-cap), `async drain(replayFn, shouldAbort?)` (dequeue-per-entry FIFO walk, emits `quarantine_replay_resolved` per entry, honors graceful-shutdown abort). |
 | `tests/telegram/*.test.ts` | Unit + integration tests |
 | `tests/telegram/compat-suite.test.ts` | MODULE-002-AC-21 compat schema verification — partially covered by `tests/telegram/methods.test.ts` (shape check of all 7 wrappers including v1.1.0 `getChat`); full upstream-0.0.6 JSON-Schema validation ships in subsequent task. Note: AC-21 scope is the 4 official-compatible tools (`reply`/`react`/`edit_message`/`download_attachment`) of upstream 0.0.6 — `getChat` is a tgcp-specific add (REQ-035 outbound DiD cache) so it is excluded from the 0.0.6 compat suite and only needs the shape-check in `methods.test.ts`. |
 | **`tests/telegram/get-chat.test.ts` (v1.1.0)** | AC-22 unit tests for `getChat(chat_id)` envelope wrapper (4 cases: happy / HTTP 5xx / fetch_failed / Telegram-reported `ok:false`). `getChat()` itself lives on `TelegramAPIClientImpl` in `client.ts` (no separate per-method file). |
 | **`tests/telegram/chat-type-cache.test.ts` (v1.1.0)** | AC-23..AC-27 unit tests for ChatTypeCache hit/miss/miss-failure/LRU/TTL. |
 | **`tests/telegram/capacity-independence.test.ts` (v1.1.0)** | AC-34 unit tests for the three independent capacity edges (SessionRegistry 8-cap + PendingApprovalRegistry 50-cap + OutboundReplayQueue 50-cap) — saturation + configurability + distinct module paths. |
 | **`tests/telegram/quarantine-eta-hint.test.ts` (v1.1.0)** | AC-32 unit tests — `eta_hint` field on `quarantine_enter` / `quarantine_exit` event payloads. |
-| **`tests/telegram/quarantine-replay-resolved.test.ts` (v1.1.0)** | AC-31 unit tests — `quarantine_replay_resolved` event payload schema, verified via synthetic emission (drain semantics not yet implemented; AC-28..AC-30 remain untested). |
+| **`tests/telegram/quarantine-replay-resolved.test.ts` (v1.1.0)** | AC-31 unit tests — `quarantine_replay_resolved` event payload schema, verified via synthetic emission. (AC-28..AC-30 full drain semantics implemented in this slice and covered by `tests/telegram/outbound-replay-queue.test.ts` + `tests/telegram/client-quarantine.test.ts`.) |
+| **`tests/telegram/outbound-replay-queue.test.ts` (v1.1.0)** | AC-28/29/30 unit tests — enqueue FIFO + cap; drain FIFO order + event schema + per-entry resolution; daemon-restart drop semantics; drain abort/snapshot-isolation robustness. |
+| **`tests/telegram/client-quarantine.test.ts` (v1.1.0)** | AC-28 external behavior — `tgClient.sendMessage(req, {requester_session})` during quarantine routes through queue and returns the documented envelope; back-compat (no requester_session → stub envelope); wire-schema test asserts `requester_session` is NEVER in TG POST body. |
 | **`tests/telegram/send-chat-action.test.ts` (v1.1.0)** | AC-33 unit tests — `sendChatAction(typing)` fire-and-forget wrapper. |
 
 ### 3.3 Test Cases
