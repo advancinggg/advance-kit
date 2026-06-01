@@ -274,19 +274,32 @@ Write the requirement registry to `docs/REQUIREMENTS_REGISTRY.md`:
 
 **In-Scope Requirements** (only Active=Y participate in coverage calculation):
 
-| REQ ID | Active | Source | Section | Description | Type | Module(s) | Status | Updated |
-|--------|--------|--------|---------|-------------|------|-----------|--------|---------|
-| REQ-001 | Y | PRD.md | §2.1 | {description} | Feature | {after Phase 1} | Draft | {date} |
-| REQ-002 | Y | PRD.md | §3.1 | {description} | NFR | {after Phase 1} | Draft | {date} |
+| REQ ID | Active | Source | Section | Description | Type | Witness | Module(s) | Status | Updated |
+|--------|--------|--------|---------|-------------|------|---------|-----------|--------|---------|
+| REQ-001 | Y | PRD.md | §2.1 | {description} | Feature | e2e | {after Phase 1} | Draft | {date} |
+| REQ-002 | Y | PRD.md | §3.1 | {description} | NFR | unit | {after Phase 1} | Draft | {date} |
 
 Active: Y (current) / N (deprecated — excluded from coverage, evaluator, and aggregation)
 Type: Feature / NFR (Non-Functional Requirement) / Constraint
+Witness: unit / integration / e2e (2.10.0+) — the **lowest verification layer** that can
+legitimately prove this REQ is satisfied. Orthogonal to Type (a Feature can be e2e; an NFR
+can be unit). Default unit/integration. Assign **e2e** when the REQ's acceptance can only be
+demonstrated on the **wired, running whole system** — i.e. a cross-module user journey
+(typically a REQ derived from a PRD §3 flow flagged "System acceptance journey", or one whose
+observable behaviour spans ≥2 modules end-to-end). Consequences of `Witness: e2e`:
+  - MUST map to ≥1 `SYS-J` journey in `docs/SYSTEM-ACCEPTANCE.md` (enforced as a convergence
+    condition by the Phase 1.3 architecture evaluator — `system_coverage == 100%`).
+  - CANNOT reach `Verified` on module-level AC alone — it stays `Partial` until its `SYS-AC`
+    passes on a real system run (enforced by /dev DoD §5.3 System Acceptance dimension).
 Status: Draft → Spec'd → Implemented → Verified | Partial
   - Draft: identified in PRD but not yet assigned to a module
   - Spec'd: assigned to module(s), MODULE spec generated
   - Implemented: code implementation complete (/dev IMPLEMENT commit)
-  - Verified: all Active=Y AC for this REQ have passed (/dev SUMMARY)
-  - Partial: some Active=Y AC passed, some still untested (/dev SUMMARY)
+  - Verified: all Active=Y AC for this REQ have passed (/dev SUMMARY). **For a `Witness: e2e`
+    REQ, additionally requires every linked Active=Y `SYS-AC` to be `passed`** (its system
+    journey demonstrably runs end-to-end); otherwise the REQ caps at `Partial`.
+  - Partial: some Active=Y AC passed, some still untested (/dev SUMMARY); OR a `Witness: e2e`
+    REQ whose module AC all passed but whose `SYS-AC` has not yet passed (wiring not yet proven)
 
 **Scope Exclusions** (explicitly out-of-scope, NOT counted in coverage):
 
@@ -295,7 +308,15 @@ Status: Draft → Spec'd → Implemented → Verified | Partial
 | OUT-001 | PRD.md §5 | {excluded item} | {why excluded} |
 
 The `Module(s)` column is populated after ARCHITECTURE.md is generated (Phase 1).
-Coverage = Active=Y REQ-IDs with module mapping / total Active=Y REQ-IDs. Target: 100%.
+
+**Two coverage axes (both Target: 100%, both enforced by the Phase 1.3 evaluator):**
+- **Module coverage** = Active=Y REQ-IDs with module mapping / total Active=Y REQ-IDs.
+  (Every requirement lands in some module — the historical check.)
+- **System coverage (2.10.0+)** = Active=Y `Witness:e2e` REQ-IDs mapped to ≥1 `SYS-J` journey
+  / total Active=Y `Witness:e2e` REQ-IDs. (Every system-behaviour requirement is exercised by
+  a cross-module end-to-end journey in `docs/SYSTEM-ACCEPTANCE.md`.) Projects with zero
+  `Witness:e2e` REQs have system coverage `—` (vacuously satisfied) and behave exactly as
+  pre-2.10.0.
 
 **REQ-ID stability rules (for /spec reruns):**
 - Existing REQ-IDs with unchanged Description: PRESERVE original ID
@@ -304,6 +325,11 @@ Coverage = Active=Y REQ-IDs with module mapping / total Active=Y REQ-IDs. Target
 - New requirements (not in existing registry): assign next available REQ-{NNN}
 - Removed requirements (no longer in PRD): set Active=N
 - Never reuse deprecated REQ-IDs
+- **Witness field (2.10.0+)**: re-derived on every rerun (not a Description change, so it
+  never deprecates a REQ-ID). Flipping a REQ to `Witness:e2e` adds the SYS-J mapping
+  obligation (Phase 1.3 will FAIL until a journey covers it); flipping away from `e2e`
+  releases it. Legacy registries with no Witness column read as all-`unit` (no e2e
+  obligation) until the next `/spec` rerun back-fills the column from PRD §3 journey markers.
 
 ### 0.5 Confirm Understanding with User (Gate 1)
 
@@ -2455,7 +2481,7 @@ append only to `**Synonyms**:`, `**Related**:`, and `## Change history`. The sol
 
 ---
 
-## Phase 3: Generate Implementation Order & CONTEXT-MAP
+## Phase 3: Generate Implementation Order, CONTEXT-MAP & System Acceptance
 
 ### 3.1 Topological Sort
 
