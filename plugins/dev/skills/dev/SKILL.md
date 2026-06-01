@@ -375,16 +375,19 @@ Last updated:    {updated_at}
 
 Read the existing `state.json` and continue executing the logic for its current phase.
 
-**v3→v4 schema defaulting (2.8.0+)**: Read `state.json.version` and
+**v3→v5 schema defaulting (2.8.0+ / 2.10.0+)**: Read `state.json.version` and
 branch on its integer value:
-- `version == 4` (current): all fields present; no defaulting needed.
+- `version == 5` (current): all fields present; no defaulting needed.
+- `version == 4` (2.8.0–2.9.x): treat missing `in_scope_sys_ac_ids` as `[]`
+  (no system ACs in scope — pre-2.10.0 behaviour). The next state.json write
+  bumps `version: 5` in place. No hard-fail on v4 read; backward-compatible.
 - `version == 3` (pre-2.8.0): treat missing fields as in-memory
-  defaults (`worktree_mode = false`, `main_worktree_path = null`).
-  The next state.json write (heartbeat or transition) bumps
-  `version: 4` in place. No hard-fail on v3 read; backward-compatible.
-- `version < 3` OR `version > 4` OR field missing/non-integer: HARD
+  defaults (`worktree_mode = false`, `main_worktree_path = null`,
+  `in_scope_sys_ac_ids = []`). The next state.json write (heartbeat or
+  transition) bumps `version: 5` in place. No hard-fail on v3 read.
+- `version < 3` OR `version > 5` OR field missing/non-integer: HARD
   FAIL via AskUserQuestion: "state.json reports version `{N}` which
-  is outside the supported v3/v4 window. This may indicate a
+  is outside the supported v3/v4/v5 window. This may indicate a
   hand-edit, a downgrade attempt, or a future-incompatible state.
   Options: (a) abort and start fresh (`/dev abort` then re-invoke),
   (b) inspect state.json manually and decide." Do NOT silently
@@ -518,7 +521,7 @@ grep -q '.dev-state' "$REPO_ROOT/.gitignore" 2>/dev/null || echo '.dev-state/' >
 Use the Write tool to create `$STATE_DIR/state.json`:
 ```json
 {
-  "version": 4,
+  "version": 5,
   "phase": "plan",
   "repo_root": "{REPO_ROOT}",
   "task_id": "dev-{repo_name}-{date}-{short_hash}",
@@ -536,6 +539,7 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "eval_history": [],
   "req_ac_map": {},
   "in_scope_ac_ids": [],
+  "in_scope_sys_ac_ids": [],
   "waived_scope": [],
   "contract_registry_available": true/false,
   "modified_contracts": [],
@@ -558,16 +562,19 @@ Use the Write tool to create `$STATE_DIR/state.json`:
 **v3→v4 forward-compat (2.8.0+)**: `/dev resume` reading a v3 state.json
 treats missing fields as `worktree_mode: false`,
 `main_worktree_path: null`. Next heartbeat write bumps `version: 4`
-in-place. INIT always writes v4 (no in-place v3 generation after
-2.8.0). No hard-fail on v3 read; backward-compatible. `version < 3`
-or `version > 4` (or missing/non-integer) → HARD FAIL via
+in-place. **v4→v5 forward-compat (2.10.0+)**: `/dev resume` reading a v4
+state.json treats missing `in_scope_sys_ac_ids` as `[]` (no system ACs in
+scope — behaves exactly as pre-2.10.0); next heartbeat write bumps
+`version: 5` in-place. INIT always writes the current version (no in-place
+legacy generation). No hard-fail on v3/v4 read; backward-compatible.
+`version < 3` or `version > 5` (or missing/non-integer) → HARD FAIL via
 AskUserQuestion (do not silently default unsupported versions). See
 `/dev resume` subcommand block for the explicit defaulting protocol
 and §8.3 rule 3 for the underlying trust-boundary rationale.
 
 **Traceability fields** (fixes #26 and #55):
-- `req_ac_map` / `in_scope_ac_ids` / `waived_scope` are synchronized from the plan file's
-  Traceability YAML block into `state.json`.
+- `req_ac_map` / `in_scope_ac_ids` / `in_scope_sys_ac_ids` / `waived_scope` are synchronized
+  from the plan file's Traceability YAML block into `state.json`.
 - **Invariant**: the values in `state.json` must match the YAML block exactly.
 - During the Plan phase, after writing the YAML block, sync it into `state.json` immediately.
 - The Test Evaluator / DoD reads `in_scope_ac_ids` from `state.json` (for programmatic
@@ -808,12 +815,35 @@ The plan must contain:
       - MODULE-001-AC-01
       - MODULE-001-AC-02
       - MODULE-003-AC-05
+    in_scope_sys_ac_ids:  # 2.10.0+; SYS-AC IDs for in-scope Witness:e2e REQs ([] if none)
+      - SYS-AC-01
     waived_scope: []  # or ["feature X not in registry"]
     ```
     **Invariant**: `in_scope_ac_ids == flatten(req_ac_map.values())`; the same AC must not
     appear under multiple REQs.
     After writing the YAML in the Plan phase, immediately sync it into `state.json`'s
-    `req_ac_map` / `in_scope_ac_ids` / `waived_scope` fields.
+    `req_ac_map` / `in_scope_ac_ids` / `in_scope_sys_ac_ids` / `waived_scope` fields.
+
+  - **System Acceptance scope (2.10.0+, only when `docs/SYSTEM-ACCEPTANCE.md` exists)**:
+    after determining `in_scope_ac_ids`, determine which **system journeys** this task must
+    prove end-to-end:
+    1. From `REQUIREMENTS_REGISTRY.md`, take this task's in-scope REQ-IDs whose `Witness`
+       column is `e2e`.
+    2. In `docs/SYSTEM-ACCEPTANCE.md` §1, find every Active=Y `SYS-J` whose **REQ Sources**
+       include any of those e2e REQ-IDs; collect their Active=Y `SYS-AC` IDs (§2 ledger) into
+       `in_scope_sys_ac_ids`.
+    3. A task with no in-scope `Witness:e2e` REQ → `in_scope_sys_ac_ids: []` → the System
+       Acceptance DoD dimension (§5.3) is skipped entirely (pure module work is never blocked).
+    4. **Wiring obligation (closes the "unclaimed footnote" gap)**: if an in-scope e2e REQ has
+       NO Active=Y `SYS-J` covering it, do NOT proceed silently — /spec has not materialized
+       its journey. Re-run `/spec` (it creates the journey), or, when THIS task is the wiring
+       task, ensure the journey + its SYS-AC exist in `SYSTEM-ACCEPTANCE.md` before the REQ can
+       be marked Verified. The wiring lives here as an open, blocking `SYS-AC` — never as a
+       MODULE §3.6 "future work" note.
+    5. **Staleness guard**: if `docs/SYSTEM-ACCEPTANCE.md` is older than
+       `docs/REQUIREMENTS_REGISTRY.md` (compare mtimes via the §1.1 `python3
+       os.path.getmtime` helper pattern), emit a non-blocking Warning: "SYSTEM-ACCEPTANCE.md
+       may be stale vs the registry — rerun /spec to refresh system journeys."
 
   - **Cross-module Impact Analysis** (only when `contract_registry_available: true`;
     v3.2 addition): append the following fields to the plan YAML block (alongside the
@@ -905,8 +935,8 @@ The plan must contain:
 
 Write the plan to `~/.claude/plans/dev-{repo}-{task}.md`.
 Update `state.json`'s `plan_file`, `docs_allowlist`, `req_ac_map`, `in_scope_ac_ids`,
-`waived_scope`, `modified_contracts`, `affected_downstream_modules`, `downstream_docs_list`,
-`regression_check_ac_ids`, `scope_expansion`, `scope_expansion_depth`.
+`in_scope_sys_ac_ids`, `waived_scope`, `modified_contracts`, `affected_downstream_modules`,
+`downstream_docs_list`, `regression_check_ac_ids`, `scope_expansion`, `scope_expansion_depth`.
 
 ### 1.3 Plan evaluation loop (independent evaluator architecture)
 
@@ -1680,6 +1710,27 @@ repeat:
         AC Tested: {tested}/{total} ({ac_tested_rate}%)
         AC Passed: {passed}/{tested} ({ac_pass_rate}%)
 
+        System Acceptance Check (2.10.0+; skip entire block if state.json
+        in_scope_sys_ac_ids is empty):
+        SCOPE: only the EXACT SYS-AC IDs from state.json in_scope_sys_ac_ids.
+        Read docs/SYSTEM-ACCEPTANCE.md §1 (journey, Module Chain, Observable Success Condition,
+        Witness) and §2 (ledger). The passing witness for a SYS-AC MUST be a test that runs the
+        REAL wired system end-to-end — a real process/binary exercising the journey's full
+        Module Chain and asserting the Observable Success Condition. A unit/integration test, a
+        mock/stub standing in for any module in the chain, or a fixture-only run does NOT
+        satisfy a SYS-AC (the witness-floor invariant). For each in-scope SYS-AC determine
+        PASS / FAIL / UNTESTED / MOCK-ONLY:
+        - PASS: an e2e/system test exercised the real chain and the success condition held.
+        - FAIL: the e2e test ran but the success condition did not hold.
+        - UNTESTED: no e2e/system test exists for this SYS-AC.
+        - MOCK-ONLY: a test claims this SYS-AC but mocks/stubs part of the chain → counts as
+          UNTESTED for gating, and is a [Critical] witness-floor violation.
+        Output format:
+        System Acceptance: {passed}/{in_scope_sys_total} ({sys_ac_pass_rate}%)
+        - SYS-AC-01: PASS (e2e test {name} ran the real MODULE-002→MODULE-005→MODULE-004 chain)
+        - SYS-AC-02: UNTESTED — no end-to-end witness; wiring not proven
+        - SYS-AC-03: MOCK-ONLY — LLM call stubbed; does not satisfy witness floor [Critical]
+
         Regression Check (skip entire block if regression_check_ac_ids is empty;
         otherwise render by regression_gate_status — fix #25):
         For each regression_check_ac_id, find linked tests in downstream §3.3 (via AC Link)
@@ -1821,6 +1872,12 @@ repeat:
     "regression_gate_status": "applicable",
     "no_test_defined_count": 1,
     "no_test_implemented_count": 1,
+    "sys_ac_results": {
+      "SYS-AC-01": "pass",
+      "SYS-AC-02": "untested",
+      "SYS-AC-03": "mock_only"
+    },
+    "sys_ac_pass_rate": 0.33,
     "status": "pass" | "fail"
   }
   Boundary example (everything NO_TEST_*):
@@ -1831,6 +1888,9 @@ repeat:
   Semantics: ac_tested_rate = tested/(tested+untested), ac_pass_rate = passed/tested.
   DoD verdict: ac_tested_rate == 1.0 AND ac_pass_rate == 1.0.
   If in_scope_ac_ids is empty (pure waived-scope task) → skip the ac_results block.
+  System-AC semantics (2.10.0+): sys_ac_pass_rate = passed / |in_scope_sys_ac_ids|, where
+  `mock_only` and `untested` BOTH count as not-passed (witness-floor). If in_scope_sys_ac_ids
+  is empty → omit sys_ac_results and treat sys_ac_pass_rate as N/A (dimension skipped).
   Update state.json: eval_round, test_attempts, updated_at.
 
   ──────────────────────────────────────────────────────────────
@@ -1848,6 +1908,10 @@ repeat:
      - `regression_pass_rate == 1.0` (no REGRESSION among tested downstream AC).
   4. Other `regression_gate_status` values ("no_tested" / "no_historical_ac" /
      "no_downstream" / "degraded") do not block advancement.
+  5. If `in_scope_sys_ac_ids` is non-empty (2.10.0+):
+     - `sys_ac_pass_rate == 1.0` — every in-scope SYS-AC is PASS via a real e2e/system
+       witness. Any `untested`, `fail`, or `mock_only` in-scope SYS-AC blocks advancement
+       (witness-floor: a mocked/stubbed chain never satisfies a SYS-AC). Empty → not a gate.
 
   The main agent reads the latest entry in state.json's eval_history and decides directly
   from those fields (not from the free-form Verdict text).
@@ -2024,6 +2088,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 | **Code Quality** | Diff Review Verdict == PASS | Diff Evaluator (4.1) |
 | **Doc Consistency** | Doc Evaluator Verdict == PASS (sdd_mode only) | Doc Evaluator (4.1) |
 | **Regression** | regression_gate_status applicable + regression_pass_rate==1.0; or no_tested/no_historical_ac/no_downstream/degraded | Test Evaluator Regression Check (5.1) |
+| **System Acceptance** (2.10.0+) | every `in_scope_sys_ac_id` passed at witness level e2e/system on the REAL wired system (not mocked); or `in_scope_sys_ac_ids == []` (skipped) | Test Evaluator System-AC Check (5.1) + Adversarial (5.2) |
 | **Findings Closure** | deferred_findings == [] OR all entries have user_accepted_at timestamp (fix #29) | Main agent enforced |
 
 **Hard gates** (enforced by the evaluators; only over the in_scope_ac_ids in state.json):
@@ -2041,6 +2106,14 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
   - "degraded" → treated as PASS (contract_registry_available == false; Info level).
   - REGRESSION is never allowed (in applicable mode, regression_pass_rate < 1.0 → Critical
     hard fail).
+- **System Acceptance gate** (2.10.0+, fires ONLY when `in_scope_sys_ac_ids` is non-empty):
+  every in-scope `SYS-AC` (docs/SYSTEM-ACCEPTANCE.md §2) has `Status=passed` AND its passing
+  witness was a **real end-to-end run of the wired system** — a real process/binary exercising
+  the actual module chain, NOT a mock, stub, or unit/integration-level substitute. A SYS-AC
+  that is UNTESTED, or whose only witness is unit/integration/mocked, is a **Critical hard
+  fail** (the run stays in TEST phase; it never writes `passed` to the system ledger). When
+  `in_scope_sys_ac_ids == []` → dimension skipped (Info; pure module task, never blocked). In
+  lightweight mode (`sdd_mode: false`) there is no SYSTEM-ACCEPTANCE.md, so this is always [].
 
 **Soft gates / Regression warnings:**
 - regression_gate_status == "no_tested" → **strong Warning** in SUMMARY:
@@ -2064,6 +2137,9 @@ DoD checks the **subset of ACs declared in-scope during the Plan phase** (state.
 in_scope_ac_ids), NOT every AC under the REQ.
 Example: REQ-001 has AC-01..AC-05; this task only declared verification for AC-01 and
 AC-02 → DoD checks only those two.
+**System Acceptance scope (2.10.0+)**: symmetrically, the System Acceptance dimension checks
+only `in_scope_sys_ac_ids` (the SYS-ACs of this task's in-scope `Witness:e2e` REQs). Empty →
+dimension skipped, exactly as a pure-module task behaved pre-2.10.0.
 
 **Waived-scope handling (when state.json's waived_scope is non-empty):**
 - **Traceability for registered REQs keeps operating normally** — ACs in `in_scope_ac_ids`
@@ -2079,21 +2155,31 @@ AC-02 → DoD checks only those two.
   updates.
 
 **AC-level persistent ledger:**
-MODULE doc §3.4 is the source of truth at the AC level.
-/dev SUMMARY reads the §3.4 tables of the affected MODULEs and writes this run's
-verification results.
-(§3.4 only records `passed` — DoD guarantees that by the time SUMMARY runs, every
-in-scope AC has already passed, so there is no `failed` write path.)
+MODULE doc §3.4 is the source of truth at the module-AC level (module coverage axis).
+**docs/SYSTEM-ACCEPTANCE.md §2 is the source of truth at the system-AC level (2.10.0+,
+system E2E readiness axis).** /dev SUMMARY reads + writes both: the §3.4 tables of the
+affected MODULEs, and — when `in_scope_sys_ac_ids` is non-empty — the SYS-AC ledger.
+(Both ledgers only record `passed` — DoD guarantees that by the time SUMMARY runs, every
+in-scope module AC AND every in-scope SYS-AC has already passed, so there is no `failed`
+write path on either axis.)
 
 **Registry status rules** (aggregated from §3.4 AC ledgers; only Active=Y rows count):
 - On the IMPLEMENT commit → Registry Status: Spec'd → Implemented.
 - During SUMMARY (executed by §6):
-  1. Write this run's in-scope AC results into §3.4 → passed.
+  1. Write this run's in-scope AC results into §3.4 → passed; and this run's in-scope
+     SYS-AC results into SYSTEM-ACCEPTANCE.md §2 → passed (2.10.0+).
   2. Read all of the REQ's linked AC statuses from §3.4, **counting only Active=Y rows**:
-     - All Active=Y AC passed → Registry: Verified
+     - All Active=Y AC passed → Registry: Verified — **except** a `Witness:e2e` REQ also
+       requires every linked Active=Y `SYS-AC` to be `passed` (rule 3); otherwise Partial.
      - Some Active=Y AC passed + some untested → Partial
      - All Active=Y AC untested → keep as Implemented
      - Active=N ACs are fully excluded and do not affect any calculation.
+  3. **System-behaviour REQ cap (2.10.0+)**: for a REQ whose registry `Witness` is `e2e`,
+     promoting to `Verified` ALSO requires every linked Active=Y `SYS-AC` (the `SYS-J` whose
+     REQ Sources include this REQ) to be `passed` in SYSTEM-ACCEPTANCE.md §2. Module AC all
+     passed but a linked SYS-AC still untested → cap at `Partial` (wiring not yet proven
+     end-to-end). This is the rule that stops a system-behaviour REQ from reading
+     "Verified / 100%" while the product never actually runs end-to-end.
 
 State transitions remain: set `phase: "adversarial"` when entering 5.2; set
 `phase: "summary"` once 5.3 is fully satisfied.

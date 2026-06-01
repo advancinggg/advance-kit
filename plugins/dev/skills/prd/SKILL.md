@@ -520,6 +520,12 @@ outcome. One persona = one sub-section.}
 - **Trigger**: what starts the flow
 - **Steps**: numbered sequence
 - **Success condition**: how user knows it worked
+- **System acceptance journey?**: Yes / No (2.10.0+) — mark **Yes** when the product is
+  not usable until this whole flow runs end-to-end on the wired, running system (a
+  cross-module journey, not a single screen/endpoint). Stays product-level: state the
+  observable outcome, NOT modules or wiring. `/spec` lifts every Yes flow into a `SYS-J`
+  journey in `docs/SYSTEM-ACCEPTANCE.md` and tags its requirements `Witness:e2e`, so the
+  flow can only be marked Verified once it demonstrably runs end-to-end (not just unit-tested).
 Include diagrams (ASCII or description) if flow is complex.}
 
 ## 4. Feature specifications
@@ -908,6 +914,13 @@ Dimension 1 — User (end-user / operator perspective):
   concurrency, offline)?
 - Is every feature's value proposition concrete?
 - Are error messages / empty states / loading states specified?
+- System acceptance (2.10.0+): for a non-trivial product with cross-module runtime
+  behaviour, is ≥1 §3 flow marked "System acceptance journey: Yes" with a concrete,
+  black-box observable success condition (what an operator sees on the running system)?
+  None present → [Warning][User] no system acceptance journey declared — the end-to-end
+  "does it actually run" contract is unspecified; /spec will have no Witness:e2e seed and
+  the system-readiness axis stays undefined. (Genuinely trivial / single-flow products are
+  exempt — do not raise.)
 
 Dimension 2 — Ops/SRE:
 - SLA/SLO commitments present and measurable?

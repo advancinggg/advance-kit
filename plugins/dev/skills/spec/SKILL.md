@@ -1482,7 +1482,7 @@ performance-critical path with strict SLA.
 
 After generating ARCHITECTURE.md, use independent evaluators to verify PRD coverage before presenting to user.
 
-**Immutable spec**: PRD.md. **Mutable output**: ARCHITECTURE.md. **Convergence**: uncovered_count == 0 AND substantive_count == 0.
+**Immutable spec**: PRD.md. **Mutable output**: ARCHITECTURE.md. **Convergence**: uncovered_count == 0 AND system_uncovered_count == 0 (2.10.0+ — every Witness:e2e REQ has a cross-module realization) AND substantive_count == 0.
 
 ```
 eval_round = 0
@@ -1521,11 +1521,27 @@ repeat:
         Cross-doc reference checks (§6.1 ↔ §2.2/§2.3) are delegated to Module Evaluator
         in Phase 2.4 when module docs are available.
 
+        Witness classification + system-journey readiness (2.10.0+):
+        - Read REQUIREMENTS_REGISTRY.md's Witness column and PRD §3 Core user flows.
+        - Flag [Critical] any REQ that is genuinely system-behaviour — a cross-module,
+          user-observable end-to-end journey (especially PRD §3 flows flagged
+          \"System acceptance journey\", or behaviour spanning ≥2 modules in §10
+          Traceability) — but is NOT marked Witness:e2e in the registry. Under-classification
+          lets a whole-system requirement reach Verified on unit tests alone.
+        - For every Witness:e2e REQ, verify ARCHITECTURE §5 Data Flow / §10 Traceability
+          realizes it as a coherent multi-module path so a system journey is constructible.
+          An e2e REQ with no cross-module realization → [Critical].
+        - Design-level readiness only; the detailed journey ledger
+          (docs/SYSTEM-ACCEPTANCE.md) is materialized later in Phase 3.4.
+
         Output format (MANDATORY):
         Architecture Evaluation: Round {eval_round}
         PRD Coverage: {covered}/{total} ({rate}%)
+        System Coverage (design): {e2e REQs with a cross-module realization}/{total e2e REQs} (— if no Witness:e2e REQs)
         Uncovered Items:
         1. [Critical] PRD §{section} ... — not mapped to any module
+        Witness Classification Issues:
+        1. [Critical] REQ-{NNN} is system-behaviour (PRD §X flow / spans MODULE-A,MODULE-B) but marked Witness:{unit|integration} — or — no system-journey path in ARCHITECTURE §5/§10
         MECE Violations:
         1. [Critical/Warning] ...
         Dependency Issues:
@@ -1552,11 +1568,22 @@ repeat:
         - Contract IDs unique, follow CONTRACT-{NNN} format, has Active=Y/N column
         Cross-doc references (§6.1 ↔ §2.2/§2.3) are checked by Module Evaluator at Phase 2.4.
 
+        Witness classification + system-journey readiness (2.10.0+):
+        - Read REQUIREMENTS_REGISTRY.md's Witness column + PRD §3 Core user flows.
+        - Flag [Critical] any genuinely system-behaviour REQ (cross-module, user-observable
+          end-to-end journey; especially PRD §3 flows flagged \"System acceptance journey\"
+          or behaviour spanning ≥2 modules in §10) NOT marked Witness:e2e.
+        - For every Witness:e2e REQ, verify ARCHITECTURE §5/§10 realizes it as a coherent
+          multi-module path (system journey constructible). No path → [Critical].
+
         YOUR FINAL OUTPUT MUST USE THIS EXACT FORMAT (mandatory):
         Architecture Evaluation: Round {eval_round}
         PRD Coverage: {covered}/{total} ({rate}%)
+        System Coverage (design): {e2e REQs with a cross-module realization}/{total e2e REQs} (— if no Witness:e2e REQs)
         Uncovered Items:
         1. [Critical] PRD §{section} ... — not mapped to any module
+        Witness Classification Issues:
+        1. [Critical] REQ-{NNN} system-behaviour but marked Witness:{unit|integration} — or — no system-journey path in §5/§10
         MECE Violations:
         1. [Critical/Warning] ...
         Dependency Issues:
@@ -1619,6 +1646,8 @@ repeat:
 
 
   - Merge uncovered PRD items (union)
+  - Merge Witness Classification Issues (union) → system_uncovered_count = distinct
+    Witness:e2e REQs that are either under-classified or lack a cross-module path (2.10.0+)
   - Merge MECE violations and dependency issues (deduplicate)
   - Merge Risk & Threat Model Issues (deduplicate)
   - Both found same issue → high confidence
@@ -1641,10 +1670,13 @@ repeat:
   STEP 3: Verdict
   ──────────────────────────────────────────────────────────────
 
-  If PRD coverage == 100% AND substantive_count == 0 → converged, exit loop
+  If PRD coverage == 100% AND system_uncovered_count == 0 (system coverage (design) == 100%
+  or no Witness:e2e REQs) AND substantive_count == 0 → converged, exit loop
 
   If findings exist:
-  - Main agent revises ARCHITECTURE.md based on evaluator report
+  - Main agent revises ARCHITECTURE.md based on evaluator report. For Witness Classification
+    Issues, either correct the registry's Witness column (re-classify the REQ) or add the
+    missing cross-module realization to ARCHITECTURE §5/§10 so a system journey is constructible.
   - Back to STEP 1 (fresh evaluators)
 
   > 10 rounds → AskUserQuestion (accept current / keep refining / abort)
@@ -2658,6 +2690,126 @@ unconditionally (same discipline as MODULE docs). Stale detection lives on the
 
 ---
 
+### 3.4 System Acceptance generation (2.10.0+)
+
+After CONTEXT-MAP, generate `docs/SYSTEM-ACCEPTANCE.md` — the **second progress axis**.
+MODULE §1.5/§3.4 prove each module in isolation (module AC coverage, "the 92%"); this doc
+proves the **wired system runs end-to-end** (system E2E readiness, "the other axis"). It is
+the cross-module peer of the per-module docs and the single home for whole-system acceptance.
+
+**Why this exists**: without it, a system-behaviour requirement is "covered" the moment it
+lands in *some* module, and `/dev` closes every isolated module AC while production wiring
+becomes an unclaimed footnote (it has no AC blocking it). This doc gives wiring an owner: a
+`Witness:e2e` REQ cannot reach `Verified` until its `SYS-AC` passes on a real run.
+
+**Unconditional regenerate + merge-preserve**: emit on every `/spec` run with the same
+merge-preserve discipline used for MODULE docs (preserve passed verification; deprecate, never
+delete). Generate it only when ≥1 Active=Y `Witness:e2e` REQ exists; otherwise write the
+skeleton with an empty journeys table and note "no system-behaviour requirements (all REQs
+unit/integration witness)".
+
+**Generation algorithm** (all steps emitted):
+
+1. Collect candidate journeys from two sources, deduplicated:
+   a. PRD §3 Core user flows flagged **"System acceptance journey"** (the product-intent seed).
+   b. Every Active=Y `Witness:e2e` REQ in `REQUIREMENTS_REGISTRY.md` not already covered by (a).
+2. For each candidate, derive the **Module Chain**: reverse-map its REQ Sources → `Module(s)`
+   (registry / ARCHITECTURE §10), ordered by `IMPLEMENTATION_ORDER.md` topological position.
+3. Derive **Contracts**: the `CONTRACT-ID`s (ARCHITECTURE §6.1) sitting on the seams between
+   consecutive modules in the chain.
+4. Write the **Observable Success Condition** from the PRD flow's Success condition as a
+   black-box, runnable pass/fail statement — what an operator sees on the running, wired
+   system. Strip any module-internal or mock-only detail.
+5. Allocate `SYS-J-{nn}`; allocate ≥1 `SYS-AC-{nn}` per journey (one per discrete observable
+   outcome). Witness Level is `e2e` or `system` only — never `unit`/`integration`.
+6. **Coverage assertion**: every Active=Y `Witness:e2e` REQ MUST appear in ≥1 journey's REQ
+   Sources. The Phase 1.3 architecture evaluator fails (`system_coverage < 100%`) otherwise.
+7. Apply merge-preserve against the existing `docs/SYSTEM-ACCEPTANCE.md`.
+
+Use the Write tool to generate `docs/SYSTEM-ACCEPTANCE.md`:
+
+```markdown
+# System Acceptance
+
+> Project: {project name}
+> Generated: {ISO date} (/spec)
+> Last updated: {ISO date}
+> Axis: system E2E readiness (peer to per-module AC coverage in MODULE §3.4)
+
+---
+
+## 1. System Acceptance Journeys
+
+Each journey is a cross-module, black-box, end-to-end user-observable behaviour that proves
+the wired system works. Sourced from PRD §3 flows flagged "System acceptance journey" and from
+every `Witness:e2e` REQ in REQUIREMENTS_REGISTRY.
+
+Journey ID format: `SYS-J-{nn}` (two-digit, zero-padded), globally unique.
+
+| ID | Source (PRD) | REQ Sources | Module Chain | Contracts | Observable Success Condition | Witness |
+|----|--------------|-------------|--------------|-----------|------------------------------|---------|
+| SYS-J-01 | §3.2 | REQ-007, REQ-012 | MODULE-001→MODULE-002→MODULE-005→MODULE-004 | CONTRACT-002, CONTRACT-004 | On the running daemon: send a Telegram message → agent loads context, calls the LLM + ≥1 tool, and replies in-channel within {N}s | e2e |
+
+- **Source (PRD)**: the PRD §-section (flow / milestone) this journey realizes.
+- **REQ Sources**: comma-separated Active=Y `Witness:e2e` REQ-IDs satisfied. Every such REQ
+  MUST appear in ≥1 journey (Phase 1.3 `system_coverage` gate).
+- **Module Chain**: ordered bare `MODULE-NNN` IDs the journey traverses — the wiring under test.
+- **Contracts**: `CONTRACT-ID`s (ARCHITECTURE §6.1) exercised across module seams.
+- **Observable Success Condition**: a black-box, runnable pass/fail statement on the running,
+  wired system. NO module-internal state; NO mock-only checks.
+- **Witness**: `e2e` (real wired system, real process/binary) or `system` (full deployment).
+  Never `unit`/`integration` (those are module-local — MODULE §1.5/§3.3).
+
+## 2. System AC Ledger
+
+The AC-level ledger for system journeys — the SECOND progress axis (system E2E readiness),
+peer to MODULE §3.4 (module AC coverage). /dev SUMMARY reads + writes it.
+
+System AC ID format: `SYS-AC-{nn}` (two-digit, zero-padded), globally unique.
+
+| SYS-AC ID | Journey | Active | Status | Witness Level | Verified By Task | Date |
+|-----------|---------|--------|--------|---------------|------------------|------|
+| SYS-AC-01 | SYS-J-01 | Y | untested | e2e | — | — |
+
+- Active: Y (current) / N (deprecated — excluded from all aggregation)
+- Status: untested → passed. No "failed" state: /dev DoD guarantees a SYS-AC is written
+  `passed` only after it demonstrably runs on the wired system; a task that cannot pass it
+  stays in TEST phase and never writes here (identical contract to MODULE §3.4).
+- Witness Level: e2e | system — the layer the passing test MUST run at. A unit/integration
+  test can NEVER mark a SYS-AC passed (the witness-floor invariant; /dev DoD enforces it).
+- Verified By Task: /dev task_id that wrote this status.
+- Date: ISO date of status change.
+
+**System E2E readiness** = count(SYS-AC where Active=Y AND Status=passed) /
+count(SYS-AC where Active=Y) × 100. Denominator 0 → display `—` (no journeys; vacuously ready).
+
+## 3. Change History
+
+| Date | Change |
+|------|--------|
+| {date} | Initial creation |
+```
+
+**Generation rules (merge-preserve)** — identical discipline to MODULE §3.4:
+- First-time generation: all SYS-J + SYS-AC rows Active=Y, Status=untested.
+- /spec rerun (merge by ID):
+  - SYS-J / SYS-AC ID with UNCHANGED Observable Success Condition AND same REQ Sources:
+    PRESERVE Active + Status (do not reset — protects /dev system-verification progress).
+  - Changed success condition OR REQ Sources → old row Active=N (deprecated, history kept);
+    new `SYS-AC-{next}` Active=Y, Status=untested.
+  - New journeys / ACs: Active=Y, Status=untested.
+  - Removed (no longer derivable from any e2e REQ or flagged flow): Active=N.
+
+**Authorship contract** (mirrors the §3.4 partitioned contract):
+- `/spec` owns SYS-J / SYS-AC row creation and Active=Y↔N flips.
+- `/dev` SUMMARY owns ONLY `untested → passed` for the run's in-scope SYS-AC IDs.
+
+**Witness-floor invariant**: a SYS-AC's Witness Level is `e2e` or `system` only. /dev's DoD
+(§5.3 System Acceptance dimension) rejects any attempt to mark a SYS-AC `passed` via a
+unit/integration witness or a mocked run.
+
+---
+
 ## Phase 4: Final Report
 
 **Strict template — whitelist only (fixes #27 and #30)**: the Final Report MUST be
@@ -2676,6 +2828,7 @@ Spec Document Generation Complete
 Document List:
   docs/ARCHITECTURE.md            — Architecture Design Document
   docs/IMPLEMENTATION_ORDER.md    — Implementation Order
+  docs/SYSTEM-ACCEPTANCE.md       — System Acceptance Journeys (system E2E readiness axis; omitted if no Witness:e2e REQs)
   docs/modules/
     MODULE-001-{name}.md          — {responsibility}
     MODULE-002-{name}.md          — {responsibility}
@@ -2686,7 +2839,7 @@ Implementation Phases: {M} phases
 Critical Path: {critical path description}
 
 Evaluator Results:
-  Architecture: {converged in {N} rounds | accepted at round {N}} (PRD coverage: {X}% → {final}%)
+  Architecture: {converged in {N} rounds | accepted at round {N}} (module coverage: {X}% → {final}%; system coverage: {Y}% → {final}% or — if no Witness:e2e REQs)
   Module evaluations:
     MODULE-001-{name}: {converged in {N} rounds | accepted at round {N}}
     MODULE-002-{name}: {converged in {N} rounds | accepted at round {N}}
