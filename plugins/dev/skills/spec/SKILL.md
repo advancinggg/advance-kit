@@ -2198,6 +2198,10 @@ Generation rules (merge-preserve):
 
 - {Gap 1: what's missing and why}
 - {Future: planned enhancement}
+- {NOTE (2.10.0+): end-to-end / "production wiring" gaps do NOT belong here. They are
+  first-class blocking `SYS-AC` rows in `docs/SYSTEM-ACCEPTANCE.md`, not deferred
+  footnotes. A `Witness:e2e` REQ stays `Partial` until its `SYS-AC` passes on a real run,
+  so cross-module wiring can never be silently parked as "future work" in this section.}
 
 ### 3.7 Change History
 

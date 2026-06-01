@@ -3,7 +3,9 @@
 #
 # Aggregates three sections of repository state to stdout:
 #   1. Module progress — docs/modules/MODULE-*.md §3.4 ledger via the
-#      SKILL.md §6.1.1 formula (passed * 100 + active / 2) / active.
+#      SKILL.md §6.1.1 formula (passed * 100 + active / 2) / active, plus a
+#      trailing System E2E readiness row from docs/SYSTEM-ACCEPTANCE.md §2
+#      (2.10.0+, axis 2; inert when the file is absent).
 #   2. Worktree status — git worktree list × per-worktree
 #      .dev-state/state.json overlay (task_id, phase, eval_round, updated_at).
 #   3. Task branches — dev-task-* ahead/behind vs per-branch base + dirty
@@ -345,6 +347,49 @@ print_section_1() {
     printf '%-32s  %-9s  ' "$overall_label" "$total_passed/$total_active"
     _print_cell "${BOLD}${ocolor}" "${overall}%" 6
     printf '  %s\n' "—"
+  fi
+
+  # ── System E2E readiness (axis 2, 2.10.0+) — docs/SYSTEM-ACCEPTANCE.md §2 ──
+  # Reported as a distinct trailing row so the two axes sit adjacent (module
+  # AC coverage above, system E2E readiness here) and are never collapsed into
+  # one number. Inert when the file is absent (pre-2.10.0 / no Witness:e2e REQ).
+  local sysfile="$REPO_ROOT/docs/SYSTEM-ACCEPTANCE.md"
+  if [ -f "$sysfile" ]; then
+    local sys_stats sys_passed sys_active
+    sys_stats=$(awk '
+      /^## 2\. System AC Ledger/ { in_sec=1; next }
+      in_sec && /^## / { exit }
+      in_sec && /^\|/ {
+        n = split($0, c, "|")
+        if (n < 6) next
+        for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", c[i]) }
+        # Columns: c[2]=SYS-AC ID, c[4]=Active, c[5]=Status. Reject header + separator.
+        if (c[2] == "SYS-AC ID" || c[2] ~ /^-+$/) next
+        active = c[4]; status = c[5]
+        if (active == "Y") {
+          active_count++
+          if (status == "passed") passed_count++
+        }
+      }
+      END { printf "%d %d", (passed_count + 0), (active_count + 0) }
+    ' "$sysfile")
+    sys_passed="${sys_stats%% *}"
+    sys_active="${sys_stats##* }"
+    local sys_label="(system E2E readiness)"
+    if [ "$sys_active" -eq 0 ]; then
+      printf '%-32s  %-9s  ' "$sys_label" "$sys_passed/$sys_active"
+      _print_cell "$DIM" "—" 6
+      printf '  %s\n' "(no journeys)"
+    else
+      local syspct=$(( (sys_passed * 100 + sys_active / 2) / sys_active ))
+      local scolor
+      if [ "$syspct" -ge 85 ]; then scolor="$GREEN"
+      elif [ "$syspct" -ge 70 ]; then scolor="$YELLOW"
+      else scolor="$RED"; fi
+      printf '%-32s  %-9s  ' "$sys_label" "$sys_passed/$sys_active"
+      _print_cell "${BOLD}${scolor}" "${syspct}%" 6
+      printf '  %s\n' "system"
+    fi
   fi
   printf '\n'
 }

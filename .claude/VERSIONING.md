@@ -388,3 +388,72 @@ runs misroute or break):
 **2.7.0 upstream-alignment checklist rules 1-9 REMAIN in force**
 under 2.8.0. The 2.8.0 rules above are additive and do not supersede
 any 2.7.0 freeze.
+
+## Release checklist (for system-acceptance layer — 2.10.0+)
+
+The 2.10.0 minor adds a **system-acceptance / witness-contract layer**: a `Witness`
+field on REQ, a standalone `docs/SYSTEM-ACCEPTANCE.md` artifact (`SYS-J` journeys +
+`SYS-AC` ledger), a `/spec` Phase 1.3 system-coverage convergence gate, a `/dev` DoD
+System Acceptance hard gate, and a two-axis SUMMARY/board metric. It is **additive and
+backward-compatible**: a project with zero `Witness:e2e` REQs produces no
+`SYSTEM-ACCEPTANCE.md`, never triggers the new gate, and behaves exactly as pre-2.10.0.
+When editing any of these surfaces, the following ten rules MUST hold:
+
+1. **ID schemes FROZEN**: journeys `SYS-J-{nn}`, system ACs `SYS-AC-{nn}` (two-digit,
+   zero-padded, globally unique). No `MODULE-NNN` prefix (system ACs are cross-module by
+   definition). Changing either format is a MAJOR `dev` bump (downstream ledgers re-key).
+
+2. **`Witness` enum FROZEN**: REQ `Witness` ∈ {`unit`, `integration`, `e2e`} (orthogonal
+   to `Type`); SYS-AC Witness Level ∈ {`e2e`, `system`}. Adding a value is MINOR; renaming
+   or removing one is MAJOR. The field is re-derived on every `/spec` rerun and never
+   deprecates a REQ-ID. Legacy registries with no `Witness` column read as all-`unit`.
+
+3. **Standalone-doc contract FROZEN**: system acceptance lives in `docs/SYSTEM-ACCEPTANCE.md`
+   (NOT an ARCHITECTURE.md §-section). Generated at `/spec` **Phase 3.4** (after CONTEXT-MAP
+   3.3 — do NOT renumber 3.3), unconditionally regenerated with MODULE-doc merge-preserve
+   discipline. The §2 ledger mirrors MODULE §3.4 exactly. Moving this content into
+   ARCHITECTURE.md or another file is MAJOR (downstream `/dev` reads a fixed path).
+
+4. **Authorship partition FROZEN** (mirrors the §3.4 contract): `/spec` owns SYS-J / SYS-AC
+   row creation + `Active=Y↔N` flips; `/dev` SUMMARY owns ONLY `untested → passed` for the
+   run's `in_scope_sys_ac_ids`. Witness-floor invariant: a SYS-AC's Witness Level is `e2e`
+   or `system` only. Changing the partition or the witness floor is MAJOR.
+
+5. **Two coverage axes FROZEN, never merged**: `/spec` Phase 1.3 converges on
+   `module coverage == 100% AND system coverage (design) == 100% (every Witness:e2e REQ has
+   a cross-module realization) AND substantive == 0`. `/dev` SUMMARY + board report **module
+   AC coverage** and **system E2E readiness** as two separate numbers. Collapsing them into
+   one metric — the pre-2.10.0 behaviour that hid the "92% but unusable" gap — is forbidden;
+   re-introducing a single merged % is a MAJOR regression.
+
+6. **Hard-gate-real-run rule FROZEN**: a `Witness:e2e` REQ CANNOT reach `Verified` until its
+   linked `SYS-AC` is `passed`, witnessed by a test that drives the **real wired system**
+   (real process/binary over the full Module Chain, NOT mocked/stubbed). The DoD System
+   Acceptance gate fires ONLY when `in_scope_sys_ac_ids` is non-empty (pure module tasks are
+   never blocked). Relaxing the gate to accept a mocked/unit/integration witness, or removing
+   the `Verified` cap, is a MAJOR bump (it would let system-behaviour REQs read Verified
+   while the product never runs).
+
+7. **state.json `version: 5` schema**: additive field `in_scope_sys_ac_ids: []` with v3/v4
+   read-defaulting to `[]`. Removing the field or changing the defaulting semantics is MAJOR.
+   The supported window is now v3/v4/v5 (`version > 5` → HARD FAIL).
+
+8. **Upstream seam**: PRD §3 flows may carry a `System acceptance journey: Yes/No` marker
+   (product-level, architecture-free); `/prd` Phase 4 Dimension 1 raises a Warning when a
+   non-trivial product declares none. Removing the marker or the check is MAJOR (it is the
+   product-intent seed `/spec` lifts into `SYS-J`).
+
+9. **SYSTEM-ACCEPTANCE.md staleness is its OWN concern**, NOT a 9th CONTEXT-MAP input. The
+   "8 upstream sources" list in the CONTEXT-MAP checklist (2.4.0+) is unchanged — CONTEXT-MAP
+   is not generated from SYSTEM-ACCEPTANCE.md. `/dev` PLAN compares SYSTEM-ACCEPTANCE.md mtime
+   against REQUIREMENTS_REGISTRY.md and emits a non-blocking staleness Warning; this is a
+   lightweight guard, not a regeneration gate.
+
+10. **5-sync-point + description rotation still apply** (Hard rule 1+2, 2.8.1 rule 9):
+    `plugin.json`, `marketplace.json` dev entry, and the 3 README status cells move to the
+    new version together; the description compressed-history tail rotates (new Latest, demote
+    prior Latest to Earlier, drop oldest beyond 3 minors).
+
+**All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
+upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
+2.10.0 rules above are additive and do not supersede any earlier freeze.
