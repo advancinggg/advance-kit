@@ -1008,23 +1008,31 @@ migration cheap enough to run across many existing projects.
 
 1. **Idempotency**: if the In-Scope Requirements table header already contains a `Witness`
    column → injection already done; skip to UT.10.B.
-2. Else inject `Witness` between `Type` and `Module(s)` (the canonical §0.4.1 position).
+2. **Header precondition (fail-safe for drifted legacy registries)**: the In-Scope table
+   header MUST contain BOTH a `Type` and a `Module(s)` column. If either is missing (a
+   hand-edited / pre-2.10.0 header whose columns drifted), REFUSE the Witness injection with
+   the notice — "REQUIREMENTS_REGISTRY In-Scope header is missing the `Type` and/or
+   `Module(s)` column; Witness injection skipped to avoid misaligning the table. Normalize
+   the header (or run a full `/spec` rerun) and re-run upgrade-template." — then skip to
+   UT.10.B (which finds no `Witness` column → no e2e REQs → writes the skeleton). This never
+   corrupts a malformed table; it degrades safely.
+3. Else inject `Witness` between `Type` and `Module(s)` (the canonical §0.4.1 position).
    Every existing data row (Active=Y AND Active=N) defaults to **`unit`** — the safe
    default that creates no e2e obligation, so the /dev System Acceptance gate stays
    dormant. The separator row gains a matching `---` cell. ALL other columns / cells /
    rows are preserved verbatim (a mechanical column insert, NOT a regeneration).
-3. **e2e-candidate heuristic** (no evaluator): a REQ row is a candidate if EITHER its
+4. **e2e-candidate heuristic** (no evaluator): a REQ row is a candidate if EITHER its
    `Module(s)` cell names ≥2 distinct `MODULE-NNN` IDs (cross-module behaviour), OR — when
    `docs/PRD.md` / `docs/00-prd/*.md` is readable and confined per UT.1 step 7 — its
    Source/Section maps to a PRD §3 flow flagged `System acceptance journey: Yes`.
-4. Print the candidate list (`REQ-ID — Description — reason flagged`), then ONE **policy**
+5. Print the candidate list (`REQ-ID — Description — reason flagged`), then ONE **policy**
    AskUserQuestion (respects the 2–4 option cap — do NOT attempt a per-REQ multi-select,
    which can exceed it):
    - (1) Mark the listed {N} candidates as `Witness:e2e` (recommended)
    - (2) Keep all `unit` — I'll mark e2e by hand later
    - (3) Abort migration (registry left untouched)
    No candidates found → no prompt; all rows stay `unit`.
-5. Apply the chosen policy. The user can always hand-edit the `Witness` column afterward;
+6. Apply the chosen policy. The user can always hand-edit the `Witness` column afterward;
    re-running UT.10 is safe (step 1 idempotency).
 
 #### UT.10.B — `docs/SYSTEM-ACCEPTANCE.md` bootstrap (merge-preserve)
