@@ -13,6 +13,10 @@ description: |
   creates date-named decision files under `docs/adr/` from an inline template; Phase 1
   scans Accepted ADRs and runs pairwise conflict detection (22 opposing-keyword pairs +
   decision-marker proximity); CONTEXT-MAP reflects the matched ADRs per scope.
+  2.10.0+ adds the system-acceptance layer (REQ `Witness:e2e` + standalone
+  `docs/SYSTEM-ACCEPTANCE.md` of cross-module SYS-J journeys + SYS-AC ledger);
+  `/spec upgrade-template` (2.11.0+) adopts it into an existing project without a full
+  rerun (injects the registry Witness column + bootstraps SYSTEM-ACCEPTANCE.md, no evaluators).
   Sub-commands: resume | abort | status | upgrade-template | adr-new.
   Usage: /spec [path/to/PRD.md or path/to/prd-directory/]
   Trigger when user asks to "generate specs", "generate architecture", "decompose modules",
@@ -86,7 +90,7 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 - `resume` → read `docs/.spec-state/progress.json`, continue from current phase (skip to resume logic below)
 - `abort` → delete `docs/.spec-state/`, output "workflow aborted", exit
 - `status` → read and display `docs/.spec-state/progress.json` summary, exit
-- `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow).
+- `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow). **2.11.0+**: Phase UT also runs **UT.10** — injects the `Witness` column into `docs/REQUIREMENTS_REGISTRY.md` and bootstraps `docs/SYSTEM-ACCEPTANCE.md`, so an existing project adopts the 2.10.0 system-acceptance layer without a full `/spec` rerun (no evaluator loops; heuristic, idempotent, merge-preserving).
 - `adr-new` → jump to **Phase ADR-NEW** (standalone operation; skips Phase 0.1 dependency check; no progress.json touched). **Adr-new-specific inline dependency check** (runs at Phase ADR-NEW entry before any side-effects): `which jq >/dev/null` — if missing AND `docs/.spec-state/progress.json` exists, the active-workflow gate (step 4) falls back to a grep-based phase read: `grep -oE '"phase": *"[^"]*"' docs/.spec-state/progress.json | head -1 | sed 's/.*"\([^"]*\)"$/\1/'`. This tolerates `jq`-missing environments at the cost of slightly less robust JSON parsing (acceptable — progress.json is a known-format file emitted by /spec). If `docs/.spec-state/progress.json` does not exist, the gate proceeds without reading (safe-proceed), and jq is not needed. Requires at least one `$ARGUMENTS` word after `adr-new` as the ADR title; missing title → print `/spec adr-new "<title>" — no title provided.` and exit.
 - anything else → treat as PRD path, proceed to 0.1
 
@@ -482,6 +486,14 @@ It performs section-level merge on existing `docs/ARCHITECTURE.md` and
 template without rewriting hand-authored prose and without losing `/dev` verification
 progress in §3.4 AC ledgers.
 
+**2.11.0+ also adopts the 2.10.0 system-acceptance layer incrementally** (UT.10): it
+injects the `Witness` column into `docs/REQUIREMENTS_REGISTRY.md` and bootstraps
+`docs/SYSTEM-ACCEPTANCE.md` — so an existing project gains the system-acceptance axis
+**without a full `/spec` rerun** (no architecture/module evaluator loops). This is the
+cheap migration path for projects that already use the doc spec; it produces a heuristic
+starting point the user can refine, explicitly NOT evaluator-grade (a later full `/spec`
+rerun applies the rigorous Phase 1.3 system-coverage gate).
+
 Phase UT is independent of the main PRD workflow — no PRD is consumed, no evaluator
 loops are run, no `progress.json` is created. If a main /spec workflow is active
 (progress.json exists and is mid-phase), Phase UT refuses per UT.7.
@@ -552,6 +564,20 @@ At entry:
    20 000. Docs exceeding either threshold emit a confirmation AskUserQuestion: "`{path}`
    is {size}/{lines} — over the 2 MiB / 20 000-line guard. Proceed? (1) Yes, include
    this doc (2) Skip this doc (3) Abort upgrade-template". Default recommendation: (2).
+9. **System-acceptance migration targets (2.11.0+)** — separate from the section-merge
+   pipeline (UT.2–UT.6 process ARCHITECTURE + MODULE docs only). Record two extra paths
+   for UT.10:
+   - `docs/REQUIREMENTS_REGISTRY.md` — the **precondition** for UT.10. Absent → UT.10
+     is skipped entirely (a lightweight project with no registry has nothing to migrate;
+     it already behaves as pre-2.10.0). Present → class `registry`.
+   - `docs/SYSTEM-ACCEPTANCE.md` — if present, class `system_acceptance` (UT.10 will
+     merge-preserve its §2 `passed` SYS-AC rows); if absent, UT.10 may create it.
+   Both paths get the SAME path-confinement checks as steps 7(a)/(b)/(c) — regular-file
+   (refuse symlinks), realpath under `{repo_root}/docs/`, and filename sanitization — and
+   the create target (`docs/SYSTEM-ACCEPTANCE.md`) additionally requires `docs/` itself to
+   be a real directory whose realpath is under `{repo_root}` before any write (same guard
+   as `/spec adr-new`). The registry is NOT passed through the UT.2–UT.6 section parser
+   (it is a table-column edit, not a §-section merge).
 
 ### UT.2 Canonical section list (kept in sync with the live templates)
 
@@ -964,6 +990,76 @@ SKILL.md will poison future upgrades — but a malicious SKILL.md is a broader p
 than upgrade-template (the entire /spec and /dev surface is compromised). Plugin
 integrity is a marketplace-level concern, not a per-subcommand defense.
 
+### UT.10 System-acceptance layer migration (2.11.0+, no evaluator loops)
+
+Brings the 2.10.0 system-acceptance layer into an existing project **without a full
+`/spec` rerun**. Runs after the UT.6 section-merge writes complete, under the UT.7
+active-workflow gate; its results feed the UT.9 summary. **Skipped entirely** when
+`docs/REQUIREMENTS_REGISTRY.md` is absent (UT.1 step 9 — a lightweight project already
+behaves as pre-2.10.0). Idempotent and merge-preserving on re-run.
+
+**Honesty contract**: UT.10 produces a heuristic STARTING POINT, NOT an evaluator-grade
+result. It does NOT run the architecture/module evaluator loops and does NOT apply the
+Phase 1.3 `system_coverage` gate. The UT.9 summary says so and points to a full `/spec`
+rerun for rigorous verification. This is the deliberate cost/rigor trade that makes the
+migration cheap enough to run across many existing projects.
+
+#### UT.10.A — Witness column injection (`docs/REQUIREMENTS_REGISTRY.md`)
+
+1. **Idempotency**: if the In-Scope Requirements table header already contains a `Witness`
+   column → injection already done; skip to UT.10.B.
+2. Else inject `Witness` between `Type` and `Module(s)` (the canonical §0.4.1 position).
+   Every existing data row (Active=Y AND Active=N) defaults to **`unit`** — the safe
+   default that creates no e2e obligation, so the /dev System Acceptance gate stays
+   dormant. The separator row gains a matching `---` cell. ALL other columns / cells /
+   rows are preserved verbatim (a mechanical column insert, NOT a regeneration).
+3. **e2e-candidate heuristic** (no evaluator): a REQ row is a candidate if EITHER its
+   `Module(s)` cell names ≥2 distinct `MODULE-NNN` IDs (cross-module behaviour), OR — when
+   `docs/PRD.md` / `docs/00-prd/*.md` is readable and confined per UT.1 step 7 — its
+   Source/Section maps to a PRD §3 flow flagged `System acceptance journey: Yes`.
+4. Print the candidate list (`REQ-ID — Description — reason flagged`), then ONE **policy**
+   AskUserQuestion (respects the 2–4 option cap — do NOT attempt a per-REQ multi-select,
+   which can exceed it):
+   - (1) Mark the listed {N} candidates as `Witness:e2e` (recommended)
+   - (2) Keep all `unit` — I'll mark e2e by hand later
+   - (3) Abort migration (registry left untouched)
+   No candidates found → no prompt; all rows stay `unit`.
+5. Apply the chosen policy. The user can always hand-edit the `Witness` column afterward;
+   re-running UT.10 is safe (step 1 idempotency).
+
+#### UT.10.B — `docs/SYSTEM-ACCEPTANCE.md` bootstrap (merge-preserve)
+
+1. Compute the Active=Y `Witness:e2e` REQ set from the migrated registry.
+2. **Merge-preserve** (same discipline as MODULE §3.4): if `docs/SYSTEM-ACCEPTANCE.md`
+   exists, PRESERVE its §2 SYS-AC rows verbatim (Active + Status + Verified By Task +
+   Date) — NEVER clobber a prior migration's or /dev's `passed` progress. Only ADD
+   journeys / SYS-AC for e2e REQs not already covered; set Active=N on journeys whose REQ
+   is no longer e2e.
+3. **Zero e2e REQs** → write the skeleton (header + empty `## 1. System Acceptance
+   Journeys` table + note "no system-behaviour requirements yet — all REQs unit/integration
+   witness" + empty `## 2. System AC Ledger`). Keeps the axis visible and fully inert
+   (board shows `(no journeys)`; /dev `in_scope_sys_ac_ids` stays `[]`).
+4. **e2e REQs present** → seed WITHOUT evaluators:
+   - Group e2e REQs into journeys: REQs sharing a PRD §3 flow → one `SYS-J`; else one
+     `SYS-J` per REQ.
+   - **Module Chain**: the REQ's `Module(s)` IDs, ordered by `docs/IMPLEMENTATION_ORDER.md`
+     topological position when available, else registry order.
+   - **Contracts**: best-effort from ARCHITECTURE §6.1 contracts on the chain seams; if not
+     derivable, `(set on /spec rerun)`.
+   - **Observable Success Condition**: when the REQ maps to a PRD §3 flow, copy that flow's
+     Success condition (black-box); otherwise emit the literal placeholder
+     `{TODO: observable success condition — fill in, or run /spec to derive}`.
+   - **SYS-AC rows**: one per journey, `Active=Y, Status=untested, Witness=e2e`.
+   - Allocate `SYS-J-{nn}` / `SYS-AC-{nn}` continuing past the highest existing IDs (no reuse).
+5. **Authorship-contract consistency**: UT.10 only creates rows and sets Active flips —
+   it NEVER writes a SYS-AC to `passed` (that is `/dev` SUMMARY's exclusive write, per the
+   §3.4-style partition). Witness Level on seeded SYS-AC is always `e2e`/`system`.
+
+**Scope guard**: UT.10 makes NO other change — no evaluator loops, no touching
+ARCHITECTURE.md / MODULE docs (beyond the UT.2–UT.6 section merges) /
+IMPLEMENTATION_ORDER.md / CONTEXT-MAP.md, and no `progress.json`. Governed by the UT.7
+active-workflow gate.
+
 ### UT.9 Completion summary
 
 After all writes succeed, emit:
@@ -979,6 +1075,12 @@ Per doc:
 §3.4 preservation: X modules had passed AC rows preserved verbatim.
 Part markers: all 3/3 present in each MODULE doc post-upgrade.
 Legacy-body flags: Y (user-resolved via UT.6.1).
+
+System-acceptance migration (2.11.0+, UT.10):
+  Witness column: {added — N REQs defaulted unit, M marked e2e | already present (skipped) | n/a (no registry)}
+  docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with K SYS-J / K SYS-AC seeded | merge-preserved (K passed SYS-AC kept) | n/a}
+  ⚠️ Heuristic only — seeded journeys + any {TODO} success conditions are NOT
+     evaluator-verified. Run a full `/spec` to apply the Phase 1.3 system-coverage gate.
 
 Next step: commit the changes (`git add docs/ && git commit`), then verify
 downstream /dev workflows resume cleanly.

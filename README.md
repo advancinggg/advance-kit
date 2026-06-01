@@ -139,7 +139,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `2.10.0` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev, read-only `/dev board` snapshot dashboard, system-acceptance witness layer. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.10.0 system-acceptance layer (2nd axis — system E2E readiness via `Witness:e2e` + `docs/SYSTEM-ACCEPTANCE.md`; /dev DoD hard gate caps system-behaviour REQs at Partial until they pass on a real wired run). **Earlier:** 2.7.0 upstream-alignment escape hatches, 2.8.0 worktree-parallel /dev, 2.9.0 `/dev board` snapshot dashboard. |
+| `dev` | `2.11.0` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev, read-only `/dev board` snapshot dashboard, system-acceptance witness layer. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 2.11.0 `/spec upgrade-template` adopts the system-acceptance layer into existing projects without a full rerun (injects the registry `Witness` column + bootstraps `docs/SYSTEM-ACCEPTANCE.md`; no evaluators, idempotent). **Earlier:** 2.8.0 worktree-parallel /dev, 2.9.0 `/dev board` snapshot dashboard, 2.10.0 system-acceptance layer. |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 | `telegram-channels-pro` | `0.1.3` | v0.1 complete (macOS only) — 8 modules: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 MCP tools) + routing (LRU + admin gate + slash commands) + deployment (launchd CLI + control socket + ROLLBACK.md). |
