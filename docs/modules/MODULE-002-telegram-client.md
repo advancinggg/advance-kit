@@ -860,7 +860,7 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| In Progress | 83% (29 passed / 35 active) | 2026-05-21 |
+| In Progress | 91% (32 passed / 35 active) | 2026-06-01 |
 
 Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND Status='passed') / count(Active=Y) × 100` = 29/35 ≈ 83%. /dev task `dev-advance-kit-20260517-40bb2ae` (REQ-035 / REQ-022 slice) verified 7 ACs in 2026-05-21: AC-22 (`getChat(chat_id)` envelope wrapper), AC-23..27 (ChatTypeCache hit / miss-lazy-fetch / miss-failure / LRU-1000 / TTL-1h), AC-34 (REQ-022 three independent capacity edges — SessionRegistry / PendingApprovalRegistry / OutboundReplayQueue). Prior 2026-05-16 channel-protocol slice (REQ-033/037/045) verified 3 v1.1.0 ACs (AC-31/32/33). Earlier v1.1.0 amendment baseline was 60% (21 passed / 35 active) after 14 new ACs landed as untested per /spec stability rules; pre-amendment progress was 90% (19 passed + 2 untested = 21/21 active). Remaining 6 untested: AC-13, AC-14 (REQ-020 E2E latency), AC-28, AC-29, AC-30 (REQ-037 quarantine replay queue per-session bookkeeping + drain), AC-35 (REQ-017 stability soak).
 
@@ -959,9 +959,9 @@ Progress derived from §3.4 ledger per /dev §6.1.1 formula: `count(Active=Y AND
 | MODULE-002-AC-25 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-002-AC-26 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
 | MODULE-002-AC-27 | Y | passed | dev-advance-kit-20260517-40bb2ae | 2026-05-21 |
-| MODULE-002-AC-28 | Y | untested | — | — |
-| MODULE-002-AC-29 | Y | untested | — | — |
-| MODULE-002-AC-30 | Y | untested | — | — |
+| MODULE-002-AC-28 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
+| MODULE-002-AC-29 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
+| MODULE-002-AC-30 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
 | MODULE-002-AC-31 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-002-AC-32 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |
 | MODULE-002-AC-33 | Y | passed | dev-advance-kit-20260516-98eb64b | 2026-05-16 |

@@ -593,7 +593,7 @@ stateDiagram-v2
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| Production | 100% | 2026-05-15 |
+| In Progress | 72% (21 passed / 29 active) | 2026-06-01 |
 
 ### 3.2 File Structure
 
@@ -661,8 +661,8 @@ stateDiagram-v2
 | MODULE-004-AC-17 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-18 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-004-AC-19 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
-| MODULE-004-AC-20 | Y | untested | — | — |
-| MODULE-004-AC-21 | Y | untested | — | — |
+| MODULE-004-AC-20 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
+| MODULE-004-AC-21 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
 | MODULE-004-AC-22 | Y | untested | — | — |
 | MODULE-004-AC-23 | Y | untested | — | — |
 | MODULE-004-AC-24 | Y | untested | — | — |
@@ -670,7 +670,7 @@ stateDiagram-v2
 | MODULE-004-AC-26 | Y | untested | — | — |
 | MODULE-004-AC-27 | Y | untested | — | — |
 | MODULE-004-AC-28 | Y | untested | — | — |
-| MODULE-004-AC-29 | Y | untested | — | — |
+| MODULE-004-AC-29 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
 
 ### 3.5 Feature Implementation Record
 

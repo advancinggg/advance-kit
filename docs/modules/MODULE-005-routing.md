@@ -631,7 +631,7 @@ sequenceDiagram
 
 | Status | Progress | Last Updated |
 |--------|----------|--------------|
-| Production | 100% | 2026-05-15 |
+| In Progress | 71% (22 passed / 31 active) | 2026-06-01 |
 
 ### 3.2 File Structure
 
@@ -671,6 +671,12 @@ sequenceDiagram
 | MODULE-005-T18 | Integration | AC-18 | cleanup on disconnect | session A has pending → emit session_disconnected(A) | M004.cleanupBySession(A) called; A's pending resolved with SessionTerminated | P0 |
 | MODULE-005-T19 | Benchmark | AC-19 | dispatch latency in-process micro-benchmark | 5000 inbound messages after 200 warm-up; measure max-per-call | max < 5ms (in-process tight bound; production E2E budget per REQ-020 is 50ms but includes Telegram poll cycle) | P1 |
 | MODULE-005-T20 | Integration | AC-20 | stale deliver fallback | A in head, A disconnects between getFocus and deliver | fallback to next entry; if none, no-session reply | P1 |
+| MODULE-005-T22-prime | Unit | AC-22 | primeCache on every inbound (any chat type) | 4 inbound `message` updates (private/group/supergroup/channel) + 1 `callback_query` (private) via EventBus | primeCache called 5× with exact `(chat_id, type)` args BEFORE any admin/registration routing | P0 |
+| MODULE-005-T27a | Unit | AC-27 | wait-for-reset handshake — true path | session_connected event + RegistrationGate stub returning isWaitForReset()=true | acceptor.disconnectSession called with exact `(session_id, "registration timed out; run reset-admin to retry")` | P0 |
+| MODULE-005-T27b | Unit | AC-27 | wait-for-reset handshake — false path | session_connected event + isWaitForReset()=false | NO disconnect call | P0 |
+| MODULE-005-T27c-order | Unit | AC-27 | subscriber ordering | Handshake handler registered FIRST then SessionRegistry equivalent subscriber; emit session_connected | handshake disconnect call recorded BEFORE the second subscriber's side-effect (verified via shared spy.callOrder) | P0 |
+| MODULE-005-T27d-idempotent | Unit | AC-27 | concurrent same-session_id guard | two session_connected events for same session_id while disconnect in-flight (50ms latency) | only ONE disconnectSession call (Set guard); cleared on .finally() so a later event for same id fires again | P0 |
+| MODULE-005-T27-integration | Integration | AC-27 | end-to-end gate transition | real RegistrationGate-stub transitions open→waiting_for_reset between two session_connected emits | early event NO disconnect; post-trip event triggers disconnect with literal hint string | P0 |
 
 ### 3.4 Acceptance Criteria Verification
 
@@ -697,13 +703,13 @@ sequenceDiagram
 | MODULE-005-AC-19 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-005-AC-20 | Y | passed | dev-tgcp-slice-orchestration-2026-05-14-2200e70 | 2026-05-15 |
 | MODULE-005-AC-21 | Y | untested | — | — |
-| MODULE-005-AC-22 | Y | untested | — | — |
+| MODULE-005-AC-22 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
 | MODULE-005-AC-23 | Y | untested | — | — |
 | MODULE-005-AC-24 | Y | untested | — | — |
 | MODULE-005-AC-25 | Y | untested | — | — |
 | MODULE-005-AC-26 | Y | untested | — | — |
 | MODULE-005-AC-26b | Y | untested | — | — |
-| MODULE-005-AC-27 | Y | untested | — | — |
+| MODULE-005-AC-27 | Y | passed | dev-advance-kit-20260521-0edfd84f | 2026-05-30 |
 | MODULE-005-AC-28 | Y | untested | — | — |
 | MODULE-005-AC-29 | Y | untested | — | — |
 | MODULE-005-AC-30 | Y | untested | — | — |
