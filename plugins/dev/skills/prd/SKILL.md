@@ -259,12 +259,15 @@ echo "ARTIFACT_STAMP=${stamp:-none}"
   user, then proceed.
 - If existing PRD found → AskUserQuestion: "(1) Continue refining (re-enter BRAINSTORM loaded with existing PRD as prior state) (2) Regenerate from scratch (3) Cancel"
 - **Legacy marker backfill (3.5.0+)**: scan the existing PRD's §3 flows for the
-  `System acceptance journey?` marker. If §3 has flows but NONE carry it (a pre-2.10.0 PRD), note
-  it; on "(1) Continue refining", run a backfill pass BEFORE re-entering BRAINSTORM — one batched
-  AskUserQuestion listing each unmarked flow, user classifies each `Yes`/`No`, inject the marker
-  line into that flow. Idempotent (already-marked flows skipped); user-classified, NEVER
-  AI-invented (the marker is product intent). Adopts the marker without a full regenerate — the
-  PRD analog of `/spec upgrade-template`'s Witness-column injection.
+  `System acceptance journey?` marker. Trigger when **ANY** §3 flow lacks it — both a pre-2.10.0
+  PRD (NONE carry it) and a partially-marked PRD (the inconsistent-emission case K7 fixes — some
+  flows have it, some don't). On "(1) Continue refining", run a backfill pass BEFORE re-entering
+  BRAINSTORM — one batched AskUserQuestion listing **only the unmarked flows**, user classifies
+  each `Yes`/`No`, inject the marker line into that flow. Idempotent (already-marked flows are
+  not listed, re-asked, or overwritten); user-classified, NEVER AI-invented (the marker is
+  product intent). The Phase 4 Dim 1 completeness check is the validation-time safety net for
+  anything left unmarked; this backfill is the proactive reopen-time fix. Adopts the marker
+  without a full regenerate — the PRD analog of `/spec upgrade-template`'s Witness-column injection.
 - If `docs/00-prd/` directory found but docs/PRD.md absent → /prd v1 only supports
   single-file; AskUserQuestion: "(1) Cancel (multi-topic needs v2) (2) Continue treating
   a chosen single file as the base"
@@ -951,7 +954,7 @@ Dimension 1 — User (end-user / operator perspective):
 - Is every feature's value proposition concrete?
 - Are error messages / empty states / loading states specified?
 - System acceptance (2.10.0+): for a non-trivial product with cross-module runtime
-  behaviour, is ≥1 §3 flow marked "System acceptance journey: Yes" with a concrete,
+  behaviour, is ≥1 §3 flow marked "System acceptance journey?: Yes" with a concrete,
   black-box observable success condition (what an operator sees on the running system)?
   None present → [Warning][User] no system acceptance journey declared — the end-to-end
   "does it actually run" contract is unspecified; /spec will have no Witness:e2e seed and

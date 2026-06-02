@@ -465,7 +465,7 @@ When editing any of these surfaces, the following ten rules MUST hold:
    product-intent seed `/spec` lifts into `SYS-J`). **3.5.0/K7**: the marker is REQUIRED on EVERY
    §3 flow (generation must emit it; Phase 4 Dim 1 flags a flow MISSING it — orthogonal to the
    ≥1-Yes check, applies to all products), and a Phase 0.2 **legacy backfill** batched-classifies
-   unmarked flows in pre-2.10.0 PRDs (user-classified, never AI-invented; idempotent). Removing the
+   any unmarked §3 flows (pre-2.10.0 or partially-marked PRDs; user-classified, never AI-invented; idempotent). Removing the
    per-flow-completeness check or the backfill is MAJOR; the marker stays product-level (no
    modules/wiring).
 
