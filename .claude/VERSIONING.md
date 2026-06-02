@@ -467,8 +467,11 @@ When editing any of these surfaces, the following ten rules MUST hold:
     `/spec upgrade-template` adopts the 2.10.0 layer into an existing project without a full
     rerun — UT.10.A injects the `Witness` column into REQUIREMENTS_REGISTRY (existing REQs
     default `unit`); UT.10.B bootstraps / merge-preserves `docs/SYSTEM-ACCEPTANCE.md`. Frozen
-    properties: (a) **idempotent** (Witness column present → skip; SYSTEM-ACCEPTANCE.md present
-    → merge-preserve `passed` SYS-AC verbatim); (b) **evaluator-backed journey discovery
+    properties: (a) **idempotent** (re-running PRESERVES existing columns/rows: Witness column
+    present → skip only the mechanical column insert, NOT step-4 discovery; SYSTEM-ACCEPTANCE.md
+    present → merge-preserve `passed` SYS-AC verbatim — discovery + policy re-run every time and
+    are additive, so existing 2.11/2.12 projects DO get evaluator discovery on re-run); (b)
+    **evaluator-backed journey discovery
     (3.0.0+)** — UT.10.A step 4 runs the Phase-1.3 dual-evaluator method (Claude auditor +
     Codex, loop-until-dry) to discover under-classified REQs + emergent journeys, degrading to
     single-evaluator (Codex absent) then to the legacy ≥2-module / PRD-flag heuristic (no
@@ -488,9 +491,22 @@ When editing any of these surfaces, the following ten rules MUST hold:
     journeys (all block convergence; loop-until-dry). Weakening this from completion to pruning
     is a regression.
 
+12. **Atomic SYS-AC decomposition (3.1.0, additive — Path C)**: each `SYS-J` journey decomposes
+    into atomic, independently-adjudicable criteria in a new `SYSTEM-ACCEPTANCE.md` **§1.1**
+    table (`SYS-AC ID | Journey | Type | Criterion | Witness`; Type ∈ {functional, nfr/slo,
+    error-path}, ≥1 functional per journey). System analog of MODULE §1.5↔§3.4: criterion text
+    lives in §1.1, the §2 ledger stays **status-only**. FROZEN-PRESERVING by design: §2 ledger
+    columns UNCHANGED (board.sh's §2-scoped `c[4]`/`c[5]` parse still works), `SYS-AC-{nn}` stays
+    **two-digit** (rule 1 intact), authorship partition + witness-floor intact — so 3.1.0 is
+    MINOR. Going to 3-digit IDs OR adding a column to the §2 ledger WOULD be MAJOR (rule 1 /
+    board.sh by-position parse) — deliberately deferred. `/dev` already iterates
+    `in_scope_sys_ac_ids` as a list, so atomic rows need no /dev schema change; the DoD gate now
+    requires every atomic criterion (incl. NFR/SLO + error-path) to pass on a real run, which
+    strengthens — never weakens — the system-acceptance bar.
+
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
-2.10.0 / 2.11.0 rules above are additive and do not supersede any earlier freeze.
+2.10.0 / 2.11.0 / 3.1.0 rules above are additive and do not supersede any earlier freeze.
 
 ## Release checklist (for version-drift visibility — 2.12.0+)
 

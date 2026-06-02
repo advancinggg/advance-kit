@@ -90,7 +90,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.0.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.1.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -122,7 +122,7 @@ which mktemp 2>/dev/null && echo "MKTEMP: OK" || echo "MKTEMP: MISSING (upgrade-
 - `jq` missing → set `codex_available: false` (Codex evaluator pipeline depends on jq for JSON parsing)
 - `codex` missing → set `codex_available: false`
 - Either case: evaluators run Claude-only (single-evaluator mode), warn user
-- `claude-auditor` missing → error, evaluator loops cannot function. Abort or run without evaluators (user choice via AskUserQuestion)
+- `claude-auditor` missing → for the **main PRD workflow**, error: evaluator loops cannot function (abort or run without evaluators — user choice via AskUserQuestion). For **`upgrade-template`**, do NOT abort: record the auditor absence and let UT.10.A step 4 degrade to its Tier-3 heuristic fallback (UT.9 reports the heuristic tier). Likewise, missing `codex` degrades UT.10 to Tier 2 (single-evaluator), not an error.
 - `python3` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires python3 for UT.1 path canonicalization. Install python3 and retry. (python3 is not required for the main PRD workflow.)"
 - `mktemp` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires mktemp for UT.6 atomic write. Install GNU coreutils / BSD mktemp and retry."
 
@@ -1047,8 +1047,13 @@ UT.10.A policy prompt (step 5).
 
 #### UT.10.A — Witness column injection (`docs/REQUIREMENTS_REGISTRY.md`)
 
-1. **Idempotency**: if the In-Scope Requirements table header already contains a `Witness`
-   column → injection already done; skip to UT.10.B.
+1. **Idempotency (mechanical column insert only)**: if the In-Scope Requirements table header
+   already contains a `Witness` column → the column insert is already done; SKIP steps 2–3 and
+   go straight to **step 4 discovery**. Discovery (step 4) + policy (step 5) STILL run — they are
+   NOT idempotent-skippable: new REQs or newly-recognized emergent journeys may have appeared
+   since the last migration, so existing 2.11/2.12 projects DO get evaluator discovery on re-run
+   (step 5 finds no candidates → no prompt → no change when nothing is new, so re-runs stay safe +
+   additive). If the column is absent → run steps 2–3, then 4–5.
 2. **Header precondition (fail-safe for drifted legacy registries)**: the In-Scope table
    header MUST contain BOTH a `Type` and a `Module(s)` column. If either is missing (a
    hand-edited / pre-2.10.0 header whose columns drifted), REFUSE the Witness injection with
@@ -1131,7 +1136,12 @@ UT.10.A policy prompt (step 5).
    - **Observable Success Condition**: when the REQ maps to a PRD §3 flow, copy that flow's
      Success condition (black-box); otherwise emit the literal placeholder
      `{TODO: observable success condition — fill in, or run /spec to derive}`.
-   - **SYS-AC rows**: one per journey, `Active=Y, Status=untested, Witness=e2e`.
+   - **SYS-AC rows (atomic, 3.1.0+)**: decompose each journey into atomic criteria (≥1
+     `functional`; + `nfr/slo` + `error-path` where implied) — emit each as a §1.1
+     atomic-criteria row AND a §2 status row (`Active=Y, Status=untested, Witness=e2e`), one
+     SYS-AC per criterion (NOT one bundled row per journey). In Tier-3 heuristic mode (no
+     evaluator), seed at least the `functional` criterion per journey plus a
+     `{TODO: add NFR/SLO + error-path criteria — run /spec for evaluator decomposition}` note.
    - Allocate `SYS-J-{nn}` / `SYS-AC-{nn}` continuing past the highest existing IDs (no reuse).
 5. **Authorship-contract consistency**: UT.10 only creates rows and sets Active flips —
    it NEVER writes a SYS-AC to `passed` (that is `/dev` SUMMARY's exclusive write, per the
@@ -1734,6 +1744,8 @@ repeat:
         1. [Critical] PRD §{section} ... — not mapped to any module
         Witness Classification Issues:
         1. [Critical] REQ-{NNN} is system-behaviour (PRD §X flow / spans MODULE-A,MODULE-B) but marked Witness:{unit|integration} — or — no system-journey path in ARCHITECTURE §5/§10
+        Emergent Journey Issues:
+        1. [Critical] Emergent journey "{name}" spans REQ-{NNN},REQ-{MMM} via MODULE-A→MODULE-B — a cross-module user-observable behaviour not yet realized as an e2e journey (no single REQ captures it)
         MECE Violations:
         1. [Critical/Warning] ...
         Dependency Issues:
@@ -1779,6 +1791,8 @@ repeat:
         1. [Critical] PRD §{section} ... — not mapped to any module
         Witness Classification Issues:
         1. [Critical] REQ-{NNN} system-behaviour but marked Witness:{unit|integration} — or — no system-journey path in §5/§10
+        Emergent Journey Issues:
+        1. [Critical] Emergent journey "{name}" spans REQ-{NNN},REQ-{MMM} via MODULE-A→MODULE-B — cross-module behaviour not yet an e2e journey (no single REQ captures it)
         MECE Violations:
         1. [Critical/Warning] ...
         Dependency Issues:
@@ -2929,13 +2943,20 @@ unit/integration witness)".
    (registry / ARCHITECTURE §10), ordered by `IMPLEMENTATION_ORDER.md` topological position.
 3. Derive **Contracts**: the `CONTRACT-ID`s (ARCHITECTURE §6.1) sitting on the seams between
    consecutive modules in the chain.
-4. Write the **Observable Success Condition** from the PRD flow's Success condition as a
-   black-box, runnable pass/fail statement — what an operator sees on the running, wired
+4. Write the journey-level **Observable Success Condition** (§1 table) from the PRD flow's
+   Success condition — a black-box summary of what an operator sees on the running, wired
    system. Strip any module-internal or mock-only detail.
-5. Allocate `SYS-J-{nn}`; allocate ≥1 `SYS-AC-{nn}` per journey (one per discrete observable
-   outcome). Witness Level is `e2e` or `system` only — never `unit`/`integration`.
+5. **Decompose each journey into atomic criteria (§1.1)**: at minimum one `functional` criterion;
+   add `nfr/slo` criteria for any latency/throughput/availability target the journey implies, and
+   `error-path` criteria for failures / invalid-input it must handle. One row per discrete
+   observable result — never bundle. Allocate `SYS-J-{nn}` per journey and one `SYS-AC-{nn}` per
+   atomic criterion (continuing past the highest existing IDs; no reuse). Witness Level `e2e` or
+   `system` only — never `unit`/`integration`. Emit each atomic criterion as a §1.1 row AND a §2
+   status row (same SYS-AC ID, `Active=Y, Status=untested`).
 6. **Coverage assertion**: every Active=Y `Witness:e2e` REQ MUST appear in ≥1 journey's REQ
-   Sources. The Phase 1.3 architecture evaluator fails (`system_coverage < 100%`) otherwise.
+   Sources, AND every journey MUST decompose into ≥1 atomic SYS-AC in §1.1 (≥1 `functional`; plus
+   `nfr/slo` + `error-path` where the journey implies them). The Phase 1.3 architecture evaluator
+   fails (`system_coverage < 100%`) otherwise.
 7. Apply merge-preserve against the existing `docs/SYSTEM-ACCEPTANCE.md`.
 
 Use the Write tool to generate `docs/SYSTEM-ACCEPTANCE.md`:
@@ -2973,16 +2994,46 @@ Journey ID format: `SYS-J-{nn}` (two-digit, zero-padded), globally unique.
 - **Witness**: `e2e` (real wired system, real process/binary) or `system` (full deployment).
   Never `unit`/`integration` (those are module-local — MODULE §1.5/§3.3).
 
+### 1.1 Atomic acceptance criteria (one SYS-AC per row)
+
+Each journey decomposes into **atomic, independently-adjudicable criteria** — at minimum one
+`functional`, plus `nfr/slo` and `error-path` criteria wherever the journey implies them. Each
+atomic criterion gets its own `SYS-AC-{nn}` ID; §2 tracks its pass/fail status. This is the
+system-level analog of MODULE §1.5 Acceptance Criteria (definitions here; status in §2, mirroring
+MODULE §3.4). A journey is **not adjudicable** until it has ≥1 `functional` criterion here — a
+single bundled "does it work?" row is the failure mode this section eliminates.
+
+| SYS-AC ID | Journey | Type | Criterion (black-box, runnable pass/fail on the wired system) | Witness |
+|-----------|---------|------|--------------------------------------------------------------|---------|
+| SYS-AC-01 | SYS-J-01 | functional | On the running daemon: send a Telegram message → a reply appears in-channel within {N}s | e2e |
+| SYS-AC-02 | SYS-J-01 | nfr/slo | P95 end-to-end reply latency ≤ {N}s under {expected load} | e2e |
+| SYS-AC-03 | SYS-J-01 | error-path | Send an unsupported command → a friendly error is returned and the daemon stays up | e2e |
+
+- **Type**: `functional` (the happy-path observable outcome) / `nfr/slo` (a measurable
+  non-functional target the journey implies — latency, throughput, availability) / `error-path`
+  (a failure or invalid-input the journey must handle gracefully). One row per discrete
+  observable result — **never bundle multiple outcomes into one row** (bundling is what makes a
+  journey un-adjudicable).
+- **Criterion**: a single black-box pass/fail statement on the running, wired system. NO
+  module-internal state; NO mock-only checks.
+- **Witness**: `e2e` | `system` only (witness-floor) — never `unit`/`integration`.
+- Every `SYS-AC-{nn}` here has exactly one status row in §2 with the same ID.
+
 ## 2. System AC Ledger
 
 The AC-level ledger for system journeys — the SECOND progress axis (system E2E readiness),
 peer to MODULE §3.4 (module AC coverage). /dev SUMMARY reads + writes it.
 
-System AC ID format: `SYS-AC-{nn}` (two-digit, zero-padded), globally unique.
+System AC ID format: `SYS-AC-{nn}` (two-digit, zero-padded), globally unique. **One status row
+per atomic SYS-AC defined in §1.1** — the criterion text lives in §1.1; this table tracks only
+status (mirroring MODULE §3.4). Multiple rows per journey is the norm (functional + nfr/slo +
+error-path), not the exception.
 
 | SYS-AC ID | Journey | Active | Status | Witness Level | Verified By Task | Date |
 |-----------|---------|--------|--------|---------------|------------------|------|
 | SYS-AC-01 | SYS-J-01 | Y | untested | e2e | — | — |
+| SYS-AC-02 | SYS-J-01 | Y | untested | e2e | — | — |
+| SYS-AC-03 | SYS-J-01 | Y | untested | e2e | — | — |
 
 - Active: Y (current) / N (deprecated — excluded from all aggregation)
 - Status: untested → passed. No "failed" state: /dev DoD guarantees a SYS-AC is written

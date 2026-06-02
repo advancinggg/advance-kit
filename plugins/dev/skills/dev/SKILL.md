@@ -346,7 +346,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.0.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.1.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
