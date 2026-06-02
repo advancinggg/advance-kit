@@ -43,7 +43,7 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null |
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 
 # Helper: resolve path with symlinks
-resolve() { python3 -c "import os; print(os.path.realpath('$1'))" 2>/dev/null || echo "$1"; }
+resolve() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null || echo "$1"; }
 
 # ============================================================
 # Write/Edit rules
