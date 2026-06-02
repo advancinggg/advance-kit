@@ -123,7 +123,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.4.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.5.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -258,6 +258,13 @@ echo "ARTIFACT_STAMP=${stamp:-none}"
   the current template (e.g. the System-acceptance-journey marker, 2.10.0+). Surface this to the
   user, then proceed.
 - If existing PRD found → AskUserQuestion: "(1) Continue refining (re-enter BRAINSTORM loaded with existing PRD as prior state) (2) Regenerate from scratch (3) Cancel"
+- **Legacy marker backfill (3.5.0+)**: scan the existing PRD's §3 flows for the
+  `System acceptance journey?` marker. If §3 has flows but NONE carry it (a pre-2.10.0 PRD), note
+  it; on "(1) Continue refining", run a backfill pass BEFORE re-entering BRAINSTORM — one batched
+  AskUserQuestion listing each unmarked flow, user classifies each `Yes`/`No`, inject the marker
+  line into that flow. Idempotent (already-marked flows skipped); user-classified, NEVER
+  AI-invented (the marker is product intent). Adopts the marker without a full regenerate — the
+  PRD analog of `/spec upgrade-template`'s Witness-column injection.
 - If `docs/00-prd/` directory found but docs/PRD.md absent → /prd v1 only supports
   single-file; AskUserQuestion: "(1) Cancel (multi-topic needs v2) (2) Continue treating
   a chosen single file as the base"
@@ -552,6 +559,8 @@ outcome. One persona = one sub-section.}
   observable outcome, NOT modules or wiring. `/spec` lifts every Yes flow into a `SYS-J`
   journey in `docs/SYSTEM-ACCEPTANCE.md` and tags its requirements `Witness:e2e`, so the
   flow can only be marked Verified once it demonstrably runs end-to-end (not just unit-tested).
+  **Every** §3 flow MUST carry this line (an explicit `Yes` or `No`) — never omit it; an omitted
+  marker leaves the flow unclassifiable for `/spec` (Phase 4 Dim 1 flags a missing marker).
 Include diagrams (ASCII or description) if flow is complex.}
 
 ## 4. Feature specifications
@@ -948,6 +957,10 @@ Dimension 1 — User (end-user / operator perspective):
   "does it actually run" contract is unspecified; /spec will have no Witness:e2e seed and
   the system-readiness axis stays undefined. (Genuinely trivial / single-flow products are
   exempt — do not raise.)
+  **Marker completeness (3.5.0+)**: EVERY §3 flow MUST carry the marker (explicit Yes or No). A
+  flow MISSING it → [Warning][User] "flow '{name}' has no System-acceptance-journey marker — /spec
+  cannot classify it; add Yes or No." This is orthogonal to the ≥1-Yes check above and applies to
+  ALL products (trivial included) — a missing marker is always ambiguous, a present "No" is not.
 
 Dimension 2 — Ops/SRE:
 - SLA/SLO commitments present and measurable?

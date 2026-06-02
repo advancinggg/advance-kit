@@ -102,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.4.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.5.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -223,6 +223,7 @@ Write `docs/.spec-state/progress.json`:
   "architecture_claude_rounds_run": 0,
   "architecture_codex_rounds_run": 0,
   "architecture_accepted_at_round": null,
+  "architecture_accepted_at": null,
   "modules_completed": {},
   "modules_accepted": {},
   "modules_in_progress": {},
@@ -245,8 +246,8 @@ Write `docs/.spec-state/progress.json`:
 - After Phase 4 report → delete `docs/.spec-state/`
 
 **User-accepts-at-limit protocol**: when evaluator exceeds max rounds and user chooses "accept current":
-- Architecture: set `architecture_done: true`, `architecture_accepted_at_round: N` (converged leaves this `null`)
-- Module: move from `modules_in_progress` to `modules_accepted` (NOT `modules_completed`)
+- Architecture: set `architecture_done: true`, `architecture_accepted_at_round: N` + `architecture_accepted_at: {ISO timestamp}` (converged leaves both `null`) — the timestamp makes it a sanctioned record per the §0 Iron-Rule discriminator (3.4.0/K6)
+- Module: move from `modules_in_progress` to `modules_accepted` as `{"MODULE-NNN-name": {"eval_rounds": N, "user_accepted_at": "{ISO timestamp}"}}` (NOT `modules_completed`)
 - Both cases: proceed to next phase. Resume treats `modules_accepted` same as `modules_completed` (no re-entry)
 - Final report uses `architecture_accepted_at_round != null` → "accepted at round N", else "converged in N rounds"
 - Final report checks each module: in `modules_accepted` → "accepted", in `modules_completed` → "converged"
@@ -3187,7 +3188,7 @@ Evaluator Results:
 
 Scope & unverified (factual boundaries — NEVER softening a finding):
   Evaluator tier:         {dual-evaluator (Claude+Codex) | single-evaluator (Codex unavailable)}
-  Accepted-at-limit:      {sections accept-at-limit'd at round N — NOT converged: <list> | none}
+  Accepted-at-limit:      {sections accept-at-limit'd at round N (user_accepted_at {timestamp}) — NOT converged: <list> | none}
   Not evaluator-verified: {the accepted-at-limit sections above | none}
 
 Next Steps:

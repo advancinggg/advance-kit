@@ -459,10 +459,15 @@ When editing any of these surfaces, the following ten rules MUST hold:
    `system_acceptance_deferred: []`). Removing a field or changing defaulting semantics is MAJOR.
    The supported window is now v3/v4/v5/v6 (`version > 6` → HARD FAIL).
 
-8. **Upstream seam**: PRD §3 flows may carry a `System acceptance journey: Yes/No` marker
+8. **Upstream seam**: PRD §3 flows carry a `System acceptance journey: Yes/No` marker
    (product-level, architecture-free); `/prd` Phase 4 Dimension 1 raises a Warning when a
    non-trivial product declares none. Removing the marker or the check is MAJOR (it is the
-   product-intent seed `/spec` lifts into `SYS-J`).
+   product-intent seed `/spec` lifts into `SYS-J`). **3.5.0/K7**: the marker is REQUIRED on EVERY
+   §3 flow (generation must emit it; Phase 4 Dim 1 flags a flow MISSING it — orthogonal to the
+   ≥1-Yes check, applies to all products), and a Phase 0.2 **legacy backfill** batched-classifies
+   unmarked flows in pre-2.10.0 PRDs (user-classified, never AI-invented; idempotent). Removing the
+   per-flow-completeness check or the backfill is MAJOR; the marker stays product-level (no
+   modules/wiring).
 
 9. **SYSTEM-ACCEPTANCE.md staleness is its OWN concern**, NOT a 9th CONTEXT-MAP input. The
    "8 upstream sources" list in the CONTEXT-MAP checklist (2.4.0+) is unchanged — CONTEXT-MAP

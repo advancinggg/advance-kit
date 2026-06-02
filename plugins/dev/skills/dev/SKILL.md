@@ -111,9 +111,12 @@ cover is REQUIRED, not forbidden — the trap is conflating it with routing arou
   NOTHING is resolved — sourced only from sanctioned state (`waived_scope`, `deferred_findings` +
   `system_acceptance_deferred` each carrying `user_accepted_at`, degraded modes, `Partial` REQs +
   the mechanical reason). Its home is the SUMMARY "Scope & unverified" field.
-The test: a sanctioned record (`user_accepted_at` / a state.json field) or a factual tool/scope
-limit → disclosure (required); free-form prose routing around a live finding with no record →
-softening (forbidden).
+The test: a NAMED sanctioned record carrying `user_accepted_at` (`deferred_findings` /
+`system_acceptance_deferred`) OR a NAMED mechanical factual-limit field (`waived_scope`,
+`codex_available:false`, `sdd_mode:false`, a `Partial` REQ's mechanical reason) → disclosure
+(required). Free-form prose routing around a live finding — or ANY field not in that named set —
+→ softening (forbidden). ("a state.json field" is NOT a blanket licence: only the records/fields
+named here qualify.)
 
 LLM agents have a natural tendency to soften hard constraints with free-form text — this rule
 explicitly forbids that escape hatch, while REQUIRING the structured boundary disclosure above.
@@ -362,7 +365,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.4.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.5.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
