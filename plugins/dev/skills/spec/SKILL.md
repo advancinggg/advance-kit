@@ -16,7 +16,7 @@ description: |
   2.10.0+ adds the system-acceptance layer (REQ `Witness:e2e` + standalone
   `docs/SYSTEM-ACCEPTANCE.md` of cross-module SYS-J journeys + SYS-AC ledger);
   `/spec upgrade-template` (2.11.0+) adopts it into an existing project without a full
-  rerun (injects the registry Witness column + bootstraps SYSTEM-ACCEPTANCE.md, no evaluators).
+  rerun (injects the registry Witness column + bootstraps SYSTEM-ACCEPTANCE.md; 3.0.0+ evaluator-backed journey discovery).
   Sub-commands: resume | abort | status | upgrade-template | adr-new.
   Usage: /spec [path/to/PRD.md or path/to/prd-directory/]
   Trigger when user asks to "generate specs", "generate architecture", "decompose modules",
@@ -104,7 +104,7 @@ Parse `$ARGUMENTS` FIRST, before any other initialization:
 - `resume` → read `docs/.spec-state/progress.json`, continue from current phase (skip to resume logic below)
 - `abort` → delete `docs/.spec-state/`, output "workflow aborted", exit
 - `status` → read and display `docs/.spec-state/progress.json` summary, exit
-- `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow). **2.11.0+**: Phase UT also runs **UT.10** — injects the `Witness` column into `docs/REQUIREMENTS_REGISTRY.md` and bootstraps `docs/SYSTEM-ACCEPTANCE.md`, so an existing project adopts the 2.10.0 system-acceptance layer without a full `/spec` rerun (no evaluator loops; heuristic, idempotent, merge-preserving).
+- `upgrade-template` → run **Phase 0.1 Dependency Check** (needs python3 + mktemp for this sub-command per UT.1 / UT.6), then jump to **Phase UT: Section-Level Template Upgrade** (defined after Gate 1). Skip Phases 0.2–0.5 (no PRD consumption, no progress.json, no main workflow). **2.11.0+**: Phase UT also runs **UT.10** — injects the `Witness` column into `docs/REQUIREMENTS_REGISTRY.md` and bootstraps `docs/SYSTEM-ACCEPTANCE.md`, so an existing project adopts the 2.10.0 system-acceptance layer without a full `/spec` rerun (3.0.0+: evaluator-backed journey discovery — dual/single/heuristic tiers — idempotent, merge-preserving).
 - `adr-new` → jump to **Phase ADR-NEW** (standalone operation; skips Phase 0.1 dependency check; no progress.json touched). **Adr-new-specific inline dependency check** (runs at Phase ADR-NEW entry before any side-effects): `which jq >/dev/null` — if missing AND `docs/.spec-state/progress.json` exists, the active-workflow gate (step 4) falls back to a grep-based phase read: `grep -oE '"phase": *"[^"]*"' docs/.spec-state/progress.json | head -1 | sed 's/.*"\([^"]*\)"$/\1/'`. This tolerates `jq`-missing environments at the cost of slightly less robust JSON parsing (acceptable — progress.json is a known-format file emitted by /spec). If `docs/.spec-state/progress.json` does not exist, the gate proceeds without reading (safe-proceed), and jq is not needed. Requires at least one `$ARGUMENTS` word after `adr-new` as the ADR title; missing title → print `/spec adr-new "<title>" — no title provided.` and exit.
 - anything else → treat as PRD path, proceed to 0.1
 
@@ -520,14 +520,17 @@ progress in §3.4 AC ledgers.
 **2.11.0+ also adopts the 2.10.0 system-acceptance layer incrementally** (UT.10): it
 injects the `Witness` column into `docs/REQUIREMENTS_REGISTRY.md` and bootstraps
 `docs/SYSTEM-ACCEPTANCE.md` — so an existing project gains the system-acceptance axis
-**without a full `/spec` rerun** (no architecture/module evaluator loops). This is the
-cheap migration path for projects that already use the doc spec; it produces a heuristic
-starting point the user can refine, explicitly NOT evaluator-grade (a later full `/spec`
-rerun applies the rigorous Phase 1.3 system-coverage gate).
+**without a full `/spec` rerun**. The section-template upgrade (UT.2–UT.6) regenerates no
+content; UT.10 (3.0.0+) runs **evaluator-backed journey discovery** (dual/single/heuristic
+tiers — see UT.10.A step 4) to find under-classified REQs + emergent journeys. UT.10 does NOT
+regenerate ARCHITECTURE/modules, so a later full `/spec` rerun remains the path for complete
+spec re-convergence (PRD coverage, MECE, interface consistency).
 
-Phase UT is independent of the main PRD workflow — no PRD is consumed, no evaluator
-loops are run, no `progress.json` is created. If a main /spec workflow is active
-(progress.json exists and is mid-phase), Phase UT refuses per UT.7.
+Phase UT is independent of the main PRD→spec generation workflow — it does not regenerate
+ARCHITECTURE/modules and creates no `progress.json`. (UT.10 step 4 DOES read the PRD
+read-only and DOES run evaluator loops for journey discovery, 3.0.0+; the UT.2–UT.6 section
+work runs no evaluators.) If a main /spec workflow is active (progress.json exists and is
+mid-phase), Phase UT refuses per UT.7.
 
 ### UT.1 Target discovery
 
@@ -1021,7 +1024,7 @@ SKILL.md will poison future upgrades — but a malicious SKILL.md is a broader p
 than upgrade-template (the entire /spec and /dev surface is compromised). Plugin
 integrity is a marketplace-level concern, not a per-subcommand defense.
 
-### UT.10 System-acceptance layer migration (2.11.0+, no evaluator loops)
+### UT.10 System-acceptance layer migration (2.11.0+; 3.0.0+ evaluator-backed journey discovery)
 
 Brings the 2.10.0 system-acceptance layer into an existing project **without a full
 `/spec` rerun**. Runs after the UT.6 section-merge writes complete, under the UT.7
@@ -1029,11 +1032,18 @@ active-workflow gate; its results feed the UT.9 summary. **Skipped entirely** wh
 `docs/REQUIREMENTS_REGISTRY.md` is absent (UT.1 step 9 — a lightweight project already
 behaves as pre-2.10.0). Idempotent and merge-preserving on re-run.
 
-**Honesty contract**: UT.10 produces a heuristic STARTING POINT, NOT an evaluator-grade
-result. It does NOT run the architecture/module evaluator loops and does NOT apply the
-Phase 1.3 `system_coverage` gate. The UT.9 summary says so and points to a full `/spec`
-rerun for rigorous verification. This is the deliberate cost/rigor trade that makes the
-migration cheap enough to run across many existing projects.
+**Scope contract (3.0.0+)**: UT.10 runs **evaluator-backed journey discovery** — the same
+dual-evaluator method as Phase 1.3 (Claude auditor + Codex, loop-until-dry), degrading to
+single-evaluator (Codex absent) or to a legacy heuristic (no evaluator available at all). It
+discovers under-classified REQs and emergent cross-module journeys; it is NOT merely a grep.
+What UT.10 still does NOT do: regenerate ARCHITECTURE.md / MODULE docs or re-run their
+evaluator loops — so a full `/spec` rerun remains the path for complete spec re-convergence
+(PRD coverage, MECE, interface consistency). UT.10 and a full rerun are complementary, not
+redundant: UT.10 = template-structure upgrade + /dev progress preservation + evaluator-grade
+journey discovery; a full rerun additionally regenerates ARCHITECTURE/modules. The UT.9
+summary states which evaluator tier ran. Authorship partition is preserved: UT.10 never writes
+a SYS-AC `passed` (that stays /dev SUMMARY's), and e2e marking still requires the explicit
+UT.10.A policy prompt (step 5).
 
 #### UT.10.A — Witness column injection (`docs/REQUIREMENTS_REGISTRY.md`)
 
@@ -1052,13 +1062,43 @@ migration cheap enough to run across many existing projects.
    default that creates no e2e obligation, so the /dev System Acceptance gate stays
    dormant. The separator row gains a matching `---` cell. ALL other columns / cells /
    rows are preserved verbatim (a mechanical column insert, NOT a regeneration).
-4. **e2e-candidate heuristic** (no evaluator): a REQ row is a candidate if EITHER its
-   `Module(s)` cell names ≥2 distinct `MODULE-NNN` IDs (cross-module behaviour), OR — when
-   `docs/PRD.md` / `docs/00-prd/*.md` is readable and confined per UT.1 step 7 — its
-   Source/Section maps to a PRD §3 flow flagged `System acceptance journey: Yes`.
-5. Print the candidate list (`REQ-ID — Description — reason flagged`), then ONE **policy**
-   AskUserQuestion (respects the 2–4 option cap — do NOT attempt a per-REQ multi-select,
-   which can exceed it):
+4. **e2e-candidate + journey discovery (3.0.0+, evaluator-backed; tiered)**. Discover which
+   REQs are system-behaviour and what journeys exist, using the best available tier (read the
+   `codex_available` flag + auditor presence from the Phase 0.1 dependency check):
+
+   - **Tier 1 — dual-evaluator (default; Claude auditor + Codex both available).** Spawn TWO
+     fresh independent evaluators in the SAME assistant response (Dual-Evaluator Sync Protocol
+     rule 1), ZERO prior-classification knowledge. Inputs: the just-migrated
+     `REQUIREMENTS_REGISTRY.md` (Witness column all `unit`), `docs/PRD.md` / `docs/00-prd/*.md`
+     (confined per UT.1 step 7), and read-only `docs/ARCHITECTURE.md` / `docs/modules/*.md` /
+     `docs/SYSTEM-ACCEPTANCE.md` if present. Prompt (both): "Discover system-acceptance
+     journeys for this EXISTING project. (a) Flag [Critical] every REQ that is genuinely
+     system-behaviour — cross-module + user-observable end-to-end (PRD §3 flows flagged
+     'System acceptance journey', or behaviour spanning ≥2 modules) — currently marked
+     Witness:unit/integration (under-classification). (b) Discover EMERGENT journeys: a
+     cross-module user-observable behaviour that NO single REQ captures (arises from a chain
+     of REQs/modules); list each as: short name — REQ-IDs spanned — module chain. Output:
+     `Under-classified REQs:`, `Emergent journeys:`, `Substantive Findings: N`,
+     `Verdict: PASS|FAIL`." Codex runs foreground `codex exec -s read-only` (timeout 600000),
+     per the Phase 1.3 Codex command template. **loop-until-dry**: re-spawn fresh evaluators
+     each round; stop when a round surfaces NO new under-classified REQ AND NO new emergent
+     journey (cap 5 rounds → take the union so far, note in UT.9). Merge both evaluators by
+     UNION; a one-evaluator-only finding is arbitrated toward INCLUSION (completion, never
+     pruning — this is the anti-"silently-drop-journey" rule).
+   - **Tier 2 — single-evaluator (Codex unavailable per dep check).** Same prompt, Claude
+     auditor only; loop-until-dry as above.
+   - **Tier 3 — heuristic fallback (no auditor available at all).** Legacy rule, no evaluator:
+     a REQ is a candidate if its `Module(s)` cell names ≥2 distinct `MODULE-NNN` IDs, OR its
+     Source/Section maps to a PRD §3 flow flagged `System acceptance journey: Yes`. No
+     emergent-journey discovery.
+
+   The **candidate REQ set** = under-classified REQs (Tier 1/2) ∪ the REQs named in discovered
+   emergent journeys, or the grep matches (Tier 3). Discovered emergent-journey groupings feed
+   UT.10.B seeding. Record the tier + round count + counts (under-classified REQs / emergent
+   journeys) for the UT.9 summary.
+5. Print the candidate REQ list (`REQ-ID — Description — reason flagged`) AND the discovered
+   emergent journeys (`name — REQ-IDs — module chain`), then ONE **policy** AskUserQuestion
+   (respects the 2–4 option cap — do NOT attempt a per-REQ multi-select, which can exceed it):
    - (1) Mark the listed {N} candidates as `Witness:e2e` (recommended)
    - (2) Keep all `unit` — I'll mark e2e by hand later
    - (3) Abort migration (registry left untouched)
@@ -1078,9 +1118,12 @@ migration cheap enough to run across many existing projects.
    Journeys` table + note "no system-behaviour requirements yet — all REQs unit/integration
    witness" + empty `## 2. System AC Ledger`). Keeps the axis visible and fully inert
    (board shows `(no journeys)`; /dev `in_scope_sys_ac_ids` stays `[]`).
-4. **e2e REQs present** → seed WITHOUT evaluators:
-   - Group e2e REQs into journeys: REQs sharing a PRD §3 flow → one `SYS-J`; else one
-     `SYS-J` per REQ.
+4. **e2e REQs present** → seed journeys:
+   - Use the **emergent-journey groupings discovered in UT.10.A step 4** (Tier 1/2) as the
+     primary journey set — each discovered journey → one `SYS-J` spanning its REQ-IDs. For any
+     remaining e2e REQ not in a discovered journey, fall back to: REQs sharing a PRD §3 flow →
+     one `SYS-J`; else one `SYS-J` per REQ. (On a Tier-3 heuristic run, groupings come only
+     from this PRD-flow / per-REQ fallback.)
    - **Module Chain**: the REQ's `Module(s)` IDs, ordered by `docs/IMPLEMENTATION_ORDER.md`
      topological position when available, else registry order.
    - **Contracts**: best-effort from ARCHITECTURE §6.1 contracts on the chain seams; if not
@@ -1094,8 +1137,8 @@ migration cheap enough to run across many existing projects.
    it NEVER writes a SYS-AC to `passed` (that is `/dev` SUMMARY's exclusive write, per the
    §3.4-style partition). Witness Level on seeded SYS-AC is always `e2e`/`system`.
 
-**Scope guard**: UT.10 makes NO other change — no evaluator loops, no touching
-ARCHITECTURE.md / MODULE docs (beyond the UT.2–UT.6 section merges) /
+**Scope guard**: UT.10 runs evaluator-backed journey discovery (3.0.0+, step 4) but makes
+NO other change — no touching ARCHITECTURE.md / MODULE docs (beyond the UT.2–UT.6 section merges) /
 IMPLEMENTATION_ORDER.md / CONTEXT-MAP.md, and no `progress.json`. Governed by the UT.7
 active-workflow gate.
 
@@ -1115,11 +1158,14 @@ Per doc:
 Part markers: all 3/3 present in each MODULE doc post-upgrade.
 Legacy-body flags: Y (user-resolved via UT.6.1).
 
-System-acceptance migration (2.11.0+, UT.10):
+System-acceptance migration (UT.10):
+  Journey discovery tier: {dual-evaluator | single-evaluator (Codex absent) | heuristic fallback (no evaluator)} — {N} round(s); {M} under-classified REQ(s) + {K} emergent journey(s) found
   Witness column: {added — N REQs defaulted unit, M marked e2e | already present (skipped) | n/a (no registry)}
   docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with K SYS-J / K SYS-AC seeded | merge-preserved (K passed SYS-AC kept) | n/a}
-  ⚠️ Heuristic only — seeded journeys + any {TODO} success conditions are NOT
-     evaluator-verified. Run a full `/spec` to apply the Phase 1.3 system-coverage gate.
+  NOTE: UT.10 ran evaluator-grade JOURNEY discovery (tier above) but did NOT regenerate
+     ARCHITECTURE.md / MODULE docs — run a full `/spec` for complete spec re-convergence
+     (PRD coverage, MECE, interface consistency). If the tier is "heuristic fallback", the
+     journey set may be incomplete: rerun with Codex/auditor available, or run a full `/spec`.
 
 Next step: commit the changes (`git add docs/ && git commit`), then verify
 downstream /dev workflows resume cleanly.
@@ -1624,7 +1670,7 @@ performance-critical path with strict SLA.
 
 After generating ARCHITECTURE.md, use independent evaluators to verify PRD coverage before presenting to user.
 
-**Immutable spec**: PRD.md. **Mutable output**: ARCHITECTURE.md. **Convergence**: uncovered_count == 0 AND system_uncovered_count == 0 (2.10.0+ — every Witness:e2e REQ has a cross-module realization) AND substantive_count == 0.
+**Immutable spec**: PRD.md. **Mutable output**: ARCHITECTURE.md. **Convergence**: uncovered_count == 0 AND system_uncovered_count == 0 (3.0.0+ — no under-classified REQ, every Witness:e2e REQ has a cross-module realization, AND no undiscovered emergent journey; loop-until-dry) AND substantive_count == 0.
 
 ```
 eval_round = 0
@@ -1670,6 +1716,10 @@ repeat:
           \"System acceptance journey\", or behaviour spanning ≥2 modules in §10
           Traceability) — but is NOT marked Witness:e2e in the registry. Under-classification
           lets a whole-system requirement reach Verified on unit tests alone.
+        - Discover EMERGENT journeys: a cross-module, user-observable end-to-end behaviour that
+          NO single REQ captures (it arises from a chain of REQs/modules). Flag [Critical] each
+          one not yet realized as an e2e journey — name it + the REQ-IDs + module chain it spans.
+          (Loop-until-dry: keep surfacing journeys until a round finds none new.)
         - For every Witness:e2e REQ, verify ARCHITECTURE §5 Data Flow / §10 Traceability
           realizes it as a coherent multi-module path so a system journey is constructible.
           An e2e REQ with no cross-module realization → [Critical].
@@ -1715,6 +1765,9 @@ repeat:
         - Flag [Critical] any genuinely system-behaviour REQ (cross-module, user-observable
           end-to-end journey; especially PRD §3 flows flagged \"System acceptance journey\"
           or behaviour spanning ≥2 modules in §10) NOT marked Witness:e2e.
+        - Discover EMERGENT journeys: a cross-module user-observable behaviour that NO single
+          REQ captures (arises from a chain of REQs/modules). Flag [Critical] each not yet in
+          the e2e set — name it + REQ-IDs + module chain. Loop-until-dry.
         - For every Witness:e2e REQ, verify ARCHITECTURE §5/§10 realizes it as a coherent
           multi-module path (system journey constructible). No path → [Critical].
 
@@ -1788,8 +1841,12 @@ repeat:
 
 
   - Merge uncovered PRD items (union)
-  - Merge Witness Classification Issues (union) → system_uncovered_count = distinct
-    Witness:e2e REQs that are either under-classified or lack a cross-module path (2.10.0+)
+  - Merge Witness Classification + Emergent Journey issues (union) → system_uncovered_count =
+    distinct count of (a) under-classified REQs (system-behaviour but marked unit/integration),
+    (b) Witness:e2e REQs lacking a cross-module path in §5/§10, and (c) emergent journeys not
+    yet realized in the e2e set (3.0.0+). All three block convergence — the
+    anti-"silently-drop-journey" rule; a one-evaluator-only finding is arbitrated toward
+    INCLUSION (completion, not pruning)
   - Merge MECE violations and dependency issues (deduplicate)
   - Merge Risk & Threat Model Issues (deduplicate)
   - Both found same issue → high confidence
@@ -1819,6 +1876,8 @@ repeat:
   - Main agent revises ARCHITECTURE.md based on evaluator report. For Witness Classification
     Issues, either correct the registry's Witness column (re-classify the REQ) or add the
     missing cross-module realization to ARCHITECTURE §5/§10 so a system journey is constructible.
+    For emergent-journey findings, ensure the spanning REQs are captured + classified Witness:e2e
+    and a coherent §5/§10 path exists (so Phase 3.4 can materialize the journey).
   - Back to STEP 1 (fresh evaluators)
 
   > 10 rounds → AskUserQuestion (accept current / keep refining / abort)
