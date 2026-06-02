@@ -17,6 +17,13 @@ for dep in jq python3; do
   fi
 done
 
+# ── JSON-safe decision emitters (jq guaranteed present past the dep-check above) ──
+#    Build every decision via `jq --arg` so untrusted text (commands, paths, phase)
+#    is escaped — a raw value containing " or \ must never break the fail-closed JSON,
+#    which would drop the decision and fail the gate open.
+emit_deny() { jq -cn --arg m "$1" '{permissionDecision:"deny",message:$m}'; }
+emit_ask()  { jq -cn --arg m "$1" '{permissionDecision:"ask",message:$m}'; }
+
 # ── Locate & parse state ──
 if [ -n "${CLAUDE_PLUGIN_DATA:-}" ] && [ -f "${CLAUDE_PLUGIN_DATA}/state.json" ]; then
   STATE_FILE="${CLAUDE_PLUGIN_DATA}/state.json"
@@ -31,12 +38,12 @@ PHASE=$(jq -r '.phase' "$STATE_FILE" 2>/dev/null) || PHASE=""
 REPO_ROOT_STATE=$(jq -r '.repo_root // ""' "$STATE_FILE" 2>/dev/null) || REPO_ROOT_STATE=""
 
 if [ -z "$PHASE" ] || [ "$PHASE" = "null" ]; then
-  printf '{"permissionDecision":"deny","message":"[dev] state.json corrupt. Run /dev doctor."}'; exit 0
+  emit_deny "[dev] state.json corrupt. Run /dev doctor."; exit 0
 fi
 
 case "$PHASE" in
   plan|docs|implement|audit|test|adversarial|summary) ;;
-  *) printf '{"permissionDecision":"deny","message":"[dev] Unknown phase: %s. Run /dev doctor."}' "$PHASE"; exit 0 ;;
+  *) emit_deny "[dev] Unknown phase: $PHASE. Run /dev doctor."; exit 0 ;;
 esac
 
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
@@ -65,7 +72,7 @@ if [ -n "$FILE_PATH" ]; then
       case "$ABS_PATH" in
         "$STATE_REAL") echo '{}'; exit 0 ;;
         "$PLANS_DIR"/*) echo '{}'; exit 0 ;;
-        *) printf '{"permissionDecision":"deny","message":"[dev] Writes are not allowed during the PLAN phase."}'; exit 0 ;;
+        *) emit_deny "[dev] Writes are not allowed during the PLAN phase."; exit 0 ;;
       esac ;;
     docs|summary)
       # docs: only allowlist docs + state; summary: only MODULE docs + ARCHITECTURE + state
@@ -95,12 +102,12 @@ if [ -n "$FILE_PATH" ]; then
           "$REPO_REAL"/ARCHITECTURE.md|"$REPO_REAL"/docs/modules/*) echo '{}'; exit 0 ;;
         esac
       fi
-      printf '{"permissionDecision":"deny","message":"[dev] During the %s phase only documentation files may be modified."}' "$PHASE"; exit 0 ;;
+      emit_deny "[dev] During the $PHASE phase only documentation files may be modified."; exit 0 ;;
     implement|audit|test|adversarial)
       # Allow writes only inside repo (realpath resolves symlinks)
       case "$ABS_PATH" in
         "$REPO_REAL"/*|"$REPO_REAL") echo '{}'; exit 0 ;;
-        *) printf '{"permissionDecision":"ask","message":"[dev] Write path is outside the repo: %s"}' "$(echo "$ABS_PATH" | head -c 80)"; exit 0 ;;
+        *) emit_ask "[dev] Write path is outside the repo: $(printf '%s' "$ABS_PATH" | head -c 80)"; exit 0 ;;
       esac ;;
   esac
   echo '{}'; exit 0
@@ -114,19 +121,19 @@ if [ -n "$COMMAND" ]; then
   # ── Global: dangerous commands blocked in ALL phases ──
   # rm with both -r and -f (any order, any prefix flags)
   if echo "$COMMAND" | grep -qE '\brm\b' && echo "$COMMAND" | grep -qE '\-[a-z]*r' && echo "$COMMAND" | grep -qE '\-[a-z]*f'; then
-    printf '{"permissionDecision":"deny","message":"[dev] Dangerous command blocked: %s"}' "$(echo "$COMMAND" | head -c 80)"; exit 0
+    emit_deny "[dev] Dangerous command blocked: $(printf '%s' "$COMMAND" | head -c 80)"; exit 0
   fi
   # git push with force (handles: git push -f, git push --force, git -c ... push --force, etc.)
   if echo "$COMMAND" | grep -qE '\bgit\b.*\bpush\b' && echo "$COMMAND" | grep -qE '(\s--force\b|\s-f\b|\s--force-with-lease\b)'; then
-    printf '{"permissionDecision":"deny","message":"[dev] Dangerous command blocked: %s"}' "$(echo "$COMMAND" | head -c 80)"; exit 0
+    emit_deny "[dev] Dangerous command blocked: $(printf '%s' "$COMMAND" | head -c 80)"; exit 0
   fi
   # git reset --hard
   if echo "$COMMAND" | grep -qE '\bgit\b.*\breset\b.*--hard'; then
-    printf '{"permissionDecision":"deny","message":"[dev] Dangerous command blocked: %s"}' "$(echo "$COMMAND" | head -c 80)"; exit 0
+    emit_deny "[dev] Dangerous command blocked: $(printf '%s' "$COMMAND" | head -c 80)"; exit 0
   fi
   # SQL destructive
   if echo "$COMMAND" | grep -qiE '(DROP\s+TABLE|TRUNCATE)'; then
-    printf '{"permissionDecision":"deny","message":"[dev] Dangerous command blocked: %s"}' "$(echo "$COMMAND" | head -c 80)"; exit 0
+    emit_deny "[dev] Dangerous command blocked: $(printf '%s' "$COMMAND" | head -c 80)"; exit 0
   fi
 
   # ── read-only dev version banner: side-effect-free by contract, allowed in ALL phases ──
@@ -265,9 +272,9 @@ print("allow")
     case "$CODEX_CHECK" in
       allow) echo '{}'; exit 0 ;;
       deny:sandbox:*)
-        printf '{"permissionDecision":"deny","message":"[dev] In the %s phase codex must run with -s read-only (detected: %s)"}' "$PHASE" "${CODEX_CHECK#deny:sandbox:}"; exit 0 ;;
+        emit_deny "[dev] In the $PHASE phase codex must run with -s read-only (detected: ${CODEX_CHECK#deny:sandbox:})"; exit 0 ;;
       *)
-        printf '{"permissionDecision":"deny","message":"[dev] In the %s phase this codex command was blocked: %s"}' "$PHASE" "${CODEX_CHECK#deny:}"; exit 0 ;;
+        emit_deny "[dev] In the $PHASE phase this codex command was blocked: ${CODEX_CHECK#deny:}"; exit 0 ;;
     esac
   fi
 
@@ -276,16 +283,16 @@ print("allow")
 
   # Write pattern detection on unquoted command
   if echo "$UNQUOTED" | grep -qE '(sed\s+-i|perl\s+-i)'; then
-    printf '{"permissionDecision":"deny","message":"[dev] In-place edits are not allowed during the %s phase"}' "$PHASE"; exit 0
+    emit_deny "[dev] In-place edits are not allowed during the $PHASE phase"; exit 0
   fi
   if echo "$UNQUOTED" | grep -qE '\btee\b'; then
-    printf '{"permissionDecision":"deny","message":"[dev] tee is not allowed during the %s phase"}' "$PHASE"; exit 0
+    emit_deny "[dev] tee is not allowed during the $PHASE phase"; exit 0
   fi
   if echo "$UNQUOTED" | grep -oE '[0-9]*>{1,2}[^ ]*' | grep -vE '>/dev/null|>&1|>&2' | grep -qE '.'; then
-    printf '{"permissionDecision":"deny","message":"[dev] File redirection is not allowed during the %s phase"}' "$PHASE"; exit 0
+    emit_deny "[dev] File redirection is not allowed during the $PHASE phase"; exit 0
   fi
   if echo "$UNQUOTED" | grep -qE '\-\-output[= ]'; then
-    printf '{"permissionDecision":"deny","message":"[dev] --output is not allowed during the %s phase"}' "$PHASE"; exit 0
+    emit_deny "[dev] --output is not allowed during the $PHASE phase"; exit 0
   fi
 
   # Scan all segments
@@ -310,10 +317,10 @@ print("allow")
       GIT_OK=false
       for gs in $GIT_READ; do [ "$git_sub" = "$gs" ] && { GIT_OK=true; break; }; done
       $GIT_OK && continue
-      printf '{"permissionDecision":"ask","message":"[dev] In the %s phase, git %s is not read-only"}' "$PHASE" "$git_sub"; exit 0
+      emit_ask "[dev] In the $PHASE phase, git $git_sub is not read-only"; exit 0
     fi
 
-    printf '{"permissionDecision":"ask","message":"[dev] In the %s phase, %s is not in the read-only allowlist"}' "$PHASE" "$seg_cmd"; exit 0
+    emit_ask "[dev] In the $PHASE phase, $seg_cmd is not in the read-only allowlist"; exit 0
   done <<< "$SEGMENTS"
 
   echo '{}'; exit 0

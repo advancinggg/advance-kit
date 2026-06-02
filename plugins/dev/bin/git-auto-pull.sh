@@ -16,9 +16,10 @@ cat > /dev/null  # drain stdin (hook sends JSON)
 [ "${CLAUDE_SKIP_AUTOSYNC:-0}" = "1" ] && exit 0
 
 COOLDOWN="${GIT_PULL_COOLDOWN_SECS:-300}"
+case "$COOLDOWN" in ''|*[!0-9]*) COOLDOWN=300 ;; esac  # ignore a non-numeric override
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" 2>/dev/null || exit 0  # stale/deleted dir: no-op, never fail the prompt hook
 
 # ── Guard: must be a git repo with a remote ──
 git rev-parse --is-inside-work-tree &>/dev/null || exit 0
@@ -39,6 +40,7 @@ COOLDOWN_FILE="$DATA_DIR/last-pull-${PROJ_HASH}"
 
 if [ -f "$COOLDOWN_FILE" ]; then
   LAST_PULL=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
+  case "$LAST_PULL" in ''|*[!0-9]*) LAST_PULL=0 ;; esac  # corrupt cooldown file → treat as never-pulled
   NOW=$(date +%s)
   ELAPSED=$((NOW - LAST_PULL))
   [ "$ELAPSED" -lt "$COOLDOWN" ] && exit 0

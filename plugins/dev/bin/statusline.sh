@@ -1,7 +1,7 @@
 #!/bin/sh
 input=$(cat)
 
-model=$(echo "$input" | jq -r '.model.display_name // "Unknown Model"')
+model=$(printf '%s\n' "$input" | jq -r '.model.display_name // "Unknown Model"')
 
 # ANSI colors
 GREEN="\033[32m"
@@ -41,8 +41,9 @@ bar() {
 
 # Countdown: resets_at is Unix epoch seconds
 countdown() {
-  reset_epoch=$(echo "$input" | jq -r "$1 // empty")
+  reset_epoch=$(printf '%s\n' "$input" | jq -r "$1 // empty")
   [ -z "$reset_epoch" ] && return
+  case "$reset_epoch" in *[!0-9]*) return ;; esac  # non-numeric (e.g. ISO ts) → skip; never abort the statusline
   now=$(date +%s)
   diff=$((reset_epoch - now))
   [ $diff -le 0 ] && { printf "now"; return; }
@@ -59,7 +60,7 @@ countdown() {
 }
 
 # Context
-used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
+used=$(printf '%s\n' "$input" | jq -r '.context_window.used_percentage // empty')
 if [ -n "$used" ]; then
   used_int=$(printf "%.0f" "$used")
   ctx_str="Context $(bar $used_int bar_color) ${used_int}%"
@@ -68,7 +69,7 @@ else
 fi
 
 # 5-hour rate limit (Session Limits)
-five=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+five=$(printf '%s\n' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 if [ -n "$five" ]; then
   five_int=$(printf "%.0f" "$five")
   five_cd=$(countdown '.rate_limits.five_hour.resets_at')
@@ -82,7 +83,7 @@ else
 fi
 
 # 7-day rate limit (Weekly Limits)
-week=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+week=$(printf '%s\n' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 if [ -n "$week" ]; then
   week_int=$(printf "%.0f" "$week")
   week_cd=$(countdown '.rate_limits.seven_day.resets_at')
@@ -96,10 +97,10 @@ else
 fi
 
 # Token usage
-in_tok=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-out_tok=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
-cache_write=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
-cache_read=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
+in_tok=$(printf '%s\n' "$input" | jq -r '.context_window.total_input_tokens // 0')
+out_tok=$(printf '%s\n' "$input" | jq -r '.context_window.total_output_tokens // 0')
+cache_write=$(printf '%s\n' "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
+cache_read=$(printf '%s\n' "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
 
 # Format token count: 1234 -> 1.2k, 12345 -> 12.3k, 123456 -> 123k
 fmt_tok() {

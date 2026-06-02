@@ -128,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.5.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.5.0 /prd 现要求每条 §3 flow 都带 `System acceptance journey? Yes/No` 标记（Phase 4 检测缺标记），并提供批量、用户分类的旧 PRD backfill，使 2.10.0 前的 PRD 免全量重生成即可接入标记。**早期：** 3.2.0 系统验收 harness + 可执行性（声明/运行整机 e2e + 显式 deferral）、3.3.0 `/spec upgrade-template` 中途插小节 renumber-preserve、3.4.0 Iron-Rule 诚实披露区分 + 结构化「Scope & unverified」字段。 |
+| `dev` | `3.5.1` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.5.0 /prd 现要求每条 §3 flow 都带 `System acceptance journey? Yes/No` 标记（Phase 4 检测缺标记），并提供批量、用户分类的旧 PRD backfill，使 2.10.0 前的 PRD 免全量重生成即可接入标记。**早期：** 3.2.0 系统验收 harness + 可执行性（声明/运行整机 e2e + 显式 deferral）、3.3.0 `/spec upgrade-template` 中途插小节 renumber-preserve、3.4.0 Iron-Rule 诚实披露区分 + 结构化「Scope & unverified」字段。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

@@ -23,7 +23,8 @@ umask 077
 SCRATCH=$(mktemp -d -t wp-check.XXXXXX) \
   || { echo "FAIL: mktemp failed"; exit 1; }
 umask "$UMASK_ORIG"
-trap 'rm -rf "$SCRATCH"' EXIT INT TERM HUP
+trap 'rm -rf "$SCRATCH"' EXIT       # cleanup on any exit
+trap 'exit 130' INT TERM HUP        # signal → exit (fires the EXIT trap); never continue with a deleted scratch
 
 skipped_count=0
 

@@ -57,7 +57,7 @@ bash -n plugins/dev/bin/*.sh plugins/dev/skills/dev/bin/*.sh && \
   jq -e . .claude-plugin/marketplace.json plugins/dev/.claude-plugin/plugin.json \
     plugins/dev/hooks/hooks.json > /dev/null && \
   bash plugins/dev/bin/board.sh > /dev/null && \
-  bash plugins/dev/bin/dev-version-banner.sh dev 3.5.0 > /dev/null
+  bash plugins/dev/bin/dev-version-banner.sh dev 3.5.1 > /dev/null
 ```
 
 The board.sh runtime smoke (2.9.0+) catches awk/jq pipeline regressions that

@@ -71,13 +71,21 @@ if [ -n "$GITLEAKS_BIN" ]; then
   GL_EXIT=0
   GL_OUT=$(git diff --cached | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GL_EXIT=$?
   if [ "$GL_EXIT" -eq 1 ]; then
+    # rc=1: secrets detected → block (fail closed)
     echo "[$(date)] GITLEAKS BLOCKED push in $PROJECT_DIR" >> "$LOG"
     echo "[$(date)] $GL_OUT" >> "$LOG"
     echo "gitleaks detected secrets — push blocked. See $LOG for details."
     git reset HEAD --quiet || true
     exit 0
+  elif [ "$GL_EXIT" -ne 0 ]; then
+    # rc>=2: the scanner ITSELF failed (config/flag/runtime) — do NOT treat as pass.
+    # Fail closed: skip commit+push so unscanned changes are never pushed.
+    echo "[$(date)] GITLEAKS SCAN FAILED (rc=$GL_EXIT) in $PROJECT_DIR — commit/push skipped" >> "$LOG"
+    echo "[$(date)] $GL_OUT" >> "$LOG"
+    echo "gitleaks scan failed (rc=$GL_EXIT) — commit/push skipped (changes left staged). See $LOG."
+    exit 0
   fi
-  echo "[$(date)] GITLEAKS PASS in $PROJECT_DIR (rc=$GL_EXIT)" >> "$LOG"
+  echo "[$(date)] GITLEAKS PASS in $PROJECT_DIR" >> "$LOG"
 else
   echo "[$(date)] gitleaks not installed, skipping scan in $PROJECT_DIR" >> "$LOG"
 fi

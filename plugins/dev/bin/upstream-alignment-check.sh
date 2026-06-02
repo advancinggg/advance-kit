@@ -24,7 +24,11 @@ umask 077
 SCRATCH=$(mktemp -d -t ua-check.XXXXXX) \
   || { echo "FAIL: mktemp failed"; exit 1; }
 umask "$UMASK_ORIG"
-trap 'rm -rf "$SCRATCH"' EXIT INT TERM
+# Guarantee the scratch path is metachar-free so the unquoted "$SCRATCH/..." uses
+# below stay safe even if $TMPDIR contains spaces or glob characters.
+case "$SCRATCH" in *[!A-Za-z0-9_./-]*) echo "FAIL: unsafe scratch path: $SCRATCH"; exit 1 ;; esac
+trap 'rm -rf "$SCRATCH"' EXIT   # cleanup on any exit
+trap 'exit 130' INT TERM        # signal → exit (fires the EXIT trap); never continue with a deleted scratch
 
 skipped_count=0
 

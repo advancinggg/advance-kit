@@ -365,7 +365,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.5.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.5.1 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -2902,10 +2902,12 @@ worktree divergence defeats the single-flight purpose).
      upstream `@{u}` is set AND branch has commits ahead of upstream.
    - **Dirty tree → `git add -A` → nothing staged** (`stop.sh:58-62`)
      → exit without push.
-   - **Dirty tree → staged → gitleaks detects secrets**
-     (`stop.sh:70-79`) → reset HEAD + exit without push.
+   - **Dirty tree → staged → gitleaks** (`stop.sh:70-91`): on
+     **detected secrets** (rc=1) reset HEAD + exit without push; on
+     **scanner error** (rc≥2) fail-closed — skip commit+push, leave
+     changes staged, log "scan failed". Only a clean pass (rc=0) proceeds.
    - **Dirty tree → staged → gitleaks pass → commit succeeds** →
-     `git push origin "$BRANCH"` (`stop.sh:160-170`); fails-soft
+     `git push origin "$BRANCH"` (`stop.sh:170-184`); fails-soft
      (logs only) if origin rejects.
    For worktree mode: task branches are NOT safe to treat as "local
    by default" in repos with origin configured. The Stop hook WILL

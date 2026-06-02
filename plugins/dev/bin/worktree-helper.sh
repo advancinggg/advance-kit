@@ -170,7 +170,7 @@ new_cmd() {
   # constrained by the slug regex, but we guard them defensively for symmetry.
   for v in "$base" "$REPO_ROOT" "$target_dir" "$slug" "$branch_name"; do
     case "$v" in
-      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'"'*|*'\'*|*'<'*|*'>'*|*$'\n'*)
         echo "worktree-helper new: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
         echo "  Inspect .dev-state/state.json or repo path for tampering; clean up manually." >&2
         exit 1 ;;
@@ -336,7 +336,7 @@ finish_cmd() {
   # (Codex adversarial round-1 C1).
   for v in "$base_branch" "$task_branch" "$main_wt" "$REPO_ROOT"; do
     case "$v" in
-      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'"'*|*'\'*|*'<'*|*'>'*|*$'\n'*)
         echo "worktree-helper finish: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
         echo "  Inspect .dev-state/state.json or repo path for tampering; clean up manually." >&2
         exit 1 ;;
@@ -426,7 +426,7 @@ remove_cmd() {
   # Defensive shell-metachar guard (same rationale as finish_cmd above)
   for v in "$path" "$branch_name"; do
     case "$v" in
-      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*$'\n'*)
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'"'*|*'\'*|*'<'*|*'>'*|*$'\n'*)
         echo "worktree-helper remove: refusing to emit suggestion — value contains shell metacharacter: $v" >&2
         exit 1 ;;
     esac
