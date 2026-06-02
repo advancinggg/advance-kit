@@ -131,11 +131,17 @@ if [ -n "$COMMAND" ]; then
 
   # ── read-only dev version banner: side-effect-free by contract, allowed in ALL phases ──
   # (K1 / VERSIONING "version-drift visibility" checklist). The banner runs on /dev resume/status
-  # into a locked phase, where bash/python3 are otherwise denied. Tight match on the RAW command
-  # (before quote-stripping): a bare `bash <…>/bin/dev-version-banner.sh <label> <version>` with an
-  # optional `2>/dev/null`. The path char class forbids ( ) ` ; & | < > so no second command can
-  # be smuggled through the allowance; the global dangerous-command guards above still applied.
-  if printf '%s' "$COMMAND" | grep -qE '^[[:space:]]*bash[[:space:]]+"?[^"`();&|<>]*/bin/dev-version-banner\.sh"?[[:space:]]+[a-z]+[[:space:]]+v?[0-9][0-9.]*([[:space:]]+2>/dev/null)?[[:space:]]*$'; then
+  # into a locked phase, where bash/python3 are otherwise denied. The allowance is DELIBERATELY
+  # narrow: a SINGLE-LINE, bare `bash <path>/bin/dev-version-banner.sh <spec|prd|dev> <N.N.N>` with
+  # an optional `2>/dev/null` — nothing else. The path token may be double-quoted but must be ONE
+  # shell word: the char set excludes space ' " ( ) ` ; & | < > and the first char cannot be `-`,
+  # so a `bash -c '<payload>' .../dev-version-banner.sh` injection (where bash would run the -c
+  # payload, not the banner) cannot pass, and no second command can ride along. Multi-line commands
+  # are rejected outright (grep is line-oriented — a benign first line must not bless a malicious
+  # second line). The label is pinned to the 3 real skills and the version to strict N.N.N. The
+  # global dangerous-command guards above already ran.
+  if [ "$(printf '%s' "$COMMAND" | tr -d '\n\r' | wc -c)" = "$(printf '%s' "$COMMAND" | wc -c)" ] \
+     && printf '%s' "$COMMAND" | grep -qE '^[[:space:]]*bash[[:space:]]+"?[A-Za-z0-9_./{}:$~][A-Za-z0-9_./{}:$~-]*/bin/dev-version-banner\.sh"?[[:space:]]+(spec|prd|dev)[[:space:]]+v?[0-9]+\.[0-9]+\.[0-9]+([[:space:]]+2>/dev/null)?[[:space:]]*$'; then
     echo '{}'; exit 0
   fi
 

@@ -27,8 +27,14 @@ if command -v python3 >/dev/null 2>&1 && python3 - "$skill" "$bound" "$pj" 2>/de
 import json, sys
 skill, bound, pj = sys.argv[1], sys.argv[2], sys.argv[3]
 def tup(v):
+    # Strict semver: exactly 3 numeric parts (N.N.N). Anything else (1/2/4 parts,
+    # non-numeric, pre-release tags, empty, None) → None → treated as "unknown",
+    # so malformed input degrades safely and never fabricates drift.
     try:
-        return tuple(int(x) for x in str(v).strip().split("."))
+        p = str(v).strip().split(".")
+        if len(p) != 3:
+            return None
+        return tuple(int(x) for x in p)
     except Exception:
         return None
 try:
