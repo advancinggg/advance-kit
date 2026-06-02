@@ -95,12 +95,28 @@ When DOCS is re-entered via any DOCS-returning rollback branch — (b) interface
 MUST contain real changes; otherwise the round counts as a "no-op attempted fix" and the
 evaluator automatically FAILs (enforced by claude-auditor.md's Anti-Escape Rule).
 
-**SUMMARY strict whitelist**: the §6.2 output template is a closed set — no extra fields may be
-added. If you want to "note a leftover problem", the only legitimate path is `deferred_findings`
-(and every entry must carry a `user_accepted_at` timestamp).
+**SUMMARY strict whitelist**: the §6.2 output template is a closed set — no extra free-form
+fields may be added. The closed set INCLUDES the structured, mechanically-sourced "Scope &
+unverified" field (3.4.0/K6 — derived ONLY from `waived_scope` / `deferred_findings` /
+`system_acceptance_deferred` / degraded-mode flags / `Partial` REQs, never free-form agent
+prose). To "note a leftover problem" the only legitimate paths are `deferred_findings` (each
+with `user_accepted_at`) and that structured field.
+
+**Honest disclosure ≠ softening (the discriminator, 3.4.0/K6)**: stating what THIS run did NOT
+cover is REQUIRED, not forbidden — the trap is conflating it with routing around a finding.
+- **Softening a live finding (FORBIDDEN)**: free-form prose treating this round's evaluator
+  Critical/Warning as "known gap / deferred / TODO / out-of-scope / v2" INSTEAD of fix /
+  roll-back / explicit accept-at-limit — with NO sanctioned record.
+- **Boundary disclosure (REQUIRED)**: a STRUCTURED, mechanically-sourced statement that claims
+  NOTHING is resolved — sourced only from sanctioned state (`waived_scope`, `deferred_findings` +
+  `system_acceptance_deferred` each carrying `user_accepted_at`, degraded modes, `Partial` REQs +
+  the mechanical reason). Its home is the SUMMARY "Scope & unverified" field.
+The test: a sanctioned record (`user_accepted_at` / a state.json field) or a factual tool/scope
+limit → disclosure (required); free-form prose routing around a live finding with no record →
+softening (forbidden).
 
 LLM agents have a natural tendency to soften hard constraints with free-form text — this rule
-explicitly forbids that escape hatch.
+explicitly forbids that escape hatch, while REQUIRING the structured boundary disclosure above.
 
 ---
 
@@ -346,7 +362,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.3.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.4.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -2412,6 +2428,9 @@ Task / Modified files / Updated docs / Acceptance criteria / Independent evaluat
 results / Requirement Traceability / Definition of Done / Cross-Module Regression /
 System Acceptance (2.10.0+; the two-axis system readiness lines) /
 Coverage boundary reminder / Progress change / Overall PRD progress /
+This run's scope & unverified (3.4.0+/K6; structured, mechanically-sourced from `waived_scope` /
+`deferred_findings` / `system_acceptance_deferred` / degraded-mode flags / `Partial` REQs —
+never free-form) /
 Deferred Findings (only rendered when deferred_findings is non-empty; each entry comes
 from state.json).
 
@@ -2495,6 +2514,13 @@ Progress change: {module name} {old_progress}% → {new_progress}%
 Overall PRD progress (two axes — never merged into one number):
   Module AC coverage:   {module_pct}%
   System E2E readiness: {system_pct}% | — (no system journeys defined)
+
+This run's scope & unverified (mechanically sourced from state.json — NEVER free-form prose;
+this is the sanctioned home for boundary disclosure, per the §0 Iron Rule discriminator):
+  Waived scope:   {waived_scope descriptions | none}
+  Deferred:       {deferred_findings + system_acceptance_deferred entries, each with reason + user_accepted_at | none}
+  Degraded modes: {single-evaluator (codex absent) / lightweight (sdd_mode:false) / heuristic tier | none}
+  Left Partial:   {REQ-IDs still Partial + the mechanical reason (e.g. Witness:e2e SYS-AC deferred / some AC untested) | none}
 ```
 
 ### 6.3 SUMMARY bookkeeping commit

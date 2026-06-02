@@ -73,8 +73,20 @@ boundaries of already-implemented functionality (for example, "v1 supports
 PostgreSQL only; the MySQL adapter ships in v2"). It **must not** be used to
 route around the current round's evaluator findings.
 
+**Honest disclosure ≠ softening (the discriminator, 3.4.0/K6)**: stating what THIS run did NOT
+cover is REQUIRED, not forbidden.
+- **Softening a live finding (FORBIDDEN)**: free-form prose treating this round's evaluator
+  Critical/Warning as a "known gap / deferred / TODO / out-of-scope" INSTEAD of fixing it,
+  rolling back to update the PRD, or `/spec abort` — with NO sanctioned record.
+- **Boundary disclosure (REQUIRED)**: a STRUCTURED statement that claims NOTHING is resolved —
+  the evaluator **tier** actually run (dual / single / heuristic), what is therefore NOT
+  evaluator-verified (e.g. UT.10 heuristic-tier journeys, accept-at-limit architecture), and the
+  follow-up path. Its home is the Final Report / UT.9 "Scope & unverified" field.
+The test: a factual tier/scope/tool-limit statement → disclosure (required); free-form prose
+routing around a live finding → softening (forbidden).
+
 LLM agents have a natural tendency to soften hard constraints with free-form text —
-this rule explicitly forbids that escape hatch.
+this rule explicitly forbids that escape hatch, while REQUIRING the structured disclosure above.
 
 **Design note: /spec vs /dev enforcement model**
 
@@ -90,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.3.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.4.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -690,25 +702,40 @@ same section, not overwritten. Resolve each existing section's true canonical id
 
 1. Build `canonical_title → id` from the UT.2 canonical list (titles are unique within a doc class).
 2. For each existing doc section parsed as `### N.M  <Title>` (or `## N.`):
-   - **`<Title>` matches a canonical id M** → the section's true id is **M**:
+   - **`<Title>` matches exactly one canonical id M** → the section's true id is **M**:
      - `N == M` → ordinary **Kept**.
      - `N != M` → **Kept (renumber-preserve)** — the section moved N→M (an inserted section
        shifted it). Preserve **body AND title verbatim**; change ONLY the number to M; never
-       retitle (that retitle is exactly the corruption this fixes). Cascade (below).
-   - **`<Title>` not in the map** → fall back to number: `N` is a canonical id → genuine
+       retitle (that retitle is exactly the corruption this fixes). Cascade per step 3.
+   - **`<Title>` matches NO canonical id** → fall back to number: `N` is a canonical id → genuine
      **retitle** (the canonical title for `N` was reworded) → ordinary Kept (rewrite heading to
-     current title); `N` not canonical → **Orphan**.
-3. **Renumber cascade (boundary-anchored)** when a section is renumber-preserved `N.M → N'.M'`:
-   rewrite its own depth-4 children `#### N.M.K` → `#### N'.M'.K` (inside the preserved body), and
-   rewrite inline cross-references `§N.M` → `§N'.M'` **doc-wide** using word-boundary patterns
-   (`§N\.M\b`, so `§1.2` never matches `§1.20`); only the exact renumbered id is rewritten. Every
-   renumber + cascade edit is recorded in the UT.9 summary.
-4. **Ambiguity guard (no silent reorder — same discipline as UT.3.1)**: if two doc sections
-   resolve to the same canonical id, a title matches zero or multiple ids, or the renumber map has
-   a collision/cycle → do NOT auto-apply. Per-doc AskUserQuestion: "Section renumbering in
-   `{path}` is ambiguous ({observed → proposed map}). (1) Apply the proposed renumber map (2) Keep
-   numbers as-is + annotate (3) Skip this doc." A clean, unambiguous map defaults to (1); an
-   ambiguous one has NO default.
+     current title); `N` not canonical → **Orphan** (UT.3.3). This zero-title-match case is the
+     fallback — it is NOT routed to the step-4 guard.
+   - **Two sections share the same `<Title>`** → ordinary **Duplicate** → UT.3.3 (unchanged); the
+     step-4 guard handles only renumber *collisions*, never ordinary duplicates.
+3. **Build the full renumber map first, then apply it ATOMICALLY.** Collect every
+   renumber-preserve `N.M → N'.M'` into ONE map and apply ALL substitutions in a SINGLE pass
+   computed from the ORIGINAL text (or via unique sentinels) — NEVER sequentially, else a chain
+   like `§1.2→§1.3` + `§1.3→§1.4` would compound (`§1.2` refs wrongly become `§1.4`). Per
+   renumbered id, two substitutions:
+   - the section's own depth-4 child headings: match ONLY real heading lines
+     `^#### N\.M\.K\b` (anchored to the exact `N.M` id segment + a numeric child `.K`), so
+     `#### 1.2.3` is rewritten but `#### 1.20.x` and a prose `1.2.3` are NOT → `#### N'.M'.K`;
+   - inline cross-references `§N.M` → `§N'.M'`, word-boundary anchored (`§N\.M\b`, so `§1.2` never
+     matches `§1.20`) and **only OUTSIDE code fences** (reuse the UT.5 rule-1 fence tracker — never
+     rewrite a literal `§1.2` inside a fenced example).
+   Record every renumber + cascade edit in the UT.9 summary.
+4. **Ambiguity guard (no silent reorder — same discipline as UT.3.1)**: do NOT auto-apply when the
+   renumber map is ambiguous — specifically: a `<Title>` matches MULTIPLE canonical ids; a renumber
+   **target** id is already claimed by another Kept/renumbered section (collision); or the map has a
+   cycle (A→B and B→A / swap). (Ordinary Duplicate and zero-title-match are NOT ambiguity — they
+   follow step 2.) On ambiguity, per-doc AskUserQuestion: "Section renumbering in `{path}` is
+   ambiguous ({observed → proposed map}). (1) Apply the proposed renumber map (2) Keep numbers
+   as-is + annotate (3) Skip this doc." A clean, unambiguous map defaults to (1); ambiguous → NO default.
+5. **§3.4 interaction**: the UT.8 §3.4 special-cases (passed-AC merge-preserve + placeholder-strip)
+   follow the *Acceptance Criteria Verification* section by its **resolved canonical id**
+   (post-renumber), NOT the raw observed number — a renumbered §3.4 keeps its `Active=Y,
+   Status=passed` rows because renumber-preserve copies the body verbatim.
 
 Then classify, using the **resolved** ids from UT.3.0 (`for every id in the canonical list and in
 the existing doc`):
@@ -1213,6 +1240,12 @@ System-acceptance migration (UT.10):
      ARCHITECTURE.md / MODULE docs — run a full `/spec` for complete spec re-convergence
      (PRD coverage, MECE, interface consistency). If the tier is "heuristic fallback", the
      journey set may be incomplete: rerun with Codex/auditor available, or run a full `/spec`.
+
+This run's scope & unverified (factual — NEVER softening a finding):
+  Not regenerated:        ARCHITECTURE.md / MODULE bodies (upgrade-template upgrades structure only).
+  Not evaluator-verified: heuristic-tier journeys + any {TODO} success conditions (run a full
+                          `/spec` for the rigorous Phase 1.3 system-coverage gate).
+  User-resolved:          {renumber-ambiguity / Orphan / legacy-body prompts resolved above | none}
 
 Next step: commit the changes (`git add docs/ && git commit`), then verify
 downstream /dev workflows resume cleanly.
@@ -3152,6 +3185,11 @@ Evaluator Results:
     MODULE-002-{name}: {converged in {N} rounds | accepted at round {N}}
     ...
 
+Scope & unverified (factual boundaries — NEVER softening a finding):
+  Evaluator tier:         {dual-evaluator (Claude+Codex) | single-evaluator (Codex unavailable)}
+  Accepted-at-limit:      {sections accept-at-limit'd at round N — NOT converged: <list> | none}
+  Not evaluator-verified: {the accepted-at-limit sections above | none}
+
 Next Steps:
   1. Review each module document, confirm interface definitions and acceptance criteria
   2. Begin implementation following IMPLEMENTATION_ORDER.md sequence
@@ -3160,7 +3198,8 @@ Next Steps:
 
 **Template field whitelist** (any field not in this list is forbidden in output):
 Document List / Module Decomposition / Implementation Phases / Critical Path /
-Evaluator Results / Next Steps
+Evaluator Results / Scope & unverified (3.4.0+/K6; factual tier + accept-at-limit boundaries,
+never free-form softening) / Next Steps
 
 **Forbidden field examples** (their presence counts as a process violation):
 ~~Known Gaps~~ / ~~TODO~~ / ~~Deferred~~ / ~~Known Issues~~ /

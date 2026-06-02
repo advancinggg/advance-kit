@@ -123,7 +123,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.3.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.4.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -1178,7 +1178,10 @@ Convergence:
   Final substantive count: 0
   Evaluator mode: {dual | single-evaluator}
 
-Deferred intents: {count} (if > 0, see PRD §8 "Deferred intents")
+This PRD's scope & unverified (factual — from structured PRD sections, NEVER softening a finding):
+  Explicitly out of scope: {count — see §7 | none}
+  Deferred intents:        {count — see §8, each carrying user_accepted_at | none}
+  Open assumptions/risks:  {count — see §8 | none}
 
 Next steps:
   /spec docs/PRD.md      — generate ARCHITECTURE + MODULE specs (auto-assigns REQ-IDs)

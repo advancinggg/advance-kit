@@ -128,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.3.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.3.0 `/spec upgrade-template` 在模版中途插小节时改为 renumber-preserve——UT.3.0 按标题（而非编号）匹配小节，插入新编号小节不再 retitle-corrupt 存量文档（错位小节保留正文+标题、只改编号；级联修子标题 + §引用；有歧义则提问）。**早期：** 3.0.0 评估器驱动 journey 发现 + Phase 1.3 涌现 journey 发现、3.1.0 原子、可独立判定的 SYS-AC 准则（§1.1）、3.2.0 系统验收 harness + 可执行性（声明/运行整机 e2e + 显式 deferral）。 |
+| `dev` | `3.4.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.4.0 Iron Rule 现明确区分「软化本轮评审发现」（禁）与「声明工具/范围边界」（必须），且每个完成总结（/dev SUMMARY、/spec Final Report + UT.9、/prd HANDOFF）新增结构化、机械取源的「Scope & unverified」字段。**早期：** 3.1.0 原子、可独立判定的 SYS-AC 准则（§1.1）、3.2.0 系统验收 harness + 可执行性（声明/运行整机 e2e + 显式 deferral）、3.3.0 `/spec upgrade-template` 中途插小节 renumber-preserve。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

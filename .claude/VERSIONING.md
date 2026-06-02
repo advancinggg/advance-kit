@@ -585,3 +585,25 @@ surfaces, the following six rules MUST hold:
 
 **All prior checklist freezes (2.4.0, 2.5.0, 2.7.0, 2.8.0, 2.10.0/2.11.0) REMAIN in force.** The
 2.12.0 rules above are additive and do not supersede any earlier freeze.
+
+## Release checklist (for Iron-Rule honest disclosure — 3.4.0+)
+
+The 3.4.0 minor clarifies the Iron Rule (no-escape-hatch) across /dev + /spec (and aligns /prd,
+already structured) and adds a **"Scope & unverified"** field to every completion summary. It is
+**additive**: the FORBIDDEN set is unchanged; 3.4.0 only names the distinction + adds a structured
+disclosure field. Two rules MUST hold:
+
+1. **Discriminator FROZEN**: the rule distinguishes **softening a live evaluator finding**
+   (FORBIDDEN — free-form "known gap / deferred / TODO / out-of-scope / v2" routing around this
+   round's Critical/Warning with no sanctioned record) from **boundary disclosure** (REQUIRED — a
+   factual tool/scope/run limit, or a sanctioned record carrying `user_accepted_at`). Collapsing
+   the two — re-forbidding honest disclosure, OR letting free-form softening pass as "disclosure"
+   — is a regression.
+2. **"Scope & unverified" field is MECHANICALLY-SOURCED**: in /dev SUMMARY (§6.2 whitelist,
+   expanded by this ONE field), /spec Final Report + UT.9, and /prd HANDOFF, it derives ONLY from
+   sanctioned state (`waived_scope`, `deferred_findings` + `system_acceptance_deferred` with
+   `user_accepted_at`, degraded-mode flags, `Partial` REQs + mechanical reasons, evaluator tier).
+   Making it free-form agent prose is a MAJOR regression — it becomes the escape hatch the rule
+   forbids. The /dev §6.2 field whitelist stays a closed set (this is its only 3.4.0 addition).
+
+**All prior freezes (2.4.0–3.3.0) REMAIN in force.** The 3.4.0 rules above are additive.
