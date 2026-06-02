@@ -443,9 +443,11 @@ When editing any of these surfaces, the following ten rules MUST hold:
    the `Verified` cap, is a MAJOR bump (it would let system-behaviour REQs read Verified
    while the product never runs).
 
-7. **state.json `version: 5` schema**: additive field `in_scope_sys_ac_ids: []` with v3/v4
-   read-defaulting to `[]`. Removing the field or changing the defaulting semantics is MAJOR.
-   The supported window is now v3/v4/v5 (`version > 5` → HARD FAIL).
+7. **state.json `version: 6` schema**: additive fields `in_scope_sys_ac_ids: []` (2.10.0),
+   `sysac_harness_cmd: null` + `system_acceptance_deferred: []` (3.2.0/K4), all read-defaulting
+   on older reads (v3/v4 → `in_scope_sys_ac_ids: []`; v5 → `sysac_harness_cmd: null`,
+   `system_acceptance_deferred: []`). Removing a field or changing defaulting semantics is MAJOR.
+   The supported window is now v3/v4/v5/v6 (`version > 6` → HARD FAIL).
 
 8. **Upstream seam**: PRD §3 flows may carry a `System acceptance journey: Yes/No` marker
    (product-level, architecture-free); `/prd` Phase 4 Dimension 1 raises a Warning when a
@@ -504,9 +506,22 @@ When editing any of these surfaces, the following ten rules MUST hold:
     requires every atomic criterion (incl. NFR/SLO + error-path) to pass on a real run, which
     strengthens — never weakens — the system-acceptance bar.
 
+13. **System-acceptance harness + executability (3.2.0, K4)**: /dev gains `sysac_harness_cmd`
+    (state.json v6) — a project-declared / auto-detected command that brings up the REAL wired
+    system (real process/binary over the Module Chain) and runs each in-scope SYS-AC's §1.1
+    atomic Criterion. PLAN requires it (declare / defer / abort) when `in_scope_sys_ac_ids` is
+    non-empty; TEST §5.1 runs it; the witness-floor (no mock) is unchanged. The **only**
+    sanctioned non-pass that does not hard-fail the gate is an explicit, user-accepted
+    `system_acceptance_deferred` entry (`{sys_ac_id, reason, user_accepted_at}`): it NEVER marks
+    the SYS-AC `passed` (so the linked REQ stays `Partial` and system-readiness stays <100% with
+    a recorded reason — the gap is surfaced, not hidden) and an agent may NOT self-defer. FROZEN:
+    a deferral writing `passed`, an agent self-deferring without `user_accepted_at`, or a
+    deferral hiding/faking readiness would each be a MAJOR regression of the system-acceptance
+    bar. The two-axis SUMMARY/board (never-merged) is unchanged.
+
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
-2.10.0 / 2.11.0 / 3.1.0 rules above are additive and do not supersede any earlier freeze.
+2.10.0 / 2.11.0 / 3.1.0 / 3.2.0 rules above are additive and do not supersede any earlier freeze.
 
 ## Release checklist (for version-drift visibility — 2.12.0+)
 

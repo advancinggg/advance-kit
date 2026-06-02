@@ -90,7 +90,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.1.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.2.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -1119,6 +1119,13 @@ UT.10.A policy prompt (step 5).
    Date) — NEVER clobber a prior migration's or /dev's `passed` progress. Only ADD
    journeys / SYS-AC for e2e REQs not already covered; set Active=N on journeys whose REQ
    is no longer e2e.
+   **§1.1 backfill (3.1.0+)**: a SYS-AC preserved from a pre-3.1.0 (bundled) file has no §1.1
+   atomic-criteria definition. Backfill one — best-effort: the journey's Observable Success
+   Condition becomes that preserved row's `functional` Criterion (keeping its preserved
+   Active+Status). Then seed any ADDITIONAL atomic criteria the discovery identifies (NFR/SLO +
+   error-path) as NEW `SYS-AC-{next}` rows (`Active=Y, Status=untested`) — so existing projects
+   migrate to the atomic model without losing preserved progress. (Tier-3 heuristic: backfill the
+   `functional` Criterion only + a `{TODO: add NFR/SLO + error-path}` note.)
 3. **Zero e2e REQs** → write the skeleton (header + empty `## 1. System Acceptance
    Journeys` table + note "no system-behaviour requirements yet — all REQs unit/integration
    witness" + empty `## 2. System AC Ledger`). Keeps the axis visible and fully inert
@@ -1171,7 +1178,7 @@ Legacy-body flags: Y (user-resolved via UT.6.1).
 System-acceptance migration (UT.10):
   Journey discovery tier: {dual-evaluator | single-evaluator (Codex absent) | heuristic fallback (no evaluator)} — {N} round(s); {M} under-classified REQ(s) + {K} emergent journey(s) found
   Witness column: {added — N REQs defaulted unit, M marked e2e | already present (skipped) | n/a (no registry)}
-  docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with K SYS-J / K SYS-AC seeded | merge-preserved (K passed SYS-AC kept) | n/a}
+  docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with {J} SYS-J / {A} atomic SYS-AC seeded | merge-preserved ({P} passed SYS-AC kept, {B} §1.1 criteria backfilled) | n/a}
   NOTE: UT.10 ran evaluator-grade JOURNEY discovery (tier above) but did NOT regenerate
      ARCHITECTURE.md / MODULE docs — run a full `/spec` for complete spec re-convergence
      (PRD coverage, MECE, interface consistency). If the tier is "heuristic fallback", the
@@ -1374,7 +1381,7 @@ Phase ADR-NEW exits here — it does not create `progress.json` and does not ent
 
 ---
 
-## Dual-Evaluator Sync Protocol (Fix #31 v3.3 — applies to all evaluator loops: Phase 1.3 Architecture, Phase 2.4 Module)
+## Dual-Evaluator Sync Protocol (Fix #31 — applies to all evaluator loops: Phase 1.3 Architecture, Phase 2.4 Module)
 
 The following 5 hard constraints are **shared** by every evaluator loop in /spec. Violating any one is treated as a process violation and the main agent must stop and report.
 
@@ -3057,10 +3064,16 @@ count(SYS-AC where Active=Y) × 100. Denominator 0 → display `—` (no journey
 **Generation rules (merge-preserve)** — identical discipline to MODULE §3.4:
 - First-time generation: all SYS-J + SYS-AC rows Active=Y, Status=untested.
 - /spec rerun (merge by ID):
-  - SYS-J / SYS-AC ID with UNCHANGED Observable Success Condition AND same REQ Sources:
-    PRESERVE Active + Status (do not reset — protects /dev system-verification progress).
-  - Changed success condition OR REQ Sources → old row Active=N (deprecated, history kept);
-    new `SYS-AC-{next}` Active=Y, Status=untested.
+  - **SYS-J** with UNCHANGED Observable Success Condition AND same REQ Sources: PRESERVE Active.
+  - **SYS-AC** (atomic) whose §1.1 **Criterion** is UNCHANGED — compare the atomic Criterion text
+    + Type + Witness + journey linkage, **NOT** the journey-level success condition: PRESERVE
+    Active + Status (do not reset — protects /dev system-verification progress).
+  - Changed SYS-AC **Criterion** (or its journey's REQ Sources) → old SYS-AC row Active=N
+    (deprecated, history kept); new `SYS-AC-{next}` Active=Y, Status=untested. A changed atomic
+    criterion MUST NOT inherit the old row's `passed` — the prior test proved a *different*
+    criterion.
+  - Changed journey success condition → re-derive its atomic criteria; unchanged criteria keep
+    status by the SYS-AC rule above; changed/new ones are untested.
   - New journeys / ACs: Active=Y, Status=untested.
   - Removed (no longer derivable from any e2e REQ or flagged flow): Active=N.
 

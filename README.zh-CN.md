@@ -128,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.1.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.1.0 系统验收 journey 拆解为原子、可独立判定的 SYS-AC 准则（每条 journey ≥1 功能 + NFR/SLO + 错误路径，定义在 `docs/SYSTEM-ACCEPTANCE.md` §1.1；§2 仅状态账本 + 两位 ID 不变）。**早期：** 2.11.0 `/spec upgrade-template`（存量项目免全量接入）、2.12.0 模版版本漂移可见性（banner + 会话↔已装漂移 + 产物戳）、3.0.0 评估器驱动 journey 发现 + Phase 1.3 loop-until-dry 涌现 journey 发现。 |
+| `dev` | `3.2.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.2.0 /dev 新增系统验收 harness 契约——检测/声明如何拉起并运行真实整机来跑 SYS-AC 的 e2e 测试（witness-floor：禁 mock），并加显式用户接受的 deferral，使整机在本环境跑不起来时 `e2e` REQ 不再被静默卡死在 `Partial`。**早期：** 2.12.0 模版版本漂移可见性（banner + 会话↔已装漂移 + 产物戳）、3.0.0 评估器驱动 journey 发现 + Phase 1.3 涌现 journey 发现、3.1.0 原子、可独立判定的 SYS-AC 准则（§1.1）。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

@@ -211,7 +211,7 @@ evaluators, using a single objective metric (`val_bpb`) as the verdict.
     └─────────────────────────────────────────────────────────┘
 ```
 
-**Execution rules — Dual-Evaluator Sync Protocol (fix #31, v3.3; applies to every evaluator
+**Execution rules — Dual-Evaluator Sync Protocol (fix #31; applies to every evaluator
 loop: Plan / Audit / Test / Adversarial):**
 
 The five hard constraints below must be obeyed explicitly by every round's STEP 1 / STEP 2.
@@ -346,7 +346,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.1.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.2.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -391,19 +391,23 @@ Last updated:    {updated_at}
 
 Read the existing `state.json` and continue executing the logic for its current phase.
 
-**v3→v5 schema defaulting (2.8.0+ / 2.10.0+)**: Read `state.json.version` and
+**v3→v6 schema defaulting (2.8.0+ / 2.10.0+ / 3.2.0+)**: Read `state.json.version` and
 branch on its integer value:
-- `version == 5` (current): all fields present; no defaulting needed.
+- `version == 6` (current): all fields present; no defaulting needed.
+- `version == 5` (2.10.0–3.1.x): treat missing `sysac_harness_cmd` as `null` and
+  `system_acceptance_deferred` as `[]` (no harness declared, nothing deferred — pre-K4
+  behaviour). The next state.json write bumps `version: 6` in place.
 - `version == 4` (2.8.0–2.9.x): treat missing `in_scope_sys_ac_ids` as `[]`
-  (no system ACs in scope — pre-2.10.0 behaviour). The next state.json write
-  bumps `version: 5` in place. No hard-fail on v4 read; backward-compatible.
+  (no system ACs in scope — pre-2.10.0 behaviour), plus the v5 defaults above. The next
+  state.json write bumps `version: 6` in place. No hard-fail on v4 read; backward-compatible.
 - `version == 3` (pre-2.8.0): treat missing fields as in-memory
   defaults (`worktree_mode = false`, `main_worktree_path = null`,
-  `in_scope_sys_ac_ids = []`). The next state.json write (heartbeat or
-  transition) bumps `version: 5` in place. No hard-fail on v3 read.
-- `version < 3` OR `version > 5` OR field missing/non-integer: HARD
+  `in_scope_sys_ac_ids = []`, `sysac_harness_cmd = null`,
+  `system_acceptance_deferred = []`). The next state.json write (heartbeat or
+  transition) bumps `version: 6` in place. No hard-fail on v3 read.
+- `version < 3` OR `version > 6` OR field missing/non-integer: HARD
   FAIL via AskUserQuestion: "state.json reports version `{N}` which
-  is outside the supported v3/v4/v5 window. This may indicate a
+  is outside the supported v3/v4/v5/v6 window. This may indicate a
   hand-edit, a downgrade attempt, or a future-incompatible state.
   Options: (a) abort and start fresh (`/dev abort` then re-invoke),
   (b) inspect state.json manually and decide." Do NOT silently
@@ -474,7 +478,14 @@ which codex 2>/dev/null && echo "CODEX: AVAILABLE" || echo "CODEX: NOT_FOUND"
 [ -f "$REPO_ROOT/Makefile" ] && echo "TEST_DETECT: Makefile"
 [ -f "$REPO_ROOT/pyproject.toml" ] && echo "TEST_DETECT: pyproject.toml"
 
-# Detect the contract registry (v3.2 cross-module regression)
+# Detect the system-acceptance harness (K4, 3.2.0+): how to bring up + run the REAL wired
+# system for SYS-AC e2e tests. A CLAUDE.md declaration wins; else auto-detect conventions.
+for cf in "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.md"; do [ -f "$cf" ] && grep -iqE '^[[:space:]]*System-acceptance harness:' "$cf" 2>/dev/null && { echo "SYSAC_HARNESS: declared (CLAUDE.md)"; break; }; done  # loop, not multi-file grep: BSD grep exits 2 on a missing file arg even when another matched (K8)
+{ [ -d "$REPO_ROOT/tests/system" ] || [ -d "$REPO_ROOT/tests/e2e" ] || [ -d "$REPO_ROOT/e2e" ]; } && echo "SYSAC_HARNESS: dir (tests/system|tests/e2e|e2e)"
+[ -f "$REPO_ROOT/package.json" ] && grep -qE '"(test:e2e|test:system|e2e|system-test)"[[:space:]]*:' "$REPO_ROOT/package.json" 2>/dev/null && echo "SYSAC_HARNESS: script (package.json)"
+[ -f "$REPO_ROOT/Makefile" ] && grep -qE '^(e2e|system-test|test-system|test-e2e):' "$REPO_ROOT/Makefile" 2>/dev/null && echo "SYSAC_HARNESS: target (Makefile)"
+
+# Detect the contract registry (cross-module regression)
 if [ -f "$REPO_ROOT/docs/ARCHITECTURE.md" ]; then
   awk '/^### 6\.1/{flag=1} flag && /\| *Contract ID *\|/{print "CONTRACT_REGISTRY: AVAILABLE"; exit}' \
     "$REPO_ROOT/docs/ARCHITECTURE.md" 2>/dev/null
@@ -510,6 +521,13 @@ fi
   Claude subagent review).
 - Test command priority: project `.claude/CLAUDE.md` declaration → auto-detection →
   AskUserQuestion.
+- **System-acceptance harness (K4, 3.2.0+)**: how /dev brings up + runs the REAL wired system
+  for SYS-AC e2e tests. Priority: `.claude/CLAUDE.md` `System-acceptance harness: <cmd>`
+  declaration → auto-detection (the `SYSAC_HARNESS:` signals above) → else left unset. Store as
+  `sysac_harness_cmd` (string|null) in state.json. A null harness is fine for pure-module tasks;
+  it matters only when a task's `in_scope_sys_ac_ids` is non-empty — Phase 1 PLAN then resolves
+  it (declare / defer / abort). The harness MUST launch the real process/binary over the full
+  Module Chain (witness-floor: never a mock/stub); TEST §5.1/§5.2 enforce that.
 - If `WORKTREE: YES`, set `worktree_mode: true` + `main_worktree_path: <MAIN_WORKTREE>`
   in state.json. Print banner: "Running in worktree mode. §2.1.2 / §0.6 escape
   hatches will emit worktree-bridging recovery prose (cd to main worktree, cd back,
@@ -537,7 +555,7 @@ grep -q '.dev-state' "$REPO_ROOT/.gitignore" 2>/dev/null || echo '.dev-state/' >
 Use the Write tool to create `$STATE_DIR/state.json`:
 ```json
 {
-  "version": 5,
+  "version": 6,
   "phase": "plan",
   "repo_root": "{REPO_ROOT}",
   "task_id": "dev-{repo_name}-{date}-{short_hash}",
@@ -556,6 +574,8 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "req_ac_map": {},
   "in_scope_ac_ids": [],
   "in_scope_sys_ac_ids": [],
+  "sysac_harness_cmd": null,
+  "system_acceptance_deferred": [],
   "waived_scope": [],
   "contract_registry_available": true/false,
   "modified_contracts": [],
@@ -580,10 +600,12 @@ treats missing fields as `worktree_mode: false`,
 `main_worktree_path: null`. Next heartbeat write bumps `version: 4`
 in-place. **v4→v5 forward-compat (2.10.0+)**: `/dev resume` reading a v4
 state.json treats missing `in_scope_sys_ac_ids` as `[]` (no system ACs in
-scope — behaves exactly as pre-2.10.0); next heartbeat write bumps
-`version: 5` in-place. INIT always writes the current version (no in-place
-legacy generation). No hard-fail on v3/v4 read; backward-compatible.
-`version < 3` or `version > 5` (or missing/non-integer) → HARD FAIL via
+scope — behaves exactly as pre-2.10.0); next heartbeat write bumps the version
+in-place. **v5→v6 forward-compat (3.2.0+)**: a v5 read treats missing
+`sysac_harness_cmd` as `null` and `system_acceptance_deferred` as `[]` (pre-K4
+behaviour), then writes `version: 6`. INIT always writes the current version (no
+in-place legacy generation). No hard-fail on v3/v4/v5 read; backward-compatible.
+`version < 3` or `version > 6` (or missing/non-integer) → HARD FAIL via
 AskUserQuestion (do not silently default unsupported versions). See
 `/dev resume` subcommand block for the explicit defaulting protocol
 and §8.3 rule 3 for the underlying trust-boundary rationale.
@@ -860,9 +882,27 @@ The plan must contain:
        `docs/REQUIREMENTS_REGISTRY.md` (compare mtimes via the §1.1 `python3
        os.path.getmtime` helper pattern), emit a non-blocking Warning: "SYSTEM-ACCEPTANCE.md
        may be stale vs the registry — rerun /spec to refresh system journeys."
+    6. **System-acceptance harness (K4, 3.2.0+)**: if `in_scope_sys_ac_ids` is non-empty, the
+       plan MUST name how those SYS-AC will be witnessed on the REAL wired system — the
+       `sysac_harness_cmd` (detected in §0.1, or declared here) that brings up the wired system
+       (real process/binary over the journey's Module Chain) and runs each in-scope SYS-AC's
+       §1.1 atomic Criterion — plus the e2e test(s) to write/extend in IMPLEMENT (one per
+       in-scope SYS-AC criterion). If no harness is known (`sysac_harness_cmd` null),
+       AskUserQuestion BEFORE leaving PLAN:
+       - (1) **Declare the harness command** → store in `sysac_harness_cmd`; proceed.
+       - (2) **Defer system acceptance** (this environment cannot run the wired system) → record
+         each in-scope SYS-AC in `system_acceptance_deferred`
+         (`{sys_ac_id, reason, user_accepted_at}`) via this explicit acceptance. The SYS-AC stays
+         `untested` (witness-floor: NEVER marked `passed`), so the linked `Witness:e2e` REQ stays
+         `Partial` and system-readiness stays <100% — the gap is SURFACED with a recorded reason,
+         NOT hidden. (Legitimate environment-boundary disclosure; the Iron Rule still forbids
+         softening any *evaluator finding* — see K6.)
+       - (3) **Abort** the task.
+       Null harness + non-empty `in_scope_sys_ac_ids` + nothing deferred = the run CANNOT pass
+       the §5.3 System Acceptance gate; one of (1)/(2)/(3) must be chosen.
 
   - **Cross-module Impact Analysis** (only when `contract_registry_available: true`;
-    v3.2 addition): append the following fields to the plan YAML block (alongside the
+    cross-module-impact addition): append the following fields to the plan YAML block (alongside the
     traceability fields):
     ```yaml
     # Cross-module impact (only if contract_registry_available: true)
@@ -1639,7 +1679,7 @@ repeat:
          (align req_ac_map / in_scope_ac_ids with the current §1.5),
          sync state.json, then re-run the Plan Evaluator (§1.3 evaluation loop);
          only continue into IMPLEMENT after it has converged.
-    c) The Diff Evaluator reports a Contract Drift Critical (v3.2 silent contract change)
+    c) The Diff Evaluator reports a Contract Drift Critical (silent contract change)
        → roll back to the **PLAN** phase (not DOCS).
        → Because the modified_contracts set was wrong, the entire
          affected_downstream_modules / regression_check_ac_ids must be recomputed.
@@ -1729,23 +1769,31 @@ repeat:
         System Acceptance Check (2.10.0+; skip entire block if state.json
         in_scope_sys_ac_ids is empty):
         SCOPE: only the EXACT SYS-AC IDs from state.json in_scope_sys_ac_ids.
-        Read docs/SYSTEM-ACCEPTANCE.md §1 (journey, Module Chain, Observable Success Condition,
-        Witness) and §2 (ledger). The passing witness for a SYS-AC MUST be a test that runs the
-        REAL wired system end-to-end — a real process/binary exercising the journey's full
-        Module Chain and asserting the Observable Success Condition. A unit/integration test, a
-        mock/stub standing in for any module in the chain, or a fixture-only run does NOT
-        satisfy a SYS-AC (the witness-floor invariant). For each in-scope SYS-AC determine
-        PASS / FAIL / UNTESTED / MOCK-ONLY:
-        - PASS: an e2e/system test exercised the real chain and the success condition held.
-        - FAIL: the e2e test ran but the success condition did not hold.
-        - UNTESTED: no e2e/system test exists for this SYS-AC.
+        Read docs/SYSTEM-ACCEPTANCE.md §1 (journey, Module Chain) + §1.1 (the atomic Criterion
+        per SYS-AC) + §2 (ledger). **Run the declared harness** (`state.json.sysac_harness_cmd`,
+        K4/3.2.0+) to bring up the REAL wired system and execute the e2e test(s); if it is null,
+        the in-scope SYS-AC are UNTESTED unless explicitly deferred (see DEFERRED below). The
+        passing witness for a SYS-AC MUST be a test that runs the REAL wired system end-to-end —
+        a real process/binary exercising the journey's full Module Chain and asserting that
+        SYS-AC's **§1.1 atomic Criterion**. A unit/integration test, a mock/stub standing in for
+        any module in the chain, or a fixture-only run does NOT satisfy a SYS-AC (the
+        witness-floor invariant). For each in-scope SYS-AC determine
+        PASS / FAIL / UNTESTED / MOCK-ONLY / DEFERRED:
+        - PASS: the harness ran the real chain and the SYS-AC's §1.1 Criterion held.
+        - FAIL: the e2e test ran but the Criterion did not hold.
+        - UNTESTED: no e2e/system test exists (or no harness declared) for this SYS-AC.
         - MOCK-ONLY: a test claims this SYS-AC but mocks/stubs part of the chain → counts as
           UNTESTED for gating, and is a [Critical] witness-floor violation.
+        - DEFERRED: the SYS-AC is listed in `state.json.system_acceptance_deferred` (an explicit,
+          user-accepted PLAN deferral — this environment cannot run the wired system). NOT a
+          witness-floor violation; still NOT-passed (stays `untested` in §2, REQ stays Partial).
+          Report the recorded reason.
         Output format:
         System Acceptance: {passed}/{in_scope_sys_total} ({sys_ac_pass_rate}%)
-        - SYS-AC-01: PASS (e2e test {name} ran the real MODULE-002→MODULE-005→MODULE-004 chain)
+        - SYS-AC-01: PASS (harness ran the real MODULE-002→MODULE-005→MODULE-004 chain; Criterion held)
         - SYS-AC-02: UNTESTED — no end-to-end witness; wiring not proven
         - SYS-AC-03: MOCK-ONLY — LLM call stubbed; does not satisfy witness floor [Critical]
+        - SYS-AC-04: DEFERRED — wired-system run unavailable here ({recorded reason}); REQ stays Partial
 
         Regression Check (skip entire block if regression_check_ac_ids is empty;
         otherwise render by regression_gate_status — fix #25):
@@ -2124,7 +2172,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 - in_scope AC ac_tested_rate == 100% (no UNTESTED).
 - in_scope AC ac_pass_rate == 100% (no FAIL).
 - Adversarial substantive_count == 0.
-- **Regression gate** (v3.2 cross-module, decided by regression_gate_status enum — 5 states):
+- **Regression gate** (cross-module, decided by regression_gate_status enum — 5 states):
   - "applicable" → require regression_pass_rate == 1.0 (REGRESSION is NOT allowed).
   - "no_tested" → treated as PASS (regression_check_ac_ids non-empty but all NO_TEST_*;
     emit a **strong Warning**).
@@ -2142,6 +2190,13 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
   fail** (the run stays in TEST phase; it never writes `passed` to the system ledger). When
   `in_scope_sys_ac_ids == []` → dimension skipped (Info; pure module task, never blocked). In
   lightweight mode (`sdd_mode: false`) there is no SYSTEM-ACCEPTANCE.md, so this is always [].
+  **Explicit deferral exception (K4, 3.2.0+)**: a SYS-AC listed in
+  `state.json.system_acceptance_deferred` (an explicit, user-accepted PLAN deferral — the wired
+  system cannot run in this environment) does NOT hard-fail the gate, so the run can complete. It
+  is still NOT marked `passed` (witness-floor: a deferral is not a witness), so its linked
+  `Witness:e2e` REQ stays `Partial` and system-readiness stays <100% — the gap is reported with
+  its recorded reason, never hidden or faked. This is the ONLY non-pass that does not block, and
+  it requires the explicit `user_accepted_at`; an agent may NOT self-defer (Iron Rule / K6).
 
 **Soft gates / Regression warnings:**
 - regression_gate_status == "no_tested" → **strong Warning** in SUMMARY:
@@ -2152,7 +2207,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 - regression_gate_status == "applicable" AND regression_tested_rate < 1.0 → Warning:
   explicitly list NO_TEST_DEFINED / NO_TEST_IMPLEMENTED ACs; non-blocking.
 - regression_gate_status == "no_downstream" → Info (natural state, no warning needed).
-- regression_gate_status == "degraded" → Info (normal state on legacy v3.1.0 projects).
+- regression_gate_status == "degraded" → Info (normal state on legacy pre-contract-registry projects).
 
 **Soft gates** (can be user-accepted past the round limit): Doc Consistency, Diff
 Info-only findings.
@@ -2350,21 +2405,21 @@ Requirement Traceability:
   In-scope AC: {MODULE-001-AC-01, MODULE-001-AC-02, MODULE-003-AC-05}
   AC Tested: {ac_tested_rate}% | AC Passed: {ac_pass_rate}%
   In-scope SYS-AC: {SYS-AC-01, ... | none}
-  System Acceptance: {sys_ac_pass_rate}% (real e2e witness) | n/a (no Witness:e2e REQ in scope)
+  System Acceptance: {sys_ac_pass_rate}% (real e2e witness){; deferred: SYS-AC-NN ({reason}) — if any} | n/a (no Witness:e2e REQ in scope)
 
 Definition of Done:
   Function: PASS | Testing: PASS | Security: PASS
   Code Quality: PASS | Doc Consistency: {PASS|SKIPPED}
   Traceability: {PASS|N/A (no registry)}
   Regression: {PASS (gate_status) | ⚠️ no_tested | ⚠️ no_historical_ac | no_downstream | degraded}
-  System Acceptance: {PASS (all in-scope SYS-AC passed on a real run) | SKIPPED (no Witness:e2e REQ in scope)}
+  System Acceptance: {PASS (all in-scope SYS-AC passed on a real run) | DEFERRED (N SYS-AC user-accepted-deferred: {reasons}; linked REQ(s) stay Partial, readiness <100%) | SKIPPED (no Witness:e2e REQ in scope)}
   Waived scope: {[descriptions] | none}
 
 Cross-Module Regression (always render, branch by regression_gate_status — fixes #24, #26, 5 states):
   Gate status: {regression_gate_status}
 
   [if regression_gate_status == "degraded" (contract_registry_available == false):]
-  N/A (no contract registry in ARCHITECTURE.md §6.1 — legacy v3.1.0 project or not upgraded)
+  N/A (no contract registry in ARCHITECTURE.md §6.1 — legacy pre-contract-registry project or not upgraded)
 
   [otherwise (contract_registry_available == true) show context:]
   Modified contracts: {CONTRACT-001, ...}
