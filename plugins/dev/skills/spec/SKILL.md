@@ -90,7 +90,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.2.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.3.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -682,11 +682,41 @@ arch_sections:
 
 ### UT.3 Section classification (per target doc)
 
-For every `id` in the canonical list and in the existing doc:
+#### UT.3.0 Identity resolution (title-primary — 3.3.0+ renumber-preserve)
+
+A section's identity is its **title**, not its number — so a section that MOVED (because a new
+section was inserted earlier in the template, shifting every later number) is recognised as the
+same section, not overwritten. Resolve each existing section's true canonical id BEFORE classifying:
+
+1. Build `canonical_title → id` from the UT.2 canonical list (titles are unique within a doc class).
+2. For each existing doc section parsed as `### N.M  <Title>` (or `## N.`):
+   - **`<Title>` matches a canonical id M** → the section's true id is **M**:
+     - `N == M` → ordinary **Kept**.
+     - `N != M` → **Kept (renumber-preserve)** — the section moved N→M (an inserted section
+       shifted it). Preserve **body AND title verbatim**; change ONLY the number to M; never
+       retitle (that retitle is exactly the corruption this fixes). Cascade (below).
+   - **`<Title>` not in the map** → fall back to number: `N` is a canonical id → genuine
+     **retitle** (the canonical title for `N` was reworded) → ordinary Kept (rewrite heading to
+     current title); `N` not canonical → **Orphan**.
+3. **Renumber cascade (boundary-anchored)** when a section is renumber-preserved `N.M → N'.M'`:
+   rewrite its own depth-4 children `#### N.M.K` → `#### N'.M'.K` (inside the preserved body), and
+   rewrite inline cross-references `§N.M` → `§N'.M'` **doc-wide** using word-boundary patterns
+   (`§N\.M\b`, so `§1.2` never matches `§1.20`); only the exact renumbered id is rewritten. Every
+   renumber + cascade edit is recorded in the UT.9 summary.
+4. **Ambiguity guard (no silent reorder — same discipline as UT.3.1)**: if two doc sections
+   resolve to the same canonical id, a title matches zero or multiple ids, or the renumber map has
+   a collision/cycle → do NOT auto-apply. Per-doc AskUserQuestion: "Section renumbering in
+   `{path}` is ambiguous ({observed → proposed map}). (1) Apply the proposed renumber map (2) Keep
+   numbers as-is + annotate (3) Skip this doc." A clean, unambiguous map defaults to (1); an
+   ambiguous one has NO default.
+
+Then classify, using the **resolved** ids from UT.3.0 (`for every id in the canonical list and in
+the existing doc`):
 
 | Class        | In template | In doc | Action |
 |--------------|-------------|--------|--------|
 | **Kept**     | ✓           | ✓ (1×) | Preserve body verbatim. Rewrite heading line to current title + correct depth marker (`## N.` for depth 2, `### N.M` for depth 3). |
+| **Kept (renumber-preserve, 3.3.0+)** | ✓ | ✓ (title matches a DIFFERENT id) | Preserve body **and title** verbatim; change only the number to the resolved canonical id; cascade per UT.3.0 step 3. NEVER retitle. |
 | **Missing**  | ✓           | ✗      | Insert heading at correct depth (from canonical `depth` field), followed by boilerplate body (UT.4). Position per UT.3.2. |
 | **Orphan**   | ✗           | ✓      | Batched AskUserQuestion (UT.3.3). Default: Keep + Annotate. |
 | **Duplicate**| ✓           | ✓ (≥2) | Batched AskUserQuestion (UT.3.3). Default: Concatenate bodies in source order. |
@@ -1167,9 +1197,9 @@ After all writes succeed, emit:
 /spec upgrade-template: upgraded N docs
 
 Per doc:
-  docs/ARCHITECTURE.md: +2 Missing, 0 Orphan, 0 Duplicate
-  docs/modules/MODULE-001-foo.md: +2 Missing, 0 Orphan, 0 Duplicate
-  docs/modules/MODULE-002-bar.md: 0 Missing, 1 Orphan (kept+annotated), 0 Duplicate
+  docs/ARCHITECTURE.md: +2 Missing, 0 Orphan, 0 Duplicate, 0 Renumbered
+  docs/modules/MODULE-001-foo.md: +2 Missing, 0 Orphan, 0 Duplicate, 0 Renumbered
+  docs/modules/MODULE-002-bar.md: 0 Missing, 1 Orphan (kept+annotated), 0 Duplicate, 2 Renumbered (§1.2→§1.3, §1.3→§1.4 — body+title preserved; cascaded #### subheadings + inline §-refs)
 
 §3.4 preservation: X modules had passed AC rows preserved verbatim.
 Part markers: all 3/3 present in each MODULE doc post-upgrade.

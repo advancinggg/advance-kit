@@ -346,7 +346,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.2.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.3.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -480,10 +480,20 @@ which codex 2>/dev/null && echo "CODEX: AVAILABLE" || echo "CODEX: NOT_FOUND"
 
 # Detect the system-acceptance harness (K4, 3.2.0+): how to bring up + run the REAL wired
 # system for SYS-AC e2e tests. A CLAUDE.md declaration wins; else auto-detect conventions.
-for cf in "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.md"; do [ -f "$cf" ] && grep -iqE '^[[:space:]]*System-acceptance harness:' "$cf" 2>/dev/null && { echo "SYSAC_HARNESS: declared (CLAUDE.md)"; break; }; done  # loop, not multi-file grep: BSD grep exits 2 on a missing file arg even when another matched (K8)
-{ [ -d "$REPO_ROOT/tests/system" ] || [ -d "$REPO_ROOT/tests/e2e" ] || [ -d "$REPO_ROOT/e2e" ]; } && echo "SYSAC_HARNESS: dir (tests/system|tests/e2e|e2e)"
-[ -f "$REPO_ROOT/package.json" ] && grep -qE '"(test:e2e|test:system|e2e|system-test)"[[:space:]]*:' "$REPO_ROOT/package.json" 2>/dev/null && echo "SYSAC_HARNESS: script (package.json)"
-[ -f "$REPO_ROOT/Makefile" ] && grep -qE '^(e2e|system-test|test-system|test-e2e):' "$REPO_ROOT/Makefile" 2>/dev/null && echo "SYSAC_HARNESS: target (Makefile)"
+HC=""   # materialize a CONCRETE runnable command, not a label; priority CLAUDE.md → npm → make
+for cf in "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.md"; do
+  [ -f "$cf" ] || continue   # per-file guard: BSD grep exits 2 on a missing file arg even when another matched (K8)
+  c=$(grep -iE '^[[:space:]]*System-acceptance harness:[[:space:]]*[^[:space:]]' "$cf" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*[Ss]ystem-acceptance harness:[[:space:]]*//')
+  [ -n "$c" ] && { HC="$c"; break; }   # require a non-empty command after the colon
+done
+if [ -z "$HC" ] && [ -f "$REPO_ROOT/package.json" ]; then
+  for s in test:e2e test:system system-test e2e; do grep -qE "\"$s\"[[:space:]]*:" "$REPO_ROOT/package.json" 2>/dev/null && { HC="npm run $s"; break; }; done
+fi
+if [ -z "$HC" ] && [ -f "$REPO_ROOT/Makefile" ]; then
+  for t in e2e system-test test-system test-e2e; do grep -qE "^$t:" "$REPO_ROOT/Makefile" 2>/dev/null && { HC="make $t"; break; }; done
+fi
+if [ -n "$HC" ]; then echo "SYSAC_HARNESS_CMD: $HC"
+elif [ -d "$REPO_ROOT/tests/system" ] || [ -d "$REPO_ROOT/tests/e2e" ] || [ -d "$REPO_ROOT/e2e" ]; then echo "SYSAC_HARNESS_CANDIDATE: e2e/system test dir present but no run command derivable — PLAN must obtain it"; fi
 
 # Detect the contract registry (cross-module regression)
 if [ -f "$REPO_ROOT/docs/ARCHITECTURE.md" ]; then
@@ -521,13 +531,17 @@ fi
   Claude subagent review).
 - Test command priority: project `.claude/CLAUDE.md` declaration → auto-detection →
   AskUserQuestion.
-- **System-acceptance harness (K4, 3.2.0+)**: how /dev brings up + runs the REAL wired system
-  for SYS-AC e2e tests. Priority: `.claude/CLAUDE.md` `System-acceptance harness: <cmd>`
-  declaration → auto-detection (the `SYSAC_HARNESS:` signals above) → else left unset. Store as
-  `sysac_harness_cmd` (string|null) in state.json. A null harness is fine for pure-module tasks;
-  it matters only when a task's `in_scope_sys_ac_ids` is non-empty — Phase 1 PLAN then resolves
-  it (declare / defer / abort). The harness MUST launch the real process/binary over the full
-  Module Chain (witness-floor: never a mock/stub); TEST §5.1/§5.2 enforce that.
+- **System-acceptance harness (K4, 3.2.0+)**: the **runnable command** that brings up + runs the
+  REAL wired system for SYS-AC e2e tests. Detection emits a CONCRETE command (`SYSAC_HARNESS_CMD`),
+  priority: `.claude/CLAUDE.md` `System-acceptance harness: <cmd>` (the text after the colon — a
+  bare/empty line does NOT count) → `npm run <test:e2e|test:system|system-test|e2e>` (package.json)
+  → `make <e2e|system-test|test-system|test-e2e>` (Makefile). Store the first as `sysac_harness_cmd`
+  (string|null). A bare `tests/system|e2e/` dir is only a `SYSAC_HARNESS_CANDIDATE` (not a runnable
+  command) → `sysac_harness_cmd` stays null and PLAN must obtain the real command. A null harness
+  is fine for pure-module tasks; it matters only when a task's `in_scope_sys_ac_ids` is non-empty
+  — Phase 1 PLAN then resolves it (declare / defer / abort). The harness MUST launch the real
+  process/binary over the full Module Chain (witness-floor: never a mock/stub); TEST §5.1/§5.2
+  enforce that.
 - If `WORKTREE: YES`, set `worktree_mode: true` + `main_worktree_path: <MAIN_WORKTREE>`
   in state.json. Print banner: "Running in worktree mode. §2.1.2 / §0.6 escape
   hatches will emit worktree-bridging recovery prose (cd to main worktree, cd back,
@@ -604,7 +618,7 @@ scope — behaves exactly as pre-2.10.0); next heartbeat write bumps the version
 in-place. **v5→v6 forward-compat (3.2.0+)**: a v5 read treats missing
 `sysac_harness_cmd` as `null` and `system_acceptance_deferred` as `[]` (pre-K4
 behaviour), then writes `version: 6`. INIT always writes the current version (no
-in-place legacy generation). No hard-fail on v3/v4/v5 read; backward-compatible.
+in-place legacy generation). No hard-fail on a v3/v4/v5 (legacy) read; backward-compatible.
 `version < 3` or `version > 6` (or missing/non-integer) → HARD FAIL via
 AskUserQuestion (do not silently default unsupported versions). See
 `/dev resume` subcommand block for the explicit defaulting protocol
@@ -1870,8 +1884,19 @@ repeat:
           cross-module protection NOT available\" + list affected_downstream_modules
         - \"no_downstream\" / \"degraded\": do NOT emit Regression Check block at all
 
+        System Acceptance Check (2.10.0+; skip if state.json in_scope_sys_ac_ids empty):
+        SCOPE: only the SYS-AC IDs in state.json in_scope_sys_ac_ids. Read
+        docs/SYSTEM-ACCEPTANCE.md §1 (Module Chain) + §1.1 (atomic Criterion) + §2. Run the
+        declared harness (state.json.sysac_harness_cmd) to bring up the REAL wired system and
+        execute the e2e test(s); classify each in-scope SYS-AC PASS / FAIL / UNTESTED /
+        MOCK-ONLY / DEFERRED (DEFERRED = listed in state.json.system_acceptance_deferred with a
+        user_accepted_at — not a witness-floor violation, still not-passed). A unit/integration
+        test or any mock/stub standing in for any module in the chain does NOT satisfy a SYS-AC
+        (witness-floor). Output: System Acceptance: {passed}/{in_scope_sys_total}; one line per
+        in-scope SYS-AC with its status + reason.
+
         Do NOT suggest fixes. Only diagnose.
-        Output: pass/fail counts, per-failure analysis, coverage gaps, AC Verification, Regression Check."
+        Output: pass/fail counts, per-failure analysis, coverage gaps, AC Verification, Regression Check, System Acceptance."
      Use the codex exec command template (see "Review Architecture"); `-s read-only`.
 
   Degraded: when codex_available: false, run only the Claude Evaluator and mark as
@@ -1939,9 +1964,10 @@ repeat:
     "sys_ac_results": {
       "SYS-AC-01": "pass",
       "SYS-AC-02": "untested",
-      "SYS-AC-03": "mock_only"
+      "SYS-AC-03": "mock_only",
+      "SYS-AC-04": "deferred"
     },
-    "sys_ac_pass_rate": 0.33,
+    "sys_ac_pass_rate": 0.25,
     "status": "pass" | "fail"
   }
   Boundary example (everything NO_TEST_*):
@@ -1952,9 +1978,12 @@ repeat:
   Semantics: ac_tested_rate = tested/(tested+untested), ac_pass_rate = passed/tested.
   DoD verdict: ac_tested_rate == 1.0 AND ac_pass_rate == 1.0.
   If in_scope_ac_ids is empty (pure waived-scope task) → skip the ac_results block.
-  System-AC semantics (2.10.0+): sys_ac_pass_rate = passed / |in_scope_sys_ac_ids|, where
-  `mock_only` and `untested` BOTH count as not-passed (witness-floor). If in_scope_sys_ac_ids
-  is empty → omit sys_ac_results and treat sys_ac_pass_rate as N/A (dimension skipped).
+  System-AC semantics (2.10.0+; `deferred` 3.2.0/K4): sys_ac_pass_rate = real-passes /
+  |in_scope_sys_ac_ids|, where `mock_only`, `untested`, AND `deferred` ALL count as NOT-passed
+  (witness-floor — a deferral is not a witness, so it never inflates the rate). `deferred`
+  differs from `untested` only in that it does not BLOCK advancement (Step 4.5) when it carries a
+  `user_accepted_at`; it still keeps the rate <1.0 and the linked REQ `Partial`. If
+  in_scope_sys_ac_ids is empty → omit sys_ac_results and treat sys_ac_pass_rate as N/A (skipped).
   Update state.json: eval_round, test_attempts, updated_at.
 
   ──────────────────────────────────────────────────────────────
@@ -1972,10 +2001,14 @@ repeat:
      - `regression_pass_rate == 1.0` (no REGRESSION among tested downstream AC).
   4. Other `regression_gate_status` values ("no_tested" / "no_historical_ac" /
      "no_downstream" / "degraded") do not block advancement.
-  5. If `in_scope_sys_ac_ids` is non-empty (2.10.0+):
-     - `sys_ac_pass_rate == 1.0` — every in-scope SYS-AC is PASS via a real e2e/system
-       witness. Any `untested`, `fail`, or `mock_only` in-scope SYS-AC blocks advancement
-       (witness-floor: a mocked/stubbed chain never satisfies a SYS-AC). Empty → not a gate.
+  5. If `in_scope_sys_ac_ids` is non-empty (2.10.0+; deferral 3.2.0/K4):
+     - Every in-scope SYS-AC must be EITHER a real `pass` (e2e/system witness) OR an explicit
+       `deferred` entry in `state.json.system_acceptance_deferred` carrying a `user_accepted_at`.
+       Any `untested`, `fail`, or `mock_only` — and any agent-claimed deferral LACKING
+       `user_accepted_at` — blocks advancement (witness-floor: a mocked/stubbed chain never
+       satisfies a SYS-AC; an agent may not self-defer). A `deferred` SYS-AC is NOT a pass:
+       `sys_ac_pass_rate` = real-passes / |in_scope_sys_ac_ids| stays <1.0 whenever any is
+       deferred, so readiness reports <100% and the linked REQ stays `Partial`. Empty → not a gate.
 
   The main agent reads the latest entry in state.json's eval_history and decides directly
   from those fields (not from the free-form Verdict text).
@@ -2242,9 +2275,11 @@ MODULE doc §3.4 is the source of truth at the module-AC level (module coverage 
 **docs/SYSTEM-ACCEPTANCE.md §2 is the source of truth at the system-AC level (2.10.0+,
 system E2E readiness axis).** /dev SUMMARY reads + writes both: the §3.4 tables of the
 affected MODULEs, and — when `in_scope_sys_ac_ids` is non-empty — the SYS-AC ledger.
-(Both ledgers only record `passed` — DoD guarantees that by the time SUMMARY runs, every
-in-scope module AC AND every in-scope SYS-AC has already passed, so there is no `failed`
-write path on either axis.)
+(Both ledgers only ever record `passed` — never `failed`. Module ACs: DoD guarantees all
+in-scope module AC passed before SUMMARY. SYS-AC: write `passed` ONLY for SYS-AC whose
+`sys_ac_results == "pass"` (a real wired-system witness); an explicitly `deferred` in-scope
+SYS-AC (K4) is NOT written `passed` — it stays `untested`, so its linked `Witness:e2e` REQ
+caps at `Partial` and system-readiness stays <100%.)
 
 **Registry status rules** (aggregated from §3.4 AC ledgers; only Active=Y rows count):
 - On the IMPLEMENT commit → Registry Status: Spec'd → Implemented.
@@ -2467,9 +2502,11 @@ Overall PRD progress (two axes — never merged into one number):
 If `in_scope_ac_ids` is non-empty:
 1. Update the §3.4 AC Verification table of the affected MODULEs (this run's in-scope ACs
    → passed, fill in Verified By Task / Date).
-1b. **System ledger (2.10.0+)**: if `in_scope_sys_ac_ids` is non-empty, update
-   `docs/SYSTEM-ACCEPTANCE.md` §2 (this run's in-scope SYS-ACs → passed; fill in Verified By
-   Task / Date; Witness Level stays as authored by /spec).
+1b. **System ledger (2.10.0+; deferral 3.2.0/K4)**: if `in_scope_sys_ac_ids` is non-empty,
+   update `docs/SYSTEM-ACCEPTANCE.md` §2 — write `→ passed` ONLY for SYS-AC whose
+   `sys_ac_results == "pass"` (a real wired witness); fill in Verified By Task / Date; Witness
+   Level stays as authored by /spec. A `deferred` (or any non-`pass`) in-scope SYS-AC is NOT
+   written `passed` — it stays `untested`.
 2. Read the full set of Active=Y AC statuses for each REQ and update the Status column in
    `REQUIREMENTS_REGISTRY.md`:
    - All Active=Y AC passed → Verified — **except** a `Witness:e2e` REQ ALSO requires every
@@ -2482,7 +2519,8 @@ If `in_scope_ac_ids` is non-empty:
    - §3.4 table: update only the Status column (untested → passed) and the
      Verified By Task / Date columns.
    - SYSTEM-ACCEPTANCE.md §2 (2.10.0+, only if in_scope_sys_ac_ids non-empty): update only
-     the Status column (untested → passed) and the Verified By Task / Date columns.
+     the Status column (untested → passed, ONLY for `sys_ac_results == "pass"` rows — never a
+     `deferred`/`untested` one) and the Verified By Task / Date columns.
    - REGISTRY: update only the Status column and the Updated column.
    - No other edits are permitted.
    - Derive the affected MODULE doc list by reverse-lookup from `in_scope_ac_ids`

@@ -105,6 +105,16 @@ explanation at the enforcement site.
 When rewording any marker phrase in the template body, update UT.6.1 marker set in
 `/spec` SKILL.md Phase UT in the same commit.
 
+**Inserting a numbered section mid-template (3.3.0+, K5 renumber-preserve)**: adding a NEW
+numbered section in the middle of the Phase 1.2 / 2.2 template (e.g. a new §1.2 that shifts the
+old §1.2→§1.3, §1.3→§1.4 …) is now **`upgrade-template`-safe**. UT.3.0 resolves each existing
+section's identity by **title** (not number) and **renumber-preserves** the shifted sections —
+body + title kept verbatim, only the number fixed, with `#### N.M.K` subheadings + inline `§N.M`
+refs cascaded; ambiguous maps prompt (UT.3.0 step 4). Before 3.3.0 this retitle-corrupted. (This
+is about NUMBERED sections; it does NOT change the §1.1 "Serves PRD topics" body sub-section
+above, which is still registry-auto-filled via main-flow rerun.) Keep the UT.2 canonical-list
+titles **unique within a doc class** — title-primary matching relies on that uniqueness.
+
 ## Release checklist (for CONTEXT-MAP / GLOSSARY — 2.4.0+)
 
 When editing the `/spec` Phase 3.3 CONTEXT-MAP generation step, the `/prd` Phase 3.3
