@@ -338,6 +338,22 @@ Do NOT suggest fixes." \
 
 ## Subcommand Dispatch
 
+**Version banner — run this FIRST, before parsing `$ARGUMENTS`.** It prints the running
+dev-template version and warns if a newer plugin was installed mid-session (session↔installed
+drift). The single `2.12.0` literal below is the **session-bound** version — it is a sync point
+on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist). The
+read-only banner script is allowlisted by `check-phase.sh` so it runs even on `resume` / `status`
+into a locked phase.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 2.12.0 2>/dev/null
+```
+
+- Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
+  continue on the session-bound version (never block on drift — the loaded skill still works).
+- If the command errors (script not found / broken install), print
+  `[dev] /dev — version banner unavailable` and continue.
+
 Parse `$ARGUMENTS`; the first whitespace-delimited token routes:
 
 - `status` → execute "status query"

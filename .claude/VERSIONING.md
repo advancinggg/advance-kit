@@ -45,6 +45,15 @@ interfaces, the MODULE template /spec produces, and `state.json` schemas.
 4. **No version skips within a plugin.** Follow the sequence (e.g., don't jump 2.0.2 → 2.2.0
    without a 2.1.x cycle in between, unless the change is genuinely Major).
 
+5. **Version-drift visibility literals move with the plugin (2.12.0+).** Each skill's Phase 0
+   version banner embeds a session-bound version literal — the `X.Y.Z` in the
+   `dev-version-banner.sh <skill> X.Y.Z` call inside
+   `plugins/dev/skills/{dev,spec,prd}/SKILL.md`. All three MUST equal the plugin.json version.
+   This brings the sync set to **8 points** (the 5 of rules 1+2 — plugin.json, marketplace.json
+   dev entry, 3 README cells — plus these 3 banner literals). A stale literal silently
+   mis-reports session↔installed drift, the very failure 2.12.0 exists to fix. See "Release
+   checklist (for version-drift visibility — 2.12.0+)".
+
 ## Release cadence (recommended, currently unformalized)
 
 - After push, consider a git tag `{plugin}-v{version}` (e.g., `dev-v2.1.0`) and a
@@ -472,3 +481,56 @@ When editing any of these surfaces, the following ten rules MUST hold:
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
 2.10.0 / 2.11.0 rules above are additive and do not supersede any earlier freeze.
+
+## Release checklist (for version-drift visibility — 2.12.0+)
+
+The 2.12.0 minor adds **template-version drift visibility** across all three skills: a Phase 0
+version banner (running template version + session↔installed drift warning) backed by the
+read-only `plugins/dev/bin/dev-version-banner.sh`, plus `> dev-template: vX.Y.Z` header stamps on
+every `/spec` + `/prd` generated artifact with an advisory artifact-drift check on rerun. It is
+**additive and backward-compatible**: docs that predate stamping read as `ARTIFACT_STAMP=none`
+(a soft note, never an error), and the banner never blocks a run. When editing any of these
+surfaces, the following six rules MUST hold:
+
+1. **8 sync points (Hard rule 5).** The session-bound version literal in each of
+   `plugins/dev/skills/{dev,spec,prd}/SKILL.md` (the `dev-version-banner.sh <skill> X.Y.Z` call)
+   MUST equal plugin.json. Together with plugin.json, marketplace.json dev entry, and the 3 README
+   cells, that is **8 points** moving on every dev bump.
+
+2. **Banner arg interface FROZEN**: `dev-version-banner.sh <skill-label> <session-bound-version>`
+   (two positional args, in that order). Reordering/renaming, or adding a required 3rd positional
+   arg, is a MAJOR `dev` bump (old loaded SKILL.md call sites break). The script is **read-only,
+   side-effect-free, and ALWAYS exits 0** — it must never block the calling skill. Making it write
+   state, mutate files, or exit non-zero is MAJOR.
+
+3. **Stamp line format FROZEN**: `> dev-template: vX.Y.Z`, one line in each generated doc's header
+   quote-block, value = the running template version. The `{template version}` placeholder in the
+   doc templates is filled at write-time (like `{date}`), NOT a static sync point. Renaming the
+   `dev-template:` key, or changing the `v`-prefix / dotted-numeric format, is MAJOR (the §0.2
+   drift reader `grep -m1 '^> dev-template:'` and downstream tooling break). The stamp goes on
+   ARCHITECTURE.md, MODULE-*.md, GLOSSARY.md, IMPLEMENTATION_ORDER.md, SYSTEM-ACCEPTANCE.md,
+   CONTEXT-MAP.md (/spec) and PRD.md, GLOSSARY.md (/prd). REQUIREMENTS_REGISTRY.md and ADRs are
+   deliberately NOT stamped (the registry top is parsed by UT.10.A; ADRs are not regenerated).
+   ARCHITECTURE.md is the /spec drift anchor; PRD.md is the /prd anchor.
+
+4. **check-phase.sh banner allowance FROZEN** (the only enforcement-surface change): the
+   read-only-banner regex in the Bash-rules block allows a bare
+   `bash <…>/bin/dev-version-banner.sh <label> <version> [2>/dev/null]` in ALL phases, so the
+   banner runs on `/dev resume`/`status` into a locked plan/docs/summary phase. The regex's path
+   char-class MUST keep forbidding `( ) \` ; & | < >` and stay `^…$`-anchored so no second command
+   can be smuggled; the global dangerous-command guards run BEFORE it. Loosening the regex
+   (allowing metacharacters, dropping the anchor) is a security regression; widening it to other
+   scripts is MAJOR.
+
+5. **Banner never blocks; drift is advisory.** session↔installed drift → prominent warning, then
+   continue on the session-bound version. artifact drift → advisory note pointing at the upgrade
+   path (`/spec upgrade-template` or regenerate), then proceed. Neither aborts the run. Turning
+   either into a hard gate is a behavioural break.
+
+6. **5-sync-point + description rotation still apply** (Hard rules 1+2, 2.8.1 rule 9): the version
+   moves across plugin.json, marketplace.json dev entry, and the 3 README cells together (now +3
+   banner literals = 8); the description compressed-history tail rotates (new Latest, demote prior
+   Latest to Earlier, drop the oldest beyond 3 minors).
+
+**All prior checklist freezes (2.4.0, 2.5.0, 2.7.0, 2.8.0, 2.10.0/2.11.0) REMAIN in force.** The
+2.12.0 rules above are additive and do not supersede any earlier freeze.

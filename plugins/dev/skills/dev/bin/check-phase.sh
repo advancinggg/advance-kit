@@ -129,6 +129,16 @@ if [ -n "$COMMAND" ]; then
     printf '{"permissionDecision":"deny","message":"[dev] Dangerous command blocked: %s"}' "$(echo "$COMMAND" | head -c 80)"; exit 0
   fi
 
+  # ── read-only dev version banner: side-effect-free by contract, allowed in ALL phases ──
+  # (K1 / VERSIONING "version-drift visibility" checklist). The banner runs on /dev resume/status
+  # into a locked phase, where bash/python3 are otherwise denied. Tight match on the RAW command
+  # (before quote-stripping): a bare `bash <…>/bin/dev-version-banner.sh <label> <version>` with an
+  # optional `2>/dev/null`. The path char class forbids ( ) ` ; & | < > so no second command can
+  # be smuggled through the allowance; the global dangerous-command guards above still applied.
+  if printf '%s' "$COMMAND" | grep -qE '^[[:space:]]*bash[[:space:]]+"?[^"`();&|<>]*/bin/dev-version-banner\.sh"?[[:space:]]+[a-z]+[[:space:]]+v?[0-9][0-9.]*([[:space:]]+2>/dev/null)?[[:space:]]*$'; then
+    echo '{}'; exit 0
+  fi
+
   # ── Open phases ──
   if [ "$PHASE" = "implement" ] || [ "$PHASE" = "test" ] || [ "$PHASE" = "audit" ] || [ "$PHASE" = "adversarial" ]; then
     echo '{}'; exit 0

@@ -117,6 +117,20 @@ This defense is **instruction-level** (/prd cannot hook a scanner). Evaluator Ph
 
 ## Phase 0: Initialization
 
+**Version banner — run this FIRST, before sub-command dispatch.** It prints the running
+dev-template version and warns if a newer plugin was installed mid-session (session↔installed
+drift). The single `2.12.0` literal below is the **session-bound** version — it is a sync point
+on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 2.12.0 2>/dev/null
+```
+
+- Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
+  continue on the session-bound version (never block on drift — the loaded skill still works).
+- If the command errors (script not found / broken install), print
+  `[dev] /prd — version banner unavailable` and continue.
+
 ### 0.0 Sub-command dispatch (early return)
 
 Parse `$ARGUMENTS` FIRST:
@@ -230,8 +244,19 @@ elif [ -d "docs/00-prd" ] && ls docs/00-prd/*.md >/dev/null 2>&1; then
 else
   echo "PRD_NOT_FOUND"
 fi
+# artifact-drift (rerun): read the dev-template stamp from docs/PRD.md
+stamp=$(grep -m1 '^> dev-template:' docs/PRD.md 2>/dev/null | sed -E 's/^> dev-template:[[:space:]]*v?//' | tr -d '[:space:]')
+echo "ARTIFACT_STAMP=${stamp:-none}"
 ```
 
+- **Artifact stamping**: the generated `docs/PRD.md` (and any GLOSSARY skeleton) carries a
+  `> dev-template: vX.Y.Z` header where X.Y.Z is the running template version (the Phase 0 banner
+  value). Fill the `{template version}` placeholder with it.
+- **Artifact-drift** (rerun): if `ARTIFACT_STAMP` is `none`, the PRD predates stamping (before
+  v2.12.0); if it is **older** than the running version, ⚠ this PRD was generated against dev
+  template v{stamp} and you are now on v{running} — regenerating (option 2) re-stamps it and adopts
+  the current template (e.g. the System-acceptance-journey marker, 2.10.0+). Surface this to the
+  user, then proceed.
 - If existing PRD found → AskUserQuestion: "(1) Continue refining (re-enter BRAINSTORM loaded with existing PRD as prior state) (2) Regenerate from scratch (3) Cancel"
 - If `docs/00-prd/` directory found but docs/PRD.md absent → /prd v1 only supports
   single-file; AskUserQuestion: "(1) Cancel (multi-topic needs v2) (2) Continue treating
@@ -483,6 +508,7 @@ Write `docs/PRD.md`:
 > Created: {ISO date} (/prd initial run)
 > Last updated: {ISO date}
 > Status: Draft | Confirmed | Living
+> dev-template: v{template version}
 
 ---
 
@@ -646,6 +672,7 @@ is missing; the `{driver}` token records which writer created the file):
 
 > Created: {ISO date} ({driver — e.g. "/prd bootstrap" or "/spec skeleton"})
 > Last updated: {ISO date}
+> dev-template: v{template version}
 
 ---
 

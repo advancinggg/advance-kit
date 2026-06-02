@@ -128,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `2.11.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.11.0 `/spec upgrade-template` 让存量项目不跑全量即可接入系统验收层（注入 registry `Witness` 列 + bootstrap `docs/SYSTEM-ACCEPTANCE.md`；不跑评估器、幂等、保进度）。**早期：** 2.8.0 worktree 并行 /dev、2.9.0 `/dev board` 快照看板、2.10.0 系统验收层。 |
+| `dev` | `2.12.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 2.12.0 每个 skill 启动时打印当前运行的 dev 模版版本，并在会话期间装了更高版本时告警（会话↔已装漂移）；/spec、/prd 给生成产物盖 `dev-template: vX.Y.Z` 戳，重跑时检测产物漂移。**早期：** 2.9.0 `/dev board` 快照看板、2.10.0 系统验收层、2.11.0 `/spec upgrade-template`（存量项目免全量接入系统验收层）。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |
