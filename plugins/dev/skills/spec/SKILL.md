@@ -86,11 +86,11 @@ this rule explicitly forbids that escape hatch.
 
 **Version banner — run this FIRST, before sub-command dispatch.** It prints the running
 dev-template version and warns if a newer plugin was installed mid-session (session↔installed
-drift). The single `2.12.0` literal below is the **session-bound** version — it is a sync point
+drift). The version literal in the command below is the **session-bound** version — it is a sync point
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 2.12.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.0.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -2919,9 +2919,12 @@ unit/integration witness)".
 
 **Generation algorithm** (all steps emitted):
 
-1. Collect candidate journeys from two sources, deduplicated:
+1. Collect candidate journeys from three sources, deduplicated:
    a. PRD §3 Core user flows flagged **"System acceptance journey"** (the product-intent seed).
    b. Every Active=Y `Witness:e2e` REQ in `REQUIREMENTS_REGISTRY.md` not already covered by (a).
+   c. (3.0.0+) Emergent journeys identified by the Phase 1.3 evaluator (a cross-module behaviour
+      no single REQ captured) — group the spanning REQs into ONE `SYS-J`; do NOT fragment into
+      one-journey-per-REQ via (b). This is the anti-"silently-drop-journey" completion path.
 2. For each candidate, derive the **Module Chain**: reverse-map its REQ Sources → `Module(s)`
    (registry / ARCHITECTURE §10), ordered by `IMPLEMENTATION_ORDER.md` topological position.
 3. Derive **Contracts**: the `CONTRACT-ID`s (ARCHITECTURE §6.1) sitting on the seams between

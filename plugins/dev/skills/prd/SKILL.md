@@ -119,11 +119,11 @@ This defense is **instruction-level** (/prd cannot hook a scanner). Evaluator Ph
 
 **Version banner — run this FIRST, before sub-command dispatch.** It prints the running
 dev-template version and warns if a newer plugin was installed mid-session (session↔installed
-drift). The single `2.12.0` literal below is the **session-bound** version — it is a sync point
+drift). The version literal in the command below is the **session-bound** version — it is a sync point
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 2.12.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.0.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then

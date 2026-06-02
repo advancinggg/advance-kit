@@ -463,20 +463,30 @@ When editing any of these surfaces, the following ten rules MUST hold:
     new version together; the description compressed-history tail rotates (new Latest, demote
     prior Latest to Earlier, drop oldest beyond 3 minors).
 
-11. **`upgrade-template` UT.10 migration (2.11.0+)**: `/spec upgrade-template` adopts the
-    2.10.0 layer into an existing project without a full rerun — UT.10.A injects the
-    `Witness` column into REQUIREMENTS_REGISTRY (existing REQs default `unit`); UT.10.B
-    bootstraps / merge-preserves `docs/SYSTEM-ACCEPTANCE.md`. Frozen properties: (a)
-    **idempotent** (Witness column present → skip; SYSTEM-ACCEPTANCE.md present →
-    merge-preserve `passed` SYS-AC verbatim); (b) **no evaluator loops** — it is a heuristic
-    starting point, NOT evaluator-grade, and must say so in the UT.9 summary; (c) **authorship
-    partition preserved** — UT.10 only creates rows / Active-flips and NEVER writes a SYS-AC
-    `passed` (that stays /dev SUMMARY's exclusive write); (d) **safe default** — existing REQs
-    become `unit`, and e2e marking requires the explicit UT.10.A policy AskUserQuestion.
-    Making UT.10 run evaluators, auto-mark e2e without the policy prompt, or write `passed`
-    is a MAJOR `dev` bump (changes the migration's trust + cost model). UT.10 does NOT use
-    the UT.2–UT.6 section parser, so the "Release checklist (for /spec template changes)"
-    canonical-section-list sync rule does not apply to it.
+11. **`upgrade-template` UT.10 migration (2.11.0+; evaluator-backed since 3.0.0)**:
+    `/spec upgrade-template` adopts the 2.10.0 layer into an existing project without a full
+    rerun — UT.10.A injects the `Witness` column into REQUIREMENTS_REGISTRY (existing REQs
+    default `unit`); UT.10.B bootstraps / merge-preserves `docs/SYSTEM-ACCEPTANCE.md`. Frozen
+    properties: (a) **idempotent** (Witness column present → skip; SYSTEM-ACCEPTANCE.md present
+    → merge-preserve `passed` SYS-AC verbatim); (b) **evaluator-backed journey discovery
+    (3.0.0+)** — UT.10.A step 4 runs the Phase-1.3 dual-evaluator method (Claude auditor +
+    Codex, loop-until-dry) to discover under-classified REQs + emergent journeys, degrading to
+    single-evaluator (Codex absent) then to the legacy ≥2-module / PRD-flag heuristic (no
+    evaluator at all). The tier MUST be reported in the UT.9 summary. **3.0.0 deliberately
+    broke the prior 2.11.0 "no evaluator loops" freeze — that was the MAJOR bump.** Reverting
+    UT.10 to heuristic-only as the DEFAULT (not merely the no-evaluator fallback) would itself
+    be a MAJOR bump; (c) **authorship partition preserved** — UT.10 only creates rows /
+    Active-flips and NEVER writes a SYS-AC `passed` (that stays /dev SUMMARY's exclusive
+    write); (d) **safe default + explicit e2e prompt** — existing REQs default `unit`, and e2e
+    marking still requires the explicit UT.10.A step-5 policy AskUserQuestion (auto-marking
+    without it is MAJOR). What UT.10 still does NOT do: regenerate ARCHITECTURE/modules — that
+    remains full-`/spec`-rerun territory. UT.10 does NOT use the UT.2–UT.6 section parser, so
+    the "Release checklist (for /spec template changes)" canonical-section-list sync rule does
+    not apply to it. **Main-flow Phase 1.3 (3.0.0)**: the architecture evaluator now also
+    discovers EMERGENT journeys (no single REQ captures them), and `system_uncovered_count`
+    counts under-classified REQs + uncovered `Witness:e2e` REQs + undiscovered emergent
+    journeys (all block convergence; loop-until-dry). Weakening this from completion to pruning
+    is a regression.
 
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
