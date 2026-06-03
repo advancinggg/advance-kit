@@ -368,6 +368,7 @@ print_section_1() {
       /^\|/ {
         n = split($0, c, "|")
         if (n < 4) next
+        if (sec == "2" && n < 6) next        # §2: keep the pre-K9 ≥6-field guard exactly (strict readiness-count equivalence on malformed ledgers)
         for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", c[i]) }
         if (c[2] !~ /^SYS-AC-/) next          # skip header / separator / "—" placeholder
         if (sec == "11") { kind[c[2]] = c[4] }          # §1.1: c[4]=Type

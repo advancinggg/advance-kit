@@ -3168,7 +3168,10 @@ on `/dev board`) after the run ends. Empty until a deferral is accepted.
 
 **Authorship contract** (mirrors the §3.4 partitioned contract):
 - `/spec` owns SYS-J / SYS-AC row creation and Active=Y↔N flips.
-- `/dev` SUMMARY owns ONLY `untested → passed` for the run's in-scope SYS-AC IDs.
+- `/dev` SUMMARY owns the §2 `untested → passed` promotion for the run's in-scope SYS-AC IDs,
+  AND (3.6.0/K9, additive) the §3 *Accepted system-acceptance deferrals* append/remove that
+  mirrors `state.json.system_acceptance_deferred`. A §3 row NEVER flips a §2 status (witness-floor
+  intact); `/dev` writes nothing else to this file.
 
 **Witness-floor invariant**: a SYS-AC's Witness Level is `e2e` or `system` only. /dev's DoD
 (§5.3 System Acceptance dimension) rejects any attempt to mark a SYS-AC `passed` via a
