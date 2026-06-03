@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "Enforced dev workflow (/dev + /spec + /prd) with dual-model review, independent evaluator architecture, AC-driven MODULE progress, aligned §N.M section numbering, ADR (Architecture Decision Records) system, upstream-alignment escape hatches, worktree-parallel /dev, read-only `/dev board` snapshot dashboard, a system-acceptance witness layer, and template-version drift visibility. Includes `dev`, `spec`, `prd` skills plus opt-in statusline. Latest: 3.6.0 /dev board surfaces the system-acceptance evaluation axis — deferrals (with reason), an atomic functional/nfr/error-path Type breakdown, and a per-worktree DEFER column — backed by durable §3 deferral persistence in SYSTEM-ACCEPTANCE.md. Earlier: 3.5.0 /prd requires the System-acceptance-journey marker on every §3 flow + legacy backfill, 3.4.0 Iron-Rule honest-disclosure carve-out + structured 'Scope & unverified' field, 3.3.0 `/spec upgrade-template` renumber-preserve on a mid-template section insert.",
   "author": { "name": "Advance Studio" }
 }

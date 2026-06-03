@@ -532,7 +532,12 @@ When editing any of these surfaces, the following ten rules MUST hold:
     a recorded reason — the gap is surfaced, not hidden) and an agent may NOT self-defer. FROZEN:
     a deferral writing `passed`, an agent self-deferring without `user_accepted_at`, or a
     deferral hiding/faking readiness would each be a MAJOR regression of the system-acceptance
-    bar. The two-axis SUMMARY/board (never-merged) is unchanged.
+    bar. The two-axis SUMMARY/board (never-merged) is unchanged. **3.6.1** completes the migration
+    path: `/spec upgrade-template` (UT.10.B) creates/merge-preserves the §3 deferrals section + maps
+    Change History §3→§4 + stamps the header, `/dev` SUMMARY creates §3 if absent, and UT.6 stamps
+    upgraded ARCHITECTURE/MODULE docs — so existing projects gain K1 stamps + the K9 §3 section via
+    `upgrade-template`, not only via a full `/spec` rerun. Leaving the upgrade path without §3/stamp
+    re-opens the gap (a regression).
 
 14. **Durable deferral persistence + dashboard surfacing (3.6.0, K9, additive)**: accepted
     system-acceptance deferrals — previously only in the ephemeral, gitignored per-run

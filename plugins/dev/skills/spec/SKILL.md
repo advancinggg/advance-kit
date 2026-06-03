@@ -102,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.1 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -937,7 +937,10 @@ tmp-file + rename. Pre-write flow:
    on GNU and a no-op on BSD. The authoritative symlink guard is UT.1 rule
    7(a), not cp's flag. If cp fails, REFUSE the doc. mktemp-generated
    companions have unpredictable suffixes, so they are not attacker-controllable.
-   (b) Write the new content to `$tmp`. (c) Verify `$tmp` has non-zero size. (d)
+   (b) Write the new content to `$tmp` — and ensure the doc header's quote-block carries
+   `> dev-template: v{Phase-0 banner version}` (add the line if absent, refresh if stale; 3.6.1+,
+   closes the gap where section-level upgrades previously left ARCHITECTURE/MODULE docs unstamped).
+   (c) Verify `$tmp` has non-zero size. (d)
    `mv "$tmp" "$path"` via Bash `mv`. If any step fails, `$path` may be clobbered
    by (d) — the `$backup` is the recovery source (step 7-revert).
 7. **Post-write pass-count verification** (defends `Active=Y, Status=passed` count
@@ -1184,9 +1187,16 @@ UT.10.A policy prompt (step 5).
    error-path) as NEW `SYS-AC-{next}` rows (`Active=Y, Status=untested`) — so existing projects
    migrate to the atomic model without losing preserved progress. (Tier-3 heuristic: backfill the
    `functional` Criterion only + a `{TODO: add NFR/SLO + error-path}` note.)
-3. **Zero e2e REQs** → write the skeleton (header + empty `## 1. System Acceptance
-   Journeys` table + note "no system-behaviour requirements yet — all REQs unit/integration
-   witness" + empty `## 2. System AC Ledger`). Keeps the axis visible and fully inert
+   **§3 deferrals + header stamp (3.6.1+)**: the migrated/created file MUST mirror the Phase 3.4
+   template structure — include `## 3. Accepted system-acceptance deferrals` (empty `—` placeholder
+   row; merge-PRESERVE any existing §3 deferral rows verbatim) and `## 4. Change History` (map a
+   pre-3.6.0 file's `## 3. Change History` by TITLE — it shifted §3→§4 in 3.6.0). Also stamp the
+   header `> dev-template: v{Phase-0 banner version}` (add if absent / refresh if stale), exactly
+   like main-flow Phase 3.4. Idempotent: re-running preserves §3 rows and re-stamps to current.
+3. **Zero e2e REQs** → write the skeleton: stamped header (`> dev-template: v{banner version}`) +
+   empty `## 1. System Acceptance Journeys` table + note "no system-behaviour requirements yet —
+   all REQs unit/integration witness" + empty `## 2. System AC Ledger` + empty `## 3. Accepted
+   system-acceptance deferrals` + `## 4. Change History`. Keeps the axis visible and fully inert
    (board shows `(no journeys)`; /dev `in_scope_sys_ac_ids` stays `[]`).
 4. **e2e REQs present** → seed journeys:
    - Use the **emergent-journey groupings discovered in UT.10.A step 4** (Tier 1/2) as the
@@ -1236,7 +1246,7 @@ Legacy-body flags: Y (user-resolved via UT.6.1).
 System-acceptance migration (UT.10):
   Journey discovery tier: {dual-evaluator | single-evaluator (Codex absent) | heuristic fallback (no evaluator)} — {N} round(s); {M} under-classified REQ(s) + {K} emergent journey(s) found
   Witness column: {added — N REQs defaulted unit, M marked e2e | already present (skipped) | n/a (no registry)}
-  docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with {J} SYS-J / {A} atomic SYS-AC seeded | merge-preserved ({P} passed SYS-AC kept, {B} §1.1 criteria backfilled) | n/a}
+  docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with {J} SYS-J / {A} atomic SYS-AC seeded | merge-preserved ({P} passed SYS-AC kept, {B} §1.1 criteria backfilled, {D} §3 deferrals kept) | n/a} — §3 Accepted-deferrals section + `> dev-template:` stamp ensured (3.6.1)
   NOTE: UT.10 ran evaluator-grade JOURNEY discovery (tier above) but did NOT regenerate
      ARCHITECTURE.md / MODULE docs — run a full `/spec` for complete spec re-convergence
      (PRD coverage, MECE, interface consistency). If the tier is "heuristic fallback", the
