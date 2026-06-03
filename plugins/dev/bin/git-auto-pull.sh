@@ -41,6 +41,7 @@ COOLDOWN_FILE="$DATA_DIR/last-pull-${PROJ_HASH}"
 if [ -f "$COOLDOWN_FILE" ]; then
   LAST_PULL=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
   case "$LAST_PULL" in ''|*[!0-9]*) LAST_PULL=0 ;; esac  # corrupt cooldown file → treat as never-pulled
+  LAST_PULL=$((10#$LAST_PULL))                           # base-10 (a leading-zero value like "08" must not parse as octal)
   NOW=$(date +%s)
   ELAPSED=$((NOW - LAST_PULL))
   [ "$ELAPSED" -lt "$COOLDOWN" ] && exit 0
