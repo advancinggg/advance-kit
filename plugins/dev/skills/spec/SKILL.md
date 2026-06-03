@@ -102,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.5.1 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -3028,7 +3028,11 @@ unit/integration witness)".
    Sources, AND every journey MUST decompose into ≥1 atomic SYS-AC in §1.1 (≥1 `functional`; plus
    `nfr/slo` + `error-path` where the journey implies them). The Phase 1.3 architecture evaluator
    fails (`system_coverage < 100%`) otherwise.
-7. Apply merge-preserve against the existing `docs/SYSTEM-ACCEPTANCE.md`.
+7. Apply merge-preserve against the existing `docs/SYSTEM-ACCEPTANCE.md`: preserve §2 `passed`
+   rows (never downgrade); **preserve each `## 3. Accepted system-acceptance deferrals` row whose
+   SYS-AC is still Active=Y and §2-untested** (drop it once that SYS-AC reaches §2 `passed`, or if
+   the SYS-AC is deprecated Active=N); and carry `## 4. Change History` forward (match by the
+   "Change History" title — it shifted §3→§4 in 3.6.0/K9, so map by title, not number).
 
 Use the Write tool to generate `docs/SYSTEM-ACCEPTANCE.md`:
 
@@ -3118,7 +3122,28 @@ error-path), not the exception.
 **System E2E readiness** = count(SYS-AC where Active=Y AND Status=passed) /
 count(SYS-AC where Active=Y) × 100. Denominator 0 → display `—` (no journeys; vacuously ready).
 
-## 3. Change History
+## 3. Accepted system-acceptance deferrals
+
+User-accepted system-acceptance deferrals (produced by `/dev` DoD only after `max_round`, via an
+explicit AskUserQuestion). A deferral **NEVER** marks its SYS-AC `passed` in §2 — the linked
+`Witness:e2e` REQ stays `Partial` and system E2E readiness stays <100%. This table records WHY the
+gap is accepted, **durably**: the per-run `.dev-state/state.json.system_acceptance_deferred` is
+ephemeral + gitignored, and this is its committed mirror so the accepted gap stays visible (incl.
+on `/dev board`) after the run ends. Empty until a deferral is accepted.
+
+| SYS-AC ID | Journey | Reason | Accepted At | By Task |
+|-----------|---------|--------|-------------|---------|
+| — | — | — | — | — |
+
+- One row per user-accepted deferral. `Accepted At` is the ISO `user_accepted_at` timestamp; an
+  agent may NOT self-defer (no row without it). The `—` placeholder row is ignored by readers.
+- **Authored by `/dev` SUMMARY** (mirrors `state.json.system_acceptance_deferred`); `/spec`
+  merge-preserves these rows on rerun. It NEVER flips a §2 status — the witness-floor is intact,
+  the §2 ledger stays passed/untested only.
+- Not permanent: once the SYS-AC later passes on a real wired run, `/dev` removes its row here as
+  it writes §2 `passed`.
+
+## 4. Change History
 
 | Date | Change |
 |------|--------|

@@ -349,32 +349,45 @@ print_section_1() {
     printf '  %s\n' "—"
   fi
 
-  # ── System E2E readiness (axis 2, 2.10.0+) — docs/SYSTEM-ACCEPTANCE.md §2 ──
-  # Reported as a distinct trailing row so the two axes sit adjacent (module
-  # AC coverage above, system E2E readiness here) and are never collapsed into
-  # one number. Inert when the file is absent (pre-2.10.0 / no Witness:e2e REQ).
+  # ── System E2E readiness (axis 2, 2.10.0+) — docs/SYSTEM-ACCEPTANCE.md ──
+  # A distinct trailing row so the two axes sit adjacent (module AC coverage
+  # above, system E2E readiness here) and are NEVER collapsed into one number.
+  # 3.6.0/K9: a single awk pass also reads §1.1 (Type, for the per-Type breakdown)
+  # and §3 (Accepted deferrals). The % still counts a deferral as NOT-passed — the
+  # "(N deferred-accepted)" annotation explains the shortfall rather than hiding it.
+  # Inert when the file is absent (pre-2.10.0 / no Witness:e2e REQ).
   local sysfile="$REPO_ROOT/docs/SYSTEM-ACCEPTANCE.md"
   if [ -f "$sysfile" ]; then
-    local sys_stats sys_passed sys_active
+    local sys_stats sys_passed sys_active dc fp fa np na ep ea
     sys_stats=$(awk '
-      /^## 2\. System AC Ledger/ { in_sec=1; next }
-      in_sec && /^## / { exit }
-      in_sec && /^\|/ {
+      /^### 1\.1 / { sec="11"; next }
+      /^### /      { sec="";   next }
+      /^## 2\. System AC Ledger/ { sec="2"; next }
+      /^## 3\. Accepted system-acceptance deferrals/ { sec="3"; next }
+      /^## /       { sec="";   next }
+      /^\|/ {
         n = split($0, c, "|")
-        if (n < 6) next
+        if (n < 4) next
         for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", c[i]) }
-        # Columns: c[2]=SYS-AC ID, c[4]=Active, c[5]=Status. Reject header + separator.
-        if (c[2] == "SYS-AC ID" || c[2] ~ /^-+$/) next
-        active = c[4]; status = c[5]
-        if (active == "Y") {
-          active_count++
-          if (status == "passed") passed_count++
+        if (c[2] !~ /^SYS-AC-/) next          # skip header / separator / "—" placeholder
+        if (sec == "11") { kind[c[2]] = c[4] }          # §1.1: c[4]=Type
+        else if (sec == "2") {                          # §2: c[4]=Active, c[5]=Status
+          if (c[4] == "Y") { act[c[2]] = 1; if (c[5] == "passed") pass[c[2]] = 1 }
         }
+        else if (sec == "3") { defr[c[2]] = 1 }          # §3: accepted deferral
       }
-      END { printf "%d %d", (passed_count + 0), (active_count + 0) }
+      END {
+        ap = aa = 0
+        for (id in act) { aa++; if (id in pass) ap++; t = kind[id]; ta[t]++; if (id in pass) tp[t]++ }
+        dcn = 0; for (id in defr) dcn++
+        printf "%d %d %d %d %d %d %d %d %d", ap, aa, dcn, \
+          (tp["functional"]+0), (ta["functional"]+0), \
+          (tp["nfr/slo"]+0),    (ta["nfr/slo"]+0), \
+          (tp["error-path"]+0), (ta["error-path"]+0)
+      }
     ' "$sysfile")
-    sys_passed="${sys_stats%% *}"
-    sys_active="${sys_stats##* }"
+    read -r sys_passed sys_active dc fp fa np na ep ea <<< "$sys_stats" || true
+    : "${sys_passed:=0}" "${sys_active:=0}" "${dc:=0}" "${fp:=0}" "${fa:=0}" "${np:=0}" "${na:=0}" "${ep:=0}" "${ea:=0}"
     local sys_label="(system E2E readiness)"
     if [ "$sys_active" -eq 0 ]; then
       printf '%-32s  %-9s  ' "$sys_label" "$sys_passed/$sys_active"
@@ -386,9 +399,18 @@ print_section_1() {
       if [ "$syspct" -ge 85 ]; then scolor="$GREEN"
       elif [ "$syspct" -ge 70 ]; then scolor="$YELLOW"
       else scolor="$RED"; fi
+      local sys_trail="system"
+      [ "$dc" -gt 0 ] && sys_trail="system ($dc deferred-accepted)"
       printf '%-32s  %-9s  ' "$sys_label" "$sys_passed/$sys_active"
       _print_cell "${BOLD}${scolor}" "${syspct}%" 6
-      printf '  %s\n' "system"
+      printf '  %s\n' "$sys_trail"
+      # B — per-Type breakdown (§1.1 Type joined to §2 status); only types with ≥1 Active SYS-AC
+      local tparts=""
+      [ "$fa" -gt 0 ] && tparts="${tparts}functional ${fp}/${fa} · "
+      [ "$na" -gt 0 ] && tparts="${tparts}nfr/slo ${np}/${na} · "
+      [ "$ea" -gt 0 ] && tparts="${tparts}error-path ${ep}/${ea} · "
+      tparts="${tparts% · }"
+      [ -n "$tparts" ] && printf '%sby type: %s%s\n' "$DIM" "$tparts" "$RESET"
     fi
   fi
   printf '\n'
@@ -400,9 +422,9 @@ print_section_1() {
 
 print_section_2() {
   printf '%s== Worktree status (git worktree × .dev-state/state.json) ==%s\n' "$BOLD" "$RESET"
-  printf '%-44s  %-32s  %-11s  %-5s  %s\n' "WORKTREE" "TASK_ID" "PHASE" "ROUND" "UPDATED"
+  printf '%-44s  %-32s  %-11s  %-5s  %-7s  %s\n' "WORKTREE" "TASK_ID" "PHASE" "ROUND" "DEFER" "UPDATED"
 
-  local row wt_path branch sf task phase round updated pcolor
+  local row wt_path branch sf task phase round updated pcolor deferred dcolor defF defS
   while IFS=$'\t' read -r wt_path branch; do
     [ -n "$wt_path" ] || continue
     sf="$wt_path/.dev-state/state.json"
@@ -421,12 +443,23 @@ print_section_2() {
         summary) pcolor="$GREEN" ;;
         *) pcolor="" ;;
       esac
+      # ── DEFER column (3.6.0/K9): Nf = deferred_findings (K6), Ns =
+      #    system_acceptance_deferred (K4). Both are accepted-but-unverified gaps;
+      #    counts only (numeric jq lengths, never user strings → no sanitize). ──
+      defF=$(jq -r '(.deferred_findings // []) | length' "$sf" 2>/dev/null); defF=${defF//[!0-9]/}; defF=${defF:-0}
+      defS=$(jq -r '(.system_acceptance_deferred // []) | length' "$sf" 2>/dev/null); defS=${defS//[!0-9]/}; defS=${defS:-0}
+      if [ "$defF" -gt 0 ] || [ "$defS" -gt 0 ]; then
+        deferred="${defF}f/${defS}s"; dcolor="$YELLOW"
+      else
+        deferred="—"; dcolor="$DIM"
+      fi
     else
       task="(no /dev workflow)"
       phase="—"
       round="—"
       updated="—"
       pcolor=""
+      deferred="—"; dcolor="$DIM"
     fi
 
     local short
@@ -436,7 +469,9 @@ print_section_2() {
 
     printf '%-44s  %-32s  ' "$short" "$task"
     _print_cell "$pcolor" "$(_truncate "$phase" 11)" 11
-    printf '  %-5s  %s\n' "$round" "$updated"
+    printf '  %-5s  ' "$round"
+    _print_cell "$dcolor" "$deferred" 7
+    printf '  %s\n' "$updated"
   done < <(_worktree_rows)
 
   printf '\n'

@@ -534,9 +534,26 @@ When editing any of these surfaces, the following ten rules MUST hold:
     deferral hiding/faking readiness would each be a MAJOR regression of the system-acceptance
     bar. The two-axis SUMMARY/board (never-merged) is unchanged.
 
+14. **Durable deferral persistence + dashboard surfacing (3.6.0, K9, additive)**: accepted
+    system-acceptance deferrals — previously only in the ephemeral, gitignored per-run
+    `state.json.system_acceptance_deferred` — now also persist to a NEW
+    `SYSTEM-ACCEPTANCE.md` **`## 3. Accepted system-acceptance deferrals`** section (Change
+    History shifts §3→§4), so the accepted gap stays durably visible. FROZEN-PRESERVING: the
+    §2 ledger columns/status/witness-floor are UNCHANGED (board's §2-scoped `c[4]`/`c[5]` parse
+    intact; a deferral STILL never writes §2 `passed`); `SYS-AC-{nn}` format unchanged; the two
+    coverage axes stay **never-merged**. Authorship is an *additive* grant: `/dev` SUMMARY
+    (which already writes §2 `untested→passed`) now ALSO appends/removes §3 rows mirroring
+    `system_acceptance_deferred`; `/spec` Phase 3.4 merge-preserves §3 rows (drop on §2
+    `passed`/deprecate) and maps Change History by title. `/dev board` reads §3 (deferral
+    annotation on the readiness axis), §1.1 `Type` (per-Type breakdown), and per-worktree
+    `deferred_findings`/`system_acceptance_deferred` (the **DEFER** column) — all read-only, the
+    §7.2 contract is unchanged. Removing the §3 section, the /dev §3 write, or the board reads,
+    OR letting a §3 deferral flip §2 status, would be a regression. board.sh stays read-only +
+    side-effect-free (the §7.2 / CLAUDE.md test-smoke contract).
+
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
-2.10.0 / 2.11.0 / 3.1.0 / 3.2.0 rules above are additive and do not supersede any earlier freeze.
+2.10.0 / 2.11.0 / 3.1.0 / 3.2.0 / 3.6.0 rules above are additive and do not supersede any earlier freeze.
 
 ## Release checklist (for version-drift visibility — 2.12.0+)
 
