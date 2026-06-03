@@ -532,12 +532,7 @@ When editing any of these surfaces, the following ten rules MUST hold:
     a recorded reason — the gap is surfaced, not hidden) and an agent may NOT self-defer. FROZEN:
     a deferral writing `passed`, an agent self-deferring without `user_accepted_at`, or a
     deferral hiding/faking readiness would each be a MAJOR regression of the system-acceptance
-    bar. The two-axis SUMMARY/board (never-merged) is unchanged. **3.6.1** completes the migration
-    path: `/spec upgrade-template` (UT.10.B) creates/merge-preserves the §3 deferrals section + maps
-    Change History §3→§4 + stamps the header, `/dev` SUMMARY creates §3 if absent, and UT.6 stamps
-    upgraded ARCHITECTURE/MODULE docs — so existing projects gain K1 stamps + the K9 §3 section via
-    `upgrade-template`, not only via a full `/spec` rerun. Leaving the upgrade path without §3/stamp
-    re-opens the gap (a regression).
+    bar. The two-axis SUMMARY/board (never-merged) is unchanged.
 
 14. **Durable deferral persistence + dashboard surfacing (3.6.0, K9, additive)**: accepted
     system-acceptance deferrals — previously only in the ephemeral, gitignored per-run
@@ -554,7 +549,12 @@ When editing any of these surfaces, the following ten rules MUST hold:
     `deferred_findings`/`system_acceptance_deferred` (the **DEFER** column) — all read-only, the
     §7.2 contract is unchanged. Removing the §3 section, the /dev §3 write, or the board reads,
     OR letting a §3 deferral flip §2 status, would be a regression. board.sh stays read-only +
-    side-effect-free (the §7.2 / CLAUDE.md test-smoke contract).
+    side-effect-free (the §7.2 / CLAUDE.md test-smoke contract). **3.6.1** completes this migration
+    path: `/spec upgrade-template` (UT.10.B) creates/merge-preserves the §3 deferrals section + maps
+    Change History §3→§4 + stamps the header; `/dev` SUMMARY creates the full §3 scaffold (heading +
+    table header + `—` placeholder) if absent; and UT.6 stamps upgraded ARCHITECTURE/MODULE docs (K1).
+    So existing projects gain the §3 section + K1 stamps via `upgrade-template`, not only via a full
+    `/spec` rerun — leaving the upgrade path without §3/stamp re-opens the gap.
 
 **All prior checklist freezes (2.4.0 CONTEXT-MAP/GLOSSARY, 2.5.0 ADR, 2.7.0
 upstream-alignment rules 1-9, 2.8.0 worktree-parallel rules 1-7) REMAIN in force.** The
