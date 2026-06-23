@@ -136,7 +136,7 @@ autonomously explore source. Command template:
 codex exec "<Plan Mode Protocol + review instructions>" \
   -C "$(git rev-parse --show-toplevel)" \
   -s read-only \
-  -c 'model_reasoning_effort="high"' \
+  -c 'model_reasoning_effort="xhigh"' \
   --enable web_search_cached \
   --json 2>/dev/null | jq -r --unbuffered '
     if .type == "item.completed" and .item then
@@ -330,7 +330,7 @@ For each: test name, error, root cause diagnosis. Read source files: {file_list}
 Do NOT suggest fixes." \
   -C "$(git rev-parse --show-toplevel)" \
   -s read-only \
-  -c 'model_reasoning_effort="high"' \
+  -c 'model_reasoning_effort="xhigh"' \
   --json 2>/dev/null | jq -r --unbuffered '...'
 ```
 (Use the jq JSON-parser template from the "Review Architecture" section above.)
@@ -365,7 +365,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.6.1 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.6.2 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then

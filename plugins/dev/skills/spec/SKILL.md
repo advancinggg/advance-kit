@@ -102,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.1 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.2 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -1889,7 +1889,7 @@ repeat:
      codex exec "<prompt above>" \
        -C "$(git rev-parse --show-toplevel)" \
        -s read-only \
-       -c 'model_reasoning_effort="high"' \
+       -c 'model_reasoning_effort="xhigh"' \
        --json 2>/dev/null | jq -r --unbuffered '
          if .type == "item.completed" and .item then
            if .item.type == "agent_message" and .item.text then .item.text
@@ -2689,7 +2689,7 @@ For each module (in topological order):
        codex exec "<prompt above>" \
          -C "$(git rev-parse --show-toplevel)" \
          -s read-only \
-         -c 'model_reasoning_effort="high"' \
+         -c 'model_reasoning_effort="xhigh"' \
          --json 2>/dev/null | jq -r --unbuffered '
            if .type == "item.completed" and .item then
              if .item.type == "agent_message" and .item.text then .item.text
