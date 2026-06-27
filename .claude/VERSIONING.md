@@ -634,3 +634,72 @@ disclosure field. Two rules MUST hold:
    forbids. The /dev §6.2 field whitelist stays a closed set (this is its only 3.4.0 addition).
 
 **All prior freezes (2.4.0–3.3.0) REMAIN in force.** The 3.4.0 rules above are additive.
+
+## Release checklist (for §1.5↔§3.4 ledger parity — 3.7.0+)
+
+The 3.7.0 minor closes the **§1.5↔§3.4 desync class**: the bug where an AC declared in MODULE
+§1.5 but not yet rowed in §3.4 (because row creation was deferred to "the next `/spec` rerun")
+let a REQ read `Verified` while a declared AC was never actually counted. The fix makes **§1.5
+the single authoritative AC-declaration source**, requires §3.4 to stay in **bijection** with it,
+and flips all three decision gates (DOCS row-creation, SUMMARY adjudication, `/spec` evaluator)
+from "§3.4-authoritative" to "§1.5-authoritative + fail-closed on a missing row". It is
+**additive and backward-compatible**: a project whose §3.4 already mirrors §1.5 behaves
+identically; the only output change is that a previously-over-claimed `Verified` REQ with a
+row-pending AC now correctly reads `Partial` until the row + witness land. When editing any of
+these surfaces, the following rules MUST hold:
+
+1. **§1.5 is authoritative; §3.4 mirrors it (FROZEN direction)**. Progress, REQ status, and the
+   `/spec` evaluator all derive the `Active=Y` AC *set* from §1.5 and read *status* from §3.4.
+   Reverting any gate to treat §3.4 as the authoritative existence source (so a §1.5 AC with no
+   §3.4 row silently drops from the denominator) re-opens the over-claim class and is a MAJOR
+   regression.
+
+2. **Refined authorship partition (additive — NOT a break of the prior partition)**. `/dev` DOCS
+   now **births** the `Active=Y, Status=untested` §3.4 stub row for every AC it declares in §1.5,
+   in the same DOCS commit (pure additive stub, never `passed`). `/spec` retains ownership of
+   Criterion-change `Active=Y↔N` flips, rerun merge-preserve, and the terminal set-equality
+   self-heal. `/dev` SUMMARY still owns ONLY `untested → passed`. The witness-floor is unchanged:
+   neither DOCS nor `/spec` may ever write `passed` (that is SUMMARY's exclusive write from a real
+   witness). Removing the DOCS row-birth, letting DOCS/`/spec` write `passed`, or moving the
+   `untested → passed` flip off SUMMARY is a MAJOR regression. (This is the MODULE §3.4 partition;
+   the SYS-AC partition freeze — system-acceptance rule 4 — is unchanged.)
+
+3. **Fail-closed, never silent-undercount (FROZEN)**. SUMMARY counts a §1.5-declared AC with no
+   §3.4 row as `untested` (capping its REQ at `Partial`) and emits a `ledger_desync` finding
+   naming the orphaned AC-IDs. §6.1.1 is a **hard parity precondition**, not an advisory note —
+   the prior "the formula is still well-defined but will undercount — run `/spec` to resync"
+   escape is **deleted**. Re-introducing a silent-undercount path is a MAJOR regression.
+
+4. **DOCS exit invariant + Ledger Parity DoD dimension (FROZEN)**. DOCS is not complete until
+   every §1.5 AC it touched or added has a matching §3.4 row. The DoD gains a **Ledger Parity**
+   dimension/hard-gate (`§3.4 Active=Y AC-ID set ⊇ §1.5 Active=Y AC-ID set`, `ledger_desync == []`)
+   — the in-plugin equivalent of a repo-level ledger-integrity lint, with **no downstream-script
+   dependency**. Removing either is a MAJOR regression.
+
+5. **`/spec` evaluator bijection + witness parseability + terminal self-heal (FROZEN)**. The
+   Claude + Codex module evaluators check §1.5↔§3.4 bijection (§1.5-without-§3.4 → Critical;
+   §3.4-without-§1.5 → Warning; duplicate §3.4 AC-ID → Critical) with `parity_violations == 0` as
+   a convergence condition, plus witness parseability (a bare `tNN` / unresolvable Verification or
+   Test ID → Critical) and the witness-coverage axis (a module-mapped Active=Y REQ with no §1.5 AC
+   → Critical). The §3.4 Generation block's **terminal invariant** asserts
+   `set(§3.4 AC-IDs) == set(§1.5 AC-IDs)`, INSERTing missing rows as `untested` (self-heal) and
+   deprecating §1.5-absent rows `Active=N` — **writing `untested` only, never `passed`**. Weakening
+   any of these from a convergence/Critical condition to advisory is a regression.
+
+6. **D5 enhancements are additive (MINOR)**. The Codex-degradation **dual-Claude** fallback
+   (`dual-claude-degraded`, MAY substitute a second independent claude-auditor before dropping to
+   single-evaluator; stays flagged degraded, caps `Verified` confidence, forces merge-gate
+   re-review) and the **closed-loop liveness** rule (a closed-loop/data-flow AC PASSES only on a
+   real run with non-empty observed output, else UNTESTED — module-level analog of the
+   system-acceptance witness floor) are instruction-level, **no state.json schema bump** (state
+   stays `version: 6`). Both are MAY/additive; making the dual-Claude fallback contradict the
+   single-evaluator mirrors, or letting a mechanism-only test PASS a closed-loop AC, is a
+   regression.
+
+7. **8-sync-point + description rotation still apply** (Hard rules 1+2+5, 2.8.1 rule 9): the
+   version moves across plugin.json, marketplace.json dev entry, the 3 README cells, and the 3
+   SKILL.md banner literals together; the description compressed-history tail rotates (new Latest,
+   demote prior Latest to Earlier, drop the oldest beyond 3 minors).
+
+**All prior freezes (2.4.0–3.4.0) REMAIN in force.** The 3.7.0 rules above are additive and do not
+supersede any earlier freeze.

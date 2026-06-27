@@ -102,7 +102,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.6.2 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.7.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -2484,6 +2484,18 @@ Generation rules (merge-preserve):
   - New AC IDs (added in this run): Active=Y, Status=untested
   - Removed AC IDs (no longer in §1.5): Active=N (deprecated)
   - This ensures /spec rerun never loses verification progress for unchanged AC
+- **Terminal invariant (after merge — §1.5 is the authoritative AC source)**: assert
+  `set(§3.4 AC-IDs) == set(§1.5 AC-IDs)`.
+  - For every AC present in §1.5 but MISSING from §3.4 → INSERT `Active=Y, Status=untested`
+    (self-heals a partial desync — including legacy rows that predate /dev DOCS row-birth).
+  - For every AC present in §3.4 but ABSENT from §1.5 → set `Active=N` (deprecate, never delete).
+  - Report the pre/post set-delta. This makes `/spec` the **deterministic repairer** of ANY
+    §1.5↔§3.4 drift: a legacy desync is materialized as `untested` on the next rerun, never
+    silently lost.
+  - ⚠ The self-heal writes `untested` ONLY (honest) — it NEVER fabricates `passed`. `passed` is
+    written solely by `/dev` SUMMARY from a real witness. (No conflict with a real-test /
+    reconciliation lane: that lane runs real tests and lands `passed`; this invariant only
+    back-fills the missing ROW so the AC is counted, fail-closed, until a witness passes it.)
 
 ### 3.5 Feature Implementation Record
 
@@ -2612,11 +2624,22 @@ For each module (in topological order):
           2. Interface consistency — module interfaces match ARCHITECTURE.md.
           3. Template completeness — all sections have substantive content.
           4. Cross-module references — dependencies exist, required interfaces match.
-          5. Requirement traceability (Active determined by §3.4 ledger):
-             if REQUIREMENTS_REGISTRY.md exists, verify Active=Y REQ-ID → Active=Y AC (per §3.4) → Test ID
-             chain is complete for this module.
-             Missing AC for Active=Y REQ-ID → Critical. Test without AC Link → Warning.
-             §1.5/§3.3 referencing Active=N IDs → Warning (stale reference).
+          5. Requirement traceability + §1.5↔§3.4 parity + witness coverage
+             (§1.5 is the AUTHORITATIVE AC declaration; §3.4 carries Active/Status):
+             if REQUIREMENTS_REGISTRY.md exists, verify the chain
+             Active=Y REQ-ID → §1.5 AC (Active per §3.4) → §3.4 row → §3.3 Test ID is complete.
+             - Bijection: every §1.5 AC-ID has exactly one §3.4 row and vice-versa.
+               §1.5 AC with NO §3.4 row → Critical (row-pending; over-claim risk).
+               §3.4 row with NO §1.5 AC → Warning (orphan / deprecated-but-undeleted).
+               Duplicate AC-ID within §3.4 → Critical.
+               `parity_violations == 0` is a convergence condition for this module's evaluator loop.
+             - Witness coverage (the third axis, alongside module + system coverage): a module-mapped
+               Active=Y REQ-ID with NO §1.5 AC, or whose AC have no resolvable witness, is a visible
+               Critical — never silently "covered". Missing AC for Active=Y REQ-ID → Critical.
+               Test without AC Link → Warning.
+             - Witness parseability: every §1.5 'Verification' entry / §3.3 Test ID must resolve to a
+               real, on-topic test symbol; a bare `tNN` or an unresolvable reference → Critical.
+             - §1.5/§3.3 referencing Active=N IDs → Warning (stale reference).
           6. Contract reference consistency (if ARCHITECTURE.md §6.1 has Contract Registry):
              - §2.3 Provided Interfaces Contract IDs must be registered in §6.1 as Active=Y
              - §2.2 Required Contract IDs must exist in some module's §2.3 Provided
@@ -2652,10 +2675,17 @@ For each module (in topological order):
           Read MODULE: docs/modules/MODULE-{NNN}-{name}.md.
           Check: PRD detail preservation (code samples, schemas, API defs),
           interface consistency with ARCHITECTURE, template completeness.
-          Also check requirement traceability (Active determined by §3.4 ledger):
-          if REQUIREMENTS_REGISTRY.md exists, verify Active=Y REQ-ID → Active=Y AC-ID (per §3.4) → Test ID
+          Also check requirement traceability + §1.5↔§3.4 parity + witness coverage
+          (§1.5 is the AUTHORITATIVE AC declaration; §3.4 carries Active/Status):
+          if REQUIREMENTS_REGISTRY.md exists, verify Active=Y REQ-ID → §1.5 AC-ID (Active per §3.4) → §3.4 row → Test ID
           chain is complete for this module.
-          Missing AC for Active=Y REQ-ID → Critical. Test without AC Link → Warning.
+          Bijection: every §1.5 AC-ID has exactly one §3.4 row and vice-versa —
+          §1.5 AC with no §3.4 row → Critical (row-pending); §3.4 row with no §1.5 AC → Warning (orphan);
+          duplicate §3.4 AC-ID → Critical; parity_violations == 0 is a convergence condition.
+          Witness coverage: a module-mapped Active=Y REQ-ID with no §1.5 AC (or AC with no resolvable witness)
+          is a visible Critical, never silently covered. Missing AC for Active=Y REQ-ID → Critical. Test without AC Link → Warning.
+          Witness parseability: every §1.5 'Verification' / §3.3 Test ID must resolve to a real on-topic test symbol;
+          a bare `tNN` or unresolvable reference → Critical.
           §1.5/§3.3 referencing Active=N IDs → Warning (stale reference).
 
           Also check contract reference consistency (if ARCHITECTURE.md §6.1 has Contract Registry):

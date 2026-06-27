@@ -128,7 +128,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.6.2` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.6.0 `/dev board` 呈现系统验收评估轴 —— deferral（带原因）、原子 functional/nfr/error-path 类型拆分、每个 worktree 的 DEFER 列 —— 由 SYSTEM-ACCEPTANCE.md §3 持久化 deferral 支撑。**早期：** 3.5.0 /prd 要求每条 §3 flow 带系统验收标记 + 旧 PRD backfill、3.4.0 Iron-Rule 诚实披露区分 + 结构化「Scope & unverified」字段、3.3.0 `/spec upgrade-template` 中途插小节 renumber-preserve。 |
+| `dev` | `3.7.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.7.0 §1.5↔§3.4 ledger 一致性 —— §1.5 是 AC 声明的权威源，/dev DOCS 在同一 commit 内为每个新 AC 建 §3.4 行，于是 SUMMARY、§6.1.1 进度门、/spec 模块评审器都对「§1.5 声明了但 §3.4 缺行」的 AC 一律 fail-closed（封堵了 declared-but-unrowed AC 让 REQ 误读 Verified 的 over-claim 类问题），并新增 Ledger Parity DoD 门。**早期：** 3.6.0 `/dev board` 呈现系统验收轴（deferral + 原子类型拆分 + 每 worktree 的 DEFER 列）+ §3 持久化、3.5.0 /prd 每条 §3 flow 带系统验收标记 + 旧 PRD backfill、3.4.0 Iron-Rule 诚实披露区分 + 结构化「Scope & unverified」字段。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

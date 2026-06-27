@@ -29,10 +29,23 @@ defines when to bump patch / minor / major.
   three-part §1.x / §2.x / §3.x numbering scheme for MODULE docs (Part 1 Requirements,
   Part 2 Specification, Part 3 Implementation). Historical single-segment `§1 … §14`
   references were fully migrated in 2.1.0 — do not re-introduce them.
-- The `/dev` progress formula lives in `/dev` SKILL.md §6.1.1 and reads only from MODULE
-  doc §3.4 (`count(Active=Y AND Status='passed') / count(Active=Y) × 100`). The §3.4
-  ledger has a partitioned authorship contract: `/spec` owns row creation and
-  Active=Y↔N flips; `/dev` SUMMARY owns only `untested → passed`.
+- The `/dev` progress formula lives in `/dev` SKILL.md §6.1.1 and reads from MODULE doc §3.4
+  (`count(Active=Y AND Status='passed') / count(Active=Y) × 100`). **3.7.0/K10 makes §1.5 the
+  authoritative AC declaration source and requires §3.4 to stay in bijection with it**, fixing the
+  desync class where an AC declared in §1.5 but row-pending in §3.4 let a REQ over-claim `Verified`.
+  The §3.4 ledger now has a **refined** (additive) partitioned authorship contract: `/dev` DOCS
+  **births** the `Active=Y, untested` stub row for each AC it declares in §1.5 (same commit, no
+  deferral); `/spec` owns Criterion-change `Active=Y↔N` flips + rerun merge-preserve + **terminal
+  set-equality self-heal** (back-fills any legacy §1.5-without-§3.4 desync as `untested`, deprecates
+  removed AC `Active=N` — never fabricates `passed`); `/dev` SUMMARY owns only `untested → passed`.
+  The three decision gates are now **§1.5-authoritative + fail-closed**: DOCS exit invariant (every
+  touched/added §1.5 AC has a §3.4 row), SUMMARY enumerates the Active=Y AC set from §1.5 and counts
+  a missing §3.4 row as `untested` (capping the REQ at `Partial`, emitting `ledger_desync`), §6.1.1
+  is a hard parity precondition (not advisory), and the `/spec` module evaluator (Claude+Codex)
+  checks §1.5↔§3.4 bijection + witness parseability with `parity_violations == 0` as a convergence
+  condition. A new **Ledger Parity** DoD dimension makes the over-claim class structurally
+  impossible. All frozen contracts live in VERSIONING.md "Release checklist (for §1.5↔§3.4 ledger
+  parity — 3.7.0+)".
 - The Iron Rule (dev/SKILL.md §0 + spec §0) forbids softening a live evaluator finding via
   free-form "Known gaps / Out-of-Scope / Deferred / TODO / v2 deferred / Skip for now". **3.4.0/K6
   adds the discriminator**: softening a finding (FORBIDDEN) vs declaring a tool/scope/run BOUNDARY
@@ -57,7 +70,7 @@ bash -n plugins/dev/bin/*.sh plugins/dev/skills/dev/bin/*.sh && \
   jq -e . .claude-plugin/marketplace.json plugins/dev/.claude-plugin/plugin.json \
     plugins/dev/hooks/hooks.json > /dev/null && \
   bash plugins/dev/bin/board.sh > /dev/null && \
-  bash plugins/dev/bin/dev-version-banner.sh dev 3.6.1 > /dev/null
+  bash plugins/dev/bin/dev-version-banner.sh dev 3.7.0 > /dev/null
 ```
 
 The board.sh runtime smoke (2.9.0+) catches awk/jq pipeline regressions that
