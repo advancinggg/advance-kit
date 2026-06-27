@@ -44,7 +44,13 @@ defines when to bump patch / minor / major.
   is a hard parity precondition (not advisory), and the `/spec` module evaluator (Claude+Codex)
   checks §1.5↔§3.4 bijection + witness parseability with `parity_violations == 0` as a convergence
   condition. A new **Ledger Parity** DoD dimension makes the over-claim class structurally
-  impossible. All frozen contracts live in VERSIONING.md "Release checklist (for §1.5↔§3.4 ledger
+  impossible. **3.8.0/K11 makes the DOCS exit invariant MECHANICAL**: `check-phase.sh` (the
+  PreToolUse gate) runs `skills/dev/bin/ledger-parity-check.sh` the moment a `state.json` write
+  flips `phase` out of `docs`, and DENIES the transition if any in-scope module's §1.5 AC has no
+  §3.4 row (naming the orphan AC-IDs). It is a **fail-OPEN correctness gate** (lightweight mode /
+  unparseable doc / missing file → allow; it never hard-blocks /dev), **scoped to the modules this
+  run touched** (`docs_allowlist` ∪ `in_scope_ac_ids` prefixes), denying only on a confirmed
+  desync. All frozen contracts live in VERSIONING.md "Release checklist (for §1.5↔§3.4 ledger
   parity — 3.7.0+)".
 - The Iron Rule (dev/SKILL.md §0 + spec §0) forbids softening a live evaluator finding via
   free-form "Known gaps / Out-of-Scope / Deferred / TODO / v2 deferred / Skip for now". **3.4.0/K6
@@ -70,15 +76,20 @@ bash -n plugins/dev/bin/*.sh plugins/dev/skills/dev/bin/*.sh && \
   jq -e . .claude-plugin/marketplace.json plugins/dev/.claude-plugin/plugin.json \
     plugins/dev/hooks/hooks.json > /dev/null && \
   bash plugins/dev/bin/board.sh > /dev/null && \
-  bash plugins/dev/bin/dev-version-banner.sh dev 3.7.0 > /dev/null
+  bash plugins/dev/bin/dev-version-banner.sh dev 3.8.0 > /dev/null && \
+  bash plugins/dev/skills/dev/bin/ledger-parity-check.sh /nonexistent /tmp; [ $? -eq 0 ]
 ```
 
 The board.sh runtime smoke (2.9.0+) catches awk/jq pipeline regressions that
 `bash -n` cannot, while remaining side-effect-free (board.sh is read-only by
 contract — see `plugins/dev/skills/dev/SKILL.md` §7.2). The `bash -n` glob now also
-covers `skills/dev/bin/check-phase.sh` (the PreToolUse phase gate), and the
+covers `skills/dev/bin/check-phase.sh` (the PreToolUse phase gate) and
+`skills/dev/bin/ledger-parity-check.sh` (3.8.0 DOCS-exit parity gate), and the
 `dev-version-banner.sh` runtime smoke (2.12.0+) exercises the read-only version-drift
-banner (also side-effect-free, always exits 0).
+banner (also side-effect-free, always exits 0). The `ledger-parity-check.sh` runtime
+smoke (3.8.0+) exercises its **fail-OPEN** path: given a nonexistent state file it must
+exit 0 (it denies a DOCS transition only on a confirmed §1.5↔§3.4 desync, never on a
+parse error). It is read-only and side-effect-free.
 
 Semantic correctness for skill-markdown changes falls on dual-model evaluator review
 (the `/dev` workflow handles this automatically).

@@ -701,5 +701,32 @@ these surfaces, the following rules MUST hold:
    SKILL.md banner literals together; the description compressed-history tail rotates (new Latest,
    demote prior Latest to Earlier, drop the oldest beyond 3 minors).
 
-**All prior freezes (2.4.0–3.4.0) REMAIN in force.** The 3.7.0 rules above are additive and do not
-supersede any earlier freeze.
+8. **Mechanical DOCS-exit parity gate (3.8.0, K11, additive MINOR — FROZEN properties)**. The
+   instruction-level DOCS exit invariant (rule 4) is now mechanically enforced: `check-phase.sh`
+   (the PreToolUse gate) calls the NEW `plugins/dev/skills/dev/bin/ledger-parity-check.sh` when a
+   `state.json` write flips `phase` out of `docs`, and DENIES the transition on a confirmed
+   §1.5↔§3.4 desync. The following are FROZEN — changing any is a regression:
+   (a) **fail-OPEN.** `ledger-parity-check.sh` is a CORRECTNESS gate, not a security gate: missing
+   file / unreadable state / `sdd_mode:false` (lightweight) / unparseable §1.5 → **exit 0 (allow)**.
+   It exits **2 (deny)** ONLY on a confirmed orphan (a §1.5 AC-ID with no §3.4 row). Making it
+   fail-CLOSED, or letting it block on ambiguity, would put it on the critical path of every /dev
+   run and is forbidden. Note the jq `//` boolean-false trap: read `sdd_mode` with
+   `if .sdd_mode == false then "false" else "true" end`, never `.sdd_mode // true`.
+   (b) **touched-module scope.** It checks only modules in `docs_allowlist` ∪ the `MODULE-NNN`
+   prefixes of `in_scope_ac_ids` — never untouched legacy modules (those self-heal on the next
+   `/spec`, rule 5). Widening to all modules would false-block legitimate runs.
+   (c) **trigger = phase-flip-out-of-docs only.** The gate fires solely when the state.json write's
+   new content sets `phase` to a non-docs value; ordinary docs-phase state writes pass through
+   unchanged. It denies only via `permissionDecision:"deny"` (never writes, never mutates state) —
+   the check-phase.sh read-only contract holds.
+   (d) **script interface.** `ledger-parity-check.sh <STATE_FILE> <REPO_ROOT>` → exit 0 (ok /
+   indeterminate) | 2 (desync; stdout lists `MODULE-file.md: AC-ID, …`). Changing the arg order,
+   exit-code meaning, or making it write anything is a MAJOR `dev` bump. It gets `bash -n` +
+   fail-open runtime smoke coverage (CLAUDE.md "Test command").
+
+9. **8-sync-point still applies for 3.8.0** (Hard rules 1+2+5): the 3 SKILL.md banner literals,
+   plugin.json, marketplace.json, and 3 README cells all move to 3.8.0 together; the description
+   tail rotated (Latest 3.8.0, demoted 3.7.0 → Earlier, dropped 3.4.0).
+
+**All prior freezes (2.4.0–3.4.0) REMAIN in force.** The 3.7.0 rules above (and the 3.8.0 mechanical
+gate, rules 8–9) are additive and do not supersede any earlier freeze.

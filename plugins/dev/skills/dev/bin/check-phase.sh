@@ -77,7 +77,32 @@ if [ -n "$FILE_PATH" ]; then
     docs|summary)
       # docs: only allowlist docs + state; summary: only MODULE docs + ARCHITECTURE + state
       STATE_REAL=$(resolve "$STATE_FILE")
-      [ "$ABS_PATH" = "$STATE_REAL" ] && { echo '{}'; exit 0; }
+      if [ "$ABS_PATH" = "$STATE_REAL" ]; then
+        # ── 3.8.0: DOCS-exit ledger-parity gate ───────────────────────────────
+        # When the agent writes state.json to flip `phase` OUT of docs, assert
+        # §1.5 ⊆ §3.4 for the touched modules BEFORE letting the run leave DOCS —
+        # the mechanical backstop for the 3.7.0 "DOCS births §3.4 rows" invariant.
+        # CORRECTNESS gate (not security): ledger-parity-check.sh fails OPEN on any
+        # ambiguity, so a parse hiccup never hard-blocks /dev; it denies ONLY on a
+        # confirmed desync (a §1.5 AC with no §3.4 row). Reads tool_input only.
+        if [ "$PHASE" = "docs" ]; then
+          NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // .tool_input.content // empty' 2>/dev/null || true)
+          if printf '%s' "$NEW_CONTENT" | grep -qE '"phase"[[:space:]]*:[[:space:]]*"(implement|audit|test|adversarial|summary)"'; then
+            PARITY_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/ledger-parity-check.sh"
+            if [ -f "$PARITY_SCRIPT" ]; then
+              set +e
+              PARITY_OUT=$(bash "$PARITY_SCRIPT" "$STATE_FILE" "$REPO_REAL" 2>/dev/null)
+              PARITY_RC=$?
+              set -e
+              if [ "$PARITY_RC" = "2" ]; then
+                emit_deny "[dev] DOCS-exit blocked: §1.5 AC(s) have no §3.4 ledger row (ledger desync). Add the matching '| <AC-ID> | Y | untested | — | — |' rows before leaving DOCS — ${PARITY_OUT}"
+                exit 0
+              fi
+            fi
+          fi
+        fi
+        echo '{}'; exit 0
+      fi
       ALLOWLIST=$(jq -r '.docs_allowlist[]? // empty' "$STATE_FILE" 2>/dev/null || true)
       if [ -n "$ALLOWLIST" ]; then
         while IFS= read -r allowed; do
