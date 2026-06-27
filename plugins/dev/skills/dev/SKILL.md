@@ -1898,6 +1898,10 @@ repeat:
         After test analysis, produce AC Verification for EXACTLY the AC-IDs from
         state.json in_scope_ac_ids (e.g. MODULE-001-AC-01). Do NOT expand beyond that list.
         Format: MODULE-NNN-AC-xx: PASS|FAIL|UNTESTED (test IDs).
+        Closed-loop liveness (3.7.0+): an AC asserting a closed-loop / data-flow behaviour
+        (input driven through → observable output, not merely mechanism EXISTS) is PASS only
+        when a real run drives the feed AND observed output is non-empty; a mechanism-only
+        test → UNTESTED ("closed loop not witnessed"), never PASS.
         AC Tested: tested/total. AC Passed: passed/tested.
         Check section 1.6 NFR/SLA targets. Report unverified NFRs as Coverage Gaps.
 
@@ -2234,7 +2238,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 | **Doc Consistency** | Doc Evaluator Verdict == PASS (sdd_mode only) | Doc Evaluator (4.1) |
 | **Regression** | regression_gate_status applicable + regression_pass_rate==1.0; or no_tested/no_historical_ac/no_downstream/degraded | Test Evaluator Regression Check (5.1) |
 | **System Acceptance** (2.10.0+) | every `in_scope_sys_ac_id` passed at witness level e2e/system on the REAL wired system (not mocked); or `in_scope_sys_ac_ids == []` (skipped) | Test Evaluator System-AC Check (5.1) + Adversarial (5.2) |
-| **Ledger Parity** (3.7.0+) | §1.5↔§3.4 bijection holds for every touched module — no row-pending §1.5 AC (`ledger_desync == []`) | SUMMARY §6.1.1 parity assertion + Module/Test Evaluator |
+| **Ledger Parity** (3.7.0+) | §1.5↔§3.4 bijection holds for every touched module — no row-pending §1.5 AC (`ledger_desync == []`) | SUMMARY §6.1.1 parity assertion + Ledger Parity hard gate |
 | **Findings Closure** | deferred_findings == [] OR all entries have user_accepted_at timestamp (fix #29) | Main agent enforced |
 
 **Hard gates** (enforced by the evaluators; only over the in_scope_ac_ids in state.json):
@@ -2411,16 +2415,21 @@ and status `Not Started`. Do not emit `0%` (misleading — there's nothing to me
 A `—` module means the module has not yet been speced with AC; run `/spec` to add AC
 before trusting any progress number.
 
-**§3.4 authorship contract**: the formula's integrity depends on §3.4 being mutated
-only through the two authorized paths:
-1. `/spec` (generation + rerun) — creates rows, flips `Active=Y↔N` on criterion change,
-   merge-preserves unchanged rows.
-2. `/dev` SUMMARY — flips `Status: untested → passed` for this task's in-scope AC IDs,
+**§3.4 authorship contract (3.7.0+ — three authorized writers)**: the formula's integrity
+depends on §3.4 being mutated only through the three authorized paths:
+1. `/dev` DOCS — **births** the `Active=Y, Status=untested` stub row for every AC it declares
+   in §1.5, in the **same DOCS commit** (pure additive stub; never `passed`). This keeps §3.4
+   in bijection with §1.5 at declaration time, so no AC is ever row-pending.
+2. `/spec` (generation + rerun) — flips `Active=Y↔N` on criterion change, merge-preserves
+   unchanged rows, and runs the **terminal set-equality self-heal** that back-fills any legacy
+   §1.5-without-§3.4 desync as `untested` (and deprecates §1.5-absent rows `Active=N`).
+3. `/dev` SUMMARY — flips `Status: untested → passed` for this task's in-scope AC IDs,
    fills `Verified By Task` and `Date` columns.
 
-Hand-edits to §3.4 outside these paths (e.g., direct row additions during IMPLEMENT,
-or `Status=passed` rows with no corresponding test run) are outside the progress
-pipeline's contract and will produce meaningless percentages.
+Witness-floor: only path 3 writes `passed` (paths 1 and 2 write `untested` only). Hand-edits
+outside these paths — an ad-hoc IMPLEMENT-phase row, or a `Status=passed` row with no
+corresponding test run — are outside the progress pipeline's contract and will produce
+meaningless percentages. (The sanctioned DOCS row-birth in path 1 is NOT such a hand-edit.)
 
 **Derived status** (replaces the old manually-flipped `{Draft / In Progress / Production}`
 in §3.1):
