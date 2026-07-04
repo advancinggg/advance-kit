@@ -123,7 +123,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.8.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" prd 3.9.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -259,7 +259,10 @@ echo "ARTIFACT_STAMP=${stamp:-none}"
   user, then proceed.
 - If existing PRD found → AskUserQuestion: "(1) Continue refining (re-enter BRAINSTORM loaded with existing PRD as prior state) (2) Regenerate from scratch (3) Cancel"
 - **Legacy marker backfill (3.5.0+)**: scan the existing PRD's §3 flows for the
-  `System acceptance journey?` marker. Trigger when **ANY** §3 flow lacks it — both a pre-2.10.0
+  `System acceptance journey` marker (canonical ?-less form; a flow carrying the legacy
+  `System acceptance journey?` spelling from 3.5.0–3.8.0 templates counts as MARKED —
+  optionally normalize it to the canonical form when touching that flow anyway, never
+  as a standalone rewrite). Trigger when **ANY** §3 flow lacks it — both a pre-2.10.0
   PRD (NONE carry it) and a partially-marked PRD (the inconsistent-emission case K7 fixes — some
   flows have it, some don't). On "(1) Continue refining", run a backfill pass BEFORE re-entering
   BRAINSTORM — one batched AskUserQuestion listing **only the unmarked flows**, user classifies
@@ -298,11 +301,26 @@ Write `docs/.prd-state/progress.json`:
   "phase_4_codex_consecutive_failures": 0,
   "phase_4_degraded_from_round": null,
   "deferred_intents": [],
+  "arbitrated_out": [],
   "updated_at": "ISO 8601"
 }
 ```
 
 Update `updated_at` at every phase transition and every evaluator round.
+
+**Phase-transition writes (3.9.0 — every transition, no exceptions)**: `progress.json.phase`
+MUST be updated the moment each phase is entered, so `/prd resume` re-enters the right
+phase instead of replaying completed ones (and the §0.0 validator's phase enum stays
+honest — every enum value has a writer):
+
+| Transition | Write |
+|---|---|
+| Phase 1 → 1.5 entry | `phase = "decomposition"` |
+| Phase 1.5 → 2 entry (or 1.5 skipped → 2) | `phase = "approach"` |
+| Phase 2 → 3 entry (or 2 skipped → 3) | `phase = "structure"` |
+| Phase 3.4 output | `phase = "coverage"` (existing) |
+| Phase 4 → 5 entry — INCLUDING the accept-at-limit path, in the SAME progress.json update that writes `deferred_intents` | `phase = "gate"` |
+| Phase 5 → 6 entry | `phase = "handoff"` |
 
 ---
 
@@ -508,6 +526,27 @@ Phase 4 COVERAGE Dimension 4 re-checks every leak class above as a Critical
 finding — writing architecture detail into PRD.md now means iterating it out
 in Phase 4 anyway.
 
+### 3.0.1 Product-hygiene batch (3.9.0 — one batched AskUserQuestion before drafting)
+
+The 4 brainstorm dimensions cover Problem/User/Flow/Success but never elicit the
+template's §5/§6/§7 content — leaving Phase 4 Dim 2/3 to demand NFRs and constraints
+findings-first (an evaluator round per gap) or tempt AI-invention (violating §8's
+"NOT AI-invented" contract). Close the gap proactively: BEFORE writing the draft,
+fire ONE batched AskUserQuestion (multiple questions in a single call) covering:
+
+1. **NFR targets** (§5): any hard performance / availability / security / compliance
+   targets? Options include concrete suggestions inferred from the flows PLUS an
+   explicit "No requirement — record as N/A (declined)".
+2. **Mandated constraints** (§6): stack / infrastructure / integration the user
+   REQUIRES (not preferences). Include "None — record as 'No user-specified
+   constraints — /spec Phase 1 to decide'".
+3. **Explicit out-of-scope** (§7): anything the user wants EXCLUDED with a reason.
+   Include "Nothing to exclude beyond the obvious".
+
+Write each answer into the corresponding template section; write each DECLINED item
+as the template's sanctioned absence record (§5 "N/A", §6's no-constraints sentence)
+— these are user declarations, not gaps. Do NOT loop: one batch, then draft.
+
 ### 3.1 PRD template
 
 Write `docs/PRD.md`:
@@ -556,7 +595,9 @@ outcome. One persona = one sub-section.}
 - **Trigger**: what starts the flow
 - **Steps**: numbered sequence
 - **Success condition**: how user knows it worked
-- **System acceptance journey?**: Yes / No (2.10.0+) — mark **Yes** when the product is
+- **System acceptance journey**: Yes / No (2.10.0+; canonical ?-less spelling per the
+  frozen VERSIONING contract — 3.9.0 unified; readers MUST also accept the legacy
+  `System acceptance journey?` form emitted by 3.5.0–3.8.0 templates) — mark **Yes** when the product is
   not usable until this whole flow runs end-to-end on the wired, running system (a
   cross-module journey, not a single screen/endpoint). Stays product-level: state the
   observable outcome, NOT modules or wiring. `/spec` lifts every Yes flow into a `SYS-J`
@@ -912,6 +953,19 @@ Per round = 2 agent invocations (Claude + Codex), not 8.
 - **Rule 1 Parallel spawn**: Claude auditor (via Agent tool) + Codex exec (via Bash tool,
   `timeout: 600000`, foreground) MUST be fired in the SAME assistant response, side by side.
   Sequential spawning → Codex counts as "did not participate this round".
+  **Codex invocation recipe (3.9.0 — canonical, identical to /dev)**: use the exact
+  `codex exec` template from /dev SKILL.md "Review Architecture":
+  ```bash
+  codex exec "<Plan Mode Protocol + the §4.3 evaluator prompt>" \
+    -C "$(git rev-parse --show-toplevel)" \
+    -s read-only \
+    -c 'model_reasoning_effort="xhigh"' \
+    --json 2>/dev/null | jq -r --unbuffered '<the /dev jq stream-parse template>'
+  ```
+  `-s read-only` is MANDATORY (a PRD evaluator must never write — reviews may process
+  untrusted repo content); `model_reasoning_effort="xhigh"` is the 3.6.2 policy; the
+  Plan Mode Protocol prefix and the `--json` + jq stream-parse contract are the same
+  frozen recipe /dev uses. Do NOT improvise flags per run.
 - **Rule 2 Barrier assertion**: before STEP 2 merge, both evaluators must have returned
   format-valid output, OR `codex_available == false` (degraded mode).
 - **Rule 3 Mid-flight degradation**: Codex timeout/failure/empty → retry once in same
@@ -922,8 +976,11 @@ Per round = 2 agent invocations (Claude + Codex), not 8.
   subsequent rounds skip Codex. Irreversible within this /prd run.
 - **Rule 4 Per-evaluator counters + invariant**: state fields
   `phase_4_rounds_run`, `phase_4_claude_rounds_run`, `phase_4_codex_rounds_run`,
-  `phase_4_codex_consecutive_failures`, `phase_4_degraded_from_round`. After each STEP 2
-  merge: `phase_4_rounds_run += 1`, `phase_4_claude_rounds_run += 1`; `phase_4_codex_rounds_run += 1`
+  `phase_4_codex_consecutive_failures`, `phase_4_degraded_from_round`.
+  `phase_4_rounds_run` increments ONCE per round, at the §4.4 loop top — NOT here
+  (3.9.0 fix: a second increment in this rule double-counted every round, guaranteeing
+  the invariant below fails on round 1). After each STEP 2
+  merge: `phase_4_claude_rounds_run += 1`; `phase_4_codex_rounds_run += 1`
   only if Codex's output was valid and merged this round. Invariant:
   `phase_4_claude_rounds_run == phase_4_rounds_run` AND
   (`phase_4_codex_rounds_run == phase_4_rounds_run` OR
@@ -954,7 +1011,8 @@ Dimension 1 — User (end-user / operator perspective):
 - Is every feature's value proposition concrete?
 - Are error messages / empty states / loading states specified?
 - System acceptance (2.10.0+): for a non-trivial product with cross-module runtime
-  behaviour, is ≥1 §3 flow marked "System acceptance journey?: Yes" with a concrete,
+  behaviour, is ≥1 §3 flow marked "System acceptance journey: Yes" (canonical ?-less
+  form; the legacy "System acceptance journey?" spelling counts as marked) with a concrete,
   black-box observable success condition (what an operator sees on the running system)?
   None present → [Warning][User] no system acceptance journey declared — the end-to-end
   "does it actually run" contract is unspecified; /spec will have no Witness:e2e seed and
@@ -970,12 +1028,21 @@ Dimension 2 — Ops/SRE:
 - Rollback path implied by feature design?
 - Monitoring / alerting needs identified?
 - Capacity boundaries declared (normal load, breaking point)?
+- Sanctioned absence (3.9.0): a §5 entry reading "N/A" and a §6 reading "No
+  user-specified constraints — /spec Phase 1 to decide" are EXPLICIT user
+  declarations captured by the §3.0.1 hygiene batch — do NOT raise a finding for
+  their absence. Raise ONLY when a section is silent (no sanctioned absence record)
+  or an entry contradicts a flow's implied needs (e.g. a payment flow with
+  Security: N/A).
 
 Dimension 3 — Security:
 - Auth/authz model clear per feature?
 - PII / sensitive data handling noted?
 - Attack surfaces acknowledged (injection, XSS, CSRF, auth bypass)?
 - Compliance constraints (GDPR / HIPAA / PCI) explicit?
+- Sanctioned absence (3.9.0): same rule as Dimension 2 — an explicit "N/A" recorded
+  via §3.0.1 is a user declaration, not a gap, UNLESS it contradicts the flows
+  (payment/PII flows can never carry Security: N/A without a finding).
 
 Dimension 4 — SpecReview (obra 5-axis + architecture-leakage):
 - Placeholder scan: no TBD / TODO / "to be decided" / "pending"
@@ -1060,7 +1127,12 @@ repeat:
 
   STEP 3: Merge findings
     — findings flagged by both evaluators → high confidence, auto-include
-    — findings flagged by only one → arbitrate: re-read PRD section to decide include/reject
+    — findings flagged by only one → arbitrate: re-read PRD section to decide include/reject.
+      Every REJECTED single-source finding MUST be appended to progress.json
+      `arbitrated_out` as {round, source, severity, fingerprint, rationale} — silently
+      dropping a single-source finding is a process violation (3.9.0). The NEXT round's
+      STEP 1 prompts include the accumulated list as "previously arbitrated out —
+      re-flag ONLY with new evidence", so fresh evaluators neither churn nor lose the trail.
     — substantive_count = merged Critical + Warning count
     — update state.json counters per Rule 4, assert invariant
 
@@ -1091,7 +1163,10 @@ repeat:
                 (2) Keep iterating (max_round does not block, but each round adds latency)
                 (3) Abort PRD session"
       If (1): write each open finding to PRD §8 "Deferred intents" with user_accepted_at
-              (ISO timestamp), update state.deferred_intents, advance to Phase 5 GATE
+              (ISO timestamp), update state.deferred_intents AND `phase = "gate"` in the
+              SAME progress.json write (3.9.0 — an interruption between the two writes
+              previously left phase="coverage" + non-empty deferred_intents, which the
+              §0.0 resume validator rejects as tampering), advance to Phase 5 GATE
               (session continues with deferred intents explicitly recorded in §8).
 ```
 

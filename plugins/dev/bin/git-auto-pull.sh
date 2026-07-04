@@ -32,6 +32,18 @@ BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
 # ── Guard: branch must have an upstream ──
 git rev-parse --abbrev-ref "@{u}" &>/dev/null || exit 0
 
+# ── Guard: never rebase mid-workflow (3.9.0) ──
+# An active /dev, /spec, or /prd run treats `git diff start_commit..HEAD` as a
+# deterministic audit target; a mid-run `pull --rebase` replays upstream commits
+# into that range, so diff/adversarial evaluators would review code the task never
+# wrote. Auto-pull resumes as soon as the workflow completes or is aborted.
+REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PROJECT_DIR")
+if [ -f "$REPO_TOP/.dev-state/state.json" ] \
+   || [ -f "$REPO_TOP/docs/.spec-state/progress.json" ] \
+   || [ -f "$REPO_TOP/docs/.prd-state/progress.json" ]; then
+  exit 0
+fi
+
 # ── Cooldown check ──
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/dev}"
 mkdir -p "$DATA_DIR"

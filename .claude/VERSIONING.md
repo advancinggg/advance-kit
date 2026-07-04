@@ -71,7 +71,9 @@ is hidden breakage for downstream users.
 
 When editing the Phase 1.2 ARCHITECTURE template or the Phase 2.2 MODULE template in
 `plugins/dev/skills/spec/SKILL.md`, update the Phase UT synchronized structures in
-the same commit:
+the same commit (3.9.0+: the Phase UT body lives in
+`plugins/dev/skills/spec/references/phase-ut.md` — progressive disclosure; UT.x
+section IDs unchanged):
 
 1. **Canonical section list** (`module_sections` / `arch_sections` YAML in Phase UT) —
    add/remove/retitle entries to mirror the live template headings.
@@ -103,7 +105,7 @@ not via `upgrade-template`. See /spec SKILL.md UT.6.1 "Note on §1.1" for the sa
 explanation at the enforcement site.
 
 When rewording any marker phrase in the template body, update UT.6.1 marker set in
-`/spec` SKILL.md Phase UT in the same commit.
+`/spec` `references/phase-ut.md` (Phase UT body, 3.9.0+) in the same commit.
 
 **Inserting a numbered section mid-template (3.3.0+, K5 renumber-preserve)**: adding a NEW
 numbered section in the middle of the Phase 1.2 / 2.2 template (e.g. a new §1.2 that shifts the
@@ -218,8 +220,9 @@ following six rules must hold (otherwise downstream ADR sets silently misbehave)
    `/spec` Phase 1.0 conflict-resolution Option C only.
 
 5. **Conflict detection keyword table and decision-marker proximity rule**: the
-   set is 22 opposing pairs (see `/spec` SKILL.md Phase 1.0 step 4 for the
-   canonical list — that list is the single source of truth for count +
+   set is 34 opposing pairs — 22 frozen originals + 12 space-variant aliases
+   added in 3.9.0 as MINOR additions (see `/spec` SKILL.md Phase 1.0 step 4 for
+   the canonical list — that list is the single source of truth for count +
    content; this checklist references it by count, not by redeclaring).
    Removing or renaming any existing pair is a MAJOR bump (existing downstream
    ADR sets would silently re-classify). Adding a new pair is MINOR. The
@@ -730,3 +733,116 @@ these surfaces, the following rules MUST hold:
 
 **All prior freezes (2.4.0–3.4.0) REMAIN in force.** The 3.7.0 rules above (and the 3.8.0 mechanical
 gate, rules 8–9) are additive and do not supersede any earlier freeze.
+
+## Release checklist (for enforcement repair + loop hardening — 3.9.0+)
+
+The 3.9.0 minor is a REPAIR + hardening release driven by an adversarially-verified deep review
+(2026-07-04, 28 confirmed findings). It fixes the P0 discovery that the PreToolUse gate's output
+shape was never honored by the harness, closes the review's P1–P4 classes, and introduces
+progressive disclosure. When editing any of these surfaces, the following rules MUST hold:
+
+1. **Hook decision shape FROZEN**: every check-phase.sh deny/ask is emitted as
+   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":…,"permissionDecisionReason":…}}`.
+   Claude Code zod-strips unknown TOP-LEVEL keys, so a bare top-level `permissionDecision` is
+   silently ignored and the entire gate fails open — the pre-3.9.0 state. Reverting to a
+   top-level shape is a CRITICAL regression (it re-disables the whole enforcement layer). The
+   CLAUDE.md test command carries a deny-shape runtime smoke; keep it passing.
+
+2. **Semantic DOCS-exit flip detection (upgrades 3.8.0 rule 8c, same frozen trigger)**: the
+   parity gate fires when the state.json write's POST-EDIT content sets `phase` to a non-docs
+   value — detected by reconstructing the post-edit file (Write → content; Edit →
+   old_string→new_string applied), NOT by grepping the payload for a `"phase":` literal (the
+   minimal Edit `"docs"`→`"implement"` never contains it). Indeterminate reconstruction → not a
+   flip (fail-open, rule 8a intact). Reverting to payload-grep re-opens the bypass.
+
+3. **Corrupt-state repair channel**: on corrupt/unknown `phase`, check-phase.sh allows writes to
+   the STATE FILE ITSELF and denies everything else — otherwise `/dev doctor`'s own fix is
+   denied and the session deadlocks. Removing this channel re-introduces the deadlock; widening
+   it beyond the state file weakens fail-closed.
+
+4. **Auto-sync stand-down FROZEN**: stop.sh AND git-auto-pull.sh exit without side effects when
+   `.dev-state/state.json`, `docs/.spec-state/progress.json`, or `docs/.prd-state/progress.json`
+   exists at the repo top (active workflow). Protects the deterministic `start_commit..HEAD`
+   audit target from foreign rebase commits and `git add -A` sweeps, and stops mid-phase pushes
+   before user gates. stop.sh's clean-tree fast path scans the outgoing range `@{u}..HEAD` with
+   gitleaks (fail-closed, same rc semantics as the staged scan) and derives the push remote from
+   `@{u}` (fallback `origin`). Removing any of these gates is a MAJOR regression. The stop.sh
+   gate count is now 6 (SKILL.md `references/worktree.md` §8.3 rule 5 is the authoritative
+   description).
+
+5. **Arbitration log (all three skills)**: a single-source evaluator finding dismissed at merge
+   MUST be recorded (`arbitrated_out`: round, source, severity, fingerprint, rationale — in
+   /dev eval_history entries; /spec + /prd progress.json) and fed to the next round's evaluator
+   prompts ("re-flag only with new evidence"). /dev SUMMARY's "Scope & unverified" includes the
+   run's arbitrated_out count + fingerprints (a §6.2-whitelist addition, mechanically sourced —
+   NOT free-form). Removing the log or the feed-forward re-opens the silent-dismissal hole.
+
+6. **Per-loop round semantics**: `max_round` (10) and every "more than 10 rounds" limit count
+   PER evaluation loop — `len([e for e in eval_history if e.phase == current_loop])` — while
+   `eval_round` stays the unified cumulative counter (Sync Protocol rule 5 unchanged). The
+   accept-at-limit escape hatch opens ONLY on the per-loop count. /prd's `phase_4_rounds_run`
+   increments ONCE per round (at the §4.4 loop top; the former Rule-4 double increment was a
+   bug). /prd writes `progress.json.phase` at EVERY phase transition (incl. accept-at-limit
+   writing `phase="gate"` atomically with `deferred_intents`).
+
+7. **TEST single-execution model**: §5.1 STEP 0 — the main agent executes `{test_cmd}` (and the
+   SYS-AC harness when in scope) ONCE per round, capturing to
+   `.dev-state/test-output-round-{N}.txt` / `sysac-output-round-{N}.txt`; BOTH evaluators
+   independently ANALYZE the captured output and MUST NOT re-execute (Codex `-s read-only`
+   cannot run write-needing suites or bind ports anyway). The witness-floor is unchanged — the
+   single run still drives the REAL wired system. Reverting to evaluator-side execution
+   re-introduces worktree collisions + sandbox-artifact FAILs.
+
+8. **Rerun preservation (MODULE Part-3 knowledge)**: /spec rerun carries §3.2, §3.5, §3.6,
+   §3.7 (append-only), §3.8, non-placeholder §2.13/§2.14, and the `> accepted-at-limit:` stamp
+   forward VERBATIM — even on "Regenerate all". Weakening this back to §3.4/IDs-only silently
+   destroys /dev-authored implementation knowledge (the pre-3.9.0 loss class).
+
+9. **Accept-at-limit durable stamp**: `> accepted-at-limit: round {N}, {ISO}` on the accepted
+   doc's header, written in the same step as the progress.json record; removed only by a later
+   CLEAN evaluator convergence on that doc. /dev PLAN warns on in-scope stamped docs. The
+   §0.3.1 state deletion is only safe BECAUSE the stamp persists — do not remove either side.
+
+10. **Marker literal canonicalized**: the PRD §3 flow marker is `System acceptance journey:
+    Yes/No` (?-less — matching the frozen system-acceptance rule 8 contract). /prd emits the
+    canonical form; ALL readers (/prd Phase 4 Dim 1, Phase 0.2 backfill, /spec UT.10 Tier-3
+    heuristic, /spec prose) accept the legacy `System acceptance journey?` spelling from
+    3.5.0–3.8.0 PRDs as marked. Removing legacy acceptance strands existing PRDs.
+
+11. **Phase 3.5 mechanical artifact lint**: SYSTEM-ACCEPTANCE §1.1↔§2 SYS-AC set-equality +
+    duplicates + ≥1-functional-per-journey + witness-floor + e2e-REQ coverage + Module-Chain
+    existence; IMPLEMENTATION_ORDER cycle-freedom; CONTEXT-MAP reference resolution. Runs after
+    Phase 3.4, blocks Phase 4 until clean. This (not the Phase 1.3 evaluator, which is
+    design-level only) verifies the MATERIALIZED Phase 3 artifacts.
+
+12. **Progressive disclosure layout**: Phase UT body → `skills/spec/references/phase-ut.md`;
+    Phase ADR-NEW body → `skills/spec/references/adr-new.md`; /dev §7 → 
+    `skills/dev/references/board.md`; /dev §8 → `skills/dev/references/worktree.md`. Loaded on
+    demand via the Tier 1/2/3 resolution in each SKILL.md stub. UT.x / §7.x / §8.x section IDs
+    are UNCHANGED (all prior freezes referencing them stay valid). The `## ADR Template` block
+    stays INLINE in spec SKILL.md (2.5.0 rule 3 unbroken) — ADR-NEW's template extraction still
+    targets SKILL.md. UT.4 body-lookup resolves SKILL.md via Tier 1/2/3 (the hardcoded
+    repo-relative path only exists in the plugin-development repo). Moving a reference body
+    back inline is allowed (PATCH); moving MORE content out is MINOR; renaming the references/
+    filenames is MAJOR (stub pointers + this checklist break).
+
+13. **ADR detection recall**: 12 space-variant alias pairs added (canonical count now 34 — see
+    rule 5 of the 2.5.0 checklist, updated); the empty-`Modules affected` case emits a
+    NON-BLOCKING inconclusive warning + optional back-fill prompt (never auto-filled, never a
+    conflict flag without condition (a)); `/spec adr-new` offers a Modules-affected
+    AskUserQuestion at creation. NotebookEdit joined the PreToolUse matchers.
+
+14. **Emergent-journey user arbitration**: Gate 2 surfaces evaluator-discovered emergent
+    journeys for per-journey accept/reject; rejections are sanctioned records
+    (`rejected_journeys` + `user_accepted_at`) excluded from `system_uncovered_count` unless
+    NEW REQ evidence appears, and disclosed in the Final Report. Discovery itself stays
+    evaluator-backed completion (system-acceptance rule 11 unbroken) — only the USER prunes,
+    only at the gate.
+
+15. **8-sync-point + description rotation still apply** (Hard rules 1+2+5, 2.8.1 rule 9): all 8
+    points moved to 3.9.0 together; the description tail rotated (Latest 3.9.0, Earlier
+    3.8.0/3.7.0/3.6.0, dropped 3.5.0).
+
+**All prior freezes (2.4.0–3.8.0) REMAIN in force.** The 3.9.0 rules above are additive (rule 2
+refines 3.8.0 rule 8(c)'s detection mechanism while preserving its frozen trigger semantics; rule
+12 relocates frozen bodies without changing their contracts).

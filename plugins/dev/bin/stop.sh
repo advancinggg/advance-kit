@@ -37,16 +37,57 @@ git remote | grep -q . || exit 0
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 [ -z "$BRANCH" ] && exit 0
 
+# ── Active-workflow guard (3.9.0) ──
+# While a /dev, /spec, or /prd run is active, auto-sync stands down entirely:
+# `git add -A` here would sweep unfinished mid-phase work into an auto commit,
+# polluting the deterministic `git diff start_commit..HEAD` audit target (the
+# exact reason /dev §3.1 bans `git add -A`) and pushing unconfirmed DOCS/IMPLEMENT
+# edits before the user gates ran. Workflow commits are made explicitly by the
+# skills themselves; auto-sync resumes when the state file is cleaned up.
+REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PROJECT_DIR")
+if [ -f "$REPO_TOP/.dev-state/state.json" ] \
+   || [ -f "$REPO_TOP/docs/.spec-state/progress.json" ] \
+   || [ -f "$REPO_TOP/docs/.prd-state/progress.json" ]; then
+  echo "[$(date)] Active workflow state detected — auto-sync skipped in $PROJECT_DIR" >> "$LOG"
+  exit 0
+fi
+
+# ── Gitleaks binary (resolved early: both push paths must scan) ──
+GITLEAKS_BIN=""
+if   [ -x "$HOME/.local/bin/gitleaks" ]; then GITLEAKS_BIN="$HOME/.local/bin/gitleaks"
+elif command -v gitleaks >/dev/null 2>&1;   then GITLEAKS_BIN=$(command -v gitleaks)
+fi
+
+# ── Push remote derived from the upstream (falls back to origin) ──
+UPSTREAM=$(git rev-parse --abbrev-ref "@{u}" 2>/dev/null || echo "")
+REMOTE="${UPSTREAM%%/*}"
+[ -z "$REMOTE" ] && REMOTE=origin
+
 # ── Nothing to commit? ──
 if git diff --quiet && git diff --cached --quiet \
     && [ -z "$(git ls-files --others --exclude-standard)" ]; then
   # No new work to stage, but push any unpushed local commits (e.g., from
   # /dev or /spec inline commits that were created without a push).
-  UPSTREAM=$(git rev-parse --abbrev-ref "@{u}" 2>/dev/null || echo "")
   if [ -n "$UPSTREAM" ] && [ -n "$(git log "$UPSTREAM"..HEAD --oneline 2>/dev/null)" ]; then
+    # Scan the OUTGOING RANGE before pushing — commits created inline by a skill
+    # were never staged through the scan below, so this path must scan too
+    # (same fail-closed policy: rc=1 secrets and rc>=2 scanner failure both block).
+    if [ -n "$GITLEAKS_BIN" ]; then
+      GL_EXIT=0
+      GL_OUT=$(git diff "$UPSTREAM"..HEAD | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GL_EXIT=$?
+      if [ "$GL_EXIT" -ne 0 ]; then
+        echo "[$(date)] GITLEAKS BLOCKED unpushed-commit push (rc=$GL_EXIT) in $PROJECT_DIR" >> "$LOG"
+        echo "[$(date)] $GL_OUT" >> "$LOG"
+        echo "gitleaks blocked the push of unpushed commits (rc=$GL_EXIT). See $LOG for details."
+        exit 0
+      fi
+      echo "[$(date)] GITLEAKS PASS (outgoing range) in $PROJECT_DIR" >> "$LOG"
+    else
+      echo "[$(date)] gitleaks not installed, skipping outgoing-range scan in $PROJECT_DIR" >> "$LOG"
+    fi
     echo "[$(date)] No new changes, but pushing unpushed commits in $PROJECT_DIR" >> "$LOG"
-    if git push origin "$BRANCH" 2>>"$LOG"; then
-      echo "[$(date)] Pushed to $BRANCH" >> "$LOG"
+    if git push "$REMOTE" "$BRANCH" 2>>"$LOG"; then
+      echo "[$(date)] Pushed to $REMOTE/$BRANCH" >> "$LOG"
     else
       echo "[$(date)] git push failed in $PROJECT_DIR" >> "$LOG"
     fi
@@ -61,12 +102,7 @@ git add -A || {
 }
 git diff --cached --quiet && exit 0  # nothing staged after all
 
-# ── Gitleaks scan ──
-GITLEAKS_BIN=""
-if   [ -x "$HOME/.local/bin/gitleaks" ]; then GITLEAKS_BIN="$HOME/.local/bin/gitleaks"
-elif command -v gitleaks >/dev/null 2>&1;   then GITLEAKS_BIN=$(command -v gitleaks)
-fi
-
+# ── Gitleaks scan (staged changes; binary resolved above) ──
 if [ -n "$GITLEAKS_BIN" ]; then
   GL_EXIT=0
   GL_OUT=$(git diff --cached | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GL_EXIT=$?
@@ -177,8 +213,8 @@ git commit -m "$MSG" || {
 }
 
 # ── Push ──
-if git push origin "$BRANCH" 2>>"$LOG"; then
-  echo "[$(date)] Pushed to $BRANCH" >> "$LOG"
+if git push "$REMOTE" "$BRANCH" 2>>"$LOG"; then
+  echo "[$(date)] Pushed to $REMOTE/$BRANCH" >> "$LOG"
 else
   echo "[$(date)] git push failed in $PROJECT_DIR" >> "$LOG"
 fi

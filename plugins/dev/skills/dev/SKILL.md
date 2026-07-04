@@ -40,6 +40,11 @@ hooks:
         - type: command
           command: "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT}/skills/dev\" \"$HOME/.claude/skills/dev\"; do [ -x \"$d/bin/check-phase.sh\" ] && exec bash \"$d/bin/check-phase.sh\"; done; echo \"{}\"'"
           statusMessage: "Checking dev workflow phase..."
+    - matcher: "NotebookEdit"
+      hooks:
+        - type: command
+          command: "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT}/skills/dev\" \"$HOME/.claude/skills/dev\"; do [ -x \"$d/bin/check-phase.sh\" ] && exec bash \"$d/bin/check-phase.sh\"; done; echo \"{}\"'"
+          statusMessage: "Checking dev workflow phase..."
 ---
 
 # /dev: Enforced Development Workflow v3
@@ -83,7 +88,10 @@ following paths:
    - (d) REGRESSION → fix forward or abort
 
 3. **Explicit AskUserQuestion accept-at-limit**:
-   - Only legal after exceeding `max_round` (10).
+   - Only legal after the **current loop's** round count exceeds `max_round` (10 **per
+     loop**, counted as `len([e for e in eval_history if e.phase == current_loop])` — see
+     "Round-limit semantics" in the Evaluator Protocol section; NEVER the unified
+     `eval_round` value, which accumulates across loops).
    - Once the user accepts, the main agent MUST write to state.json
      `deferred_findings: [{round, severity, description, user_accepted_at}]`.
    - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
@@ -153,6 +161,13 @@ codex exec "<Plan Mode Protocol + review instructions>" \
 **Note**: the Bash tool must be called with `timeout: 600000` (10 minutes, foreground /
 blocking). **Do NOT** pass `run_in_background: true`. See the "Known bug workaround"
 note below for why foreground is mandatory.
+
+**Reasoning-effort tiering (3.9.0, optional)**: `model_reasoning_effort="xhigh"` stays the
+default for every loop (the 3.6.2 quality decision). Two sanctioned downshifts exist, both
+MAY not MUST: the PLAN evaluation loop (§1.3), and AUDIT rounds whose diff is small
+(`git diff start_commit..HEAD` < 100 changed lines) MAY run Codex at
+`model_reasoning_effort="high"` to cut the foreground block. TEST, adversarial, and any
+security-relevant round ALWAYS stay `xhigh`. When in doubt, keep `xhigh`.
 
 **Known bug workaround — Codex must run in foreground** (anthropics/claude-code#21048):
 
@@ -324,11 +339,12 @@ You are an independent test evaluator. Evaluation round {N}.
 You have ZERO knowledge of why this code was written this way or what was tried before.
 
 Plan: {plan_file_path}
-Test command: {test_cmd}
+Test command (already executed — do NOT re-run): {test_cmd}
+Captured output: .dev-state/test-output-round-{N}.txt
 Source files to read: {file_list}
 
-Run the test command, analyze ALL results, report structured verdict.
-Do NOT suggest fixes — only diagnose root causes.
+Analyze the captured test output (this round's single mechanical run — §5.1 STEP 0),
+report structured verdict. Do NOT suggest fixes — only diagnose root causes.
 ```
 
 Codex Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking):
@@ -358,9 +374,40 @@ Do NOT suggest fixes." \
   "claude_findings": 3,
   "codex_findings": 2,
   "merged_findings": 4,
+  "arbitrated_out": [],
   "status": "fail"
 }
 ```
+
+**Round-limit semantics (3.9.0 clarification — per-loop, mechanically counted):**
+`eval_round` is a single unified counter that accumulates across all four loops
+(PLAN / AUDIT / TEST / adversarial) and is NEVER reset — Sync Protocol rule 5 and the
+rule-4 invariant depend on that. Every per-loop limit, however — each loop's "more than
+10 rounds without convergence" stop condition AND the accept-at-limit gate `max_round` —
+counts **per loop**, computed mechanically as:
+
+```
+loop_rounds = len([e for e in eval_history if e.phase == current_loop])
+```
+
+`max_round` = **10 per loop**. A long PLAN convergence does NOT consume AUDIT / TEST /
+adversarial round budget, and the accept-at-limit escape hatch (Iron Rule path 3) becomes
+legal ONLY when the CURRENT loop's `loop_rounds` exceeds `max_round` — never on the unified
+`eval_round` value.
+
+**Arbitration log (3.9.0 — closes the silent single-source-dismissal hole):** when a
+round's STEP 2 cross-model merge dismisses a finding reported by only ONE evaluator
+(ruling it inapplicable / false-positive / out of this task's blast radius), the dismissal
+MUST be recorded in that round's eval_history entry under `arbitrated_out`
+(`[{source: "claude"|"codex", severity, fingerprint, rationale}]`) — silently dropping a
+single-source finding is a process violation (single-source findings are historically
+where the substance lives). STEP 1 of the NEXT round MUST include the accumulated
+`arbitrated_out` list in both evaluator prompts as "previously arbitrated out — re-flag
+ONLY with new evidence", so fresh zero-context evaluators neither churn on re-reporting
+the same finding nor lose the audit trail. Convergence at `substantive_count == 0` with a
+non-empty arbitration trail is legitimate; convergence with an UNLOGGED dismissal is not.
+The SUMMARY "Scope & unverified" field's sanctioned sources include the run's
+`arbitrated_out` entries (count + fingerprints), so dismissals stay visible to the user.
 
 ---
 
@@ -374,7 +421,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.8.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.9.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -389,11 +436,11 @@ Parse `$ARGUMENTS`; the first whitespace-delimited token routes:
 - `abort` → execute "abort workflow"
 - `doctor` → execute "diagnose and repair"
 - `worktree-new <slug> [--base <branch>] [--dry-run]` → invoke
-  `plugins/dev/bin/worktree-helper.sh new` (see §8.1)
+  `plugins/dev/bin/worktree-helper.sh new` (see §8.1 in `references/worktree.md`)
 - `worktree-list` → invoke `plugins/dev/bin/worktree-helper.sh list`
 - `worktree-finish [--dry-run]` → invoke `plugins/dev/bin/worktree-helper.sh finish`
 - `worktree-remove <path> [--dry-run]` → invoke `plugins/dev/bin/worktree-helper.sh remove`
-- `board` → invoke `plugins/dev/bin/board.sh` (see §7); read-only snapshot
+- `board` → invoke `plugins/dev/bin/board.sh` (see §7 in `references/board.md`); read-only snapshot
   dashboard aggregating module progress, worktree status, and `dev-task-*`
   branch staleness. No state mutation.
 - anything else → treat as the task description and execute the "normal workflow"
@@ -440,7 +487,7 @@ branch on its integer value:
   Options: (a) abort and start fresh (`/dev abort` then re-invoke),
   (b) inspect state.json manually and decide." Do NOT silently
   default unsupported versions; the trust model treats state.json as
-  agent-authored content (see §8.3 rule 3 trust-boundary note).
+  agent-authored content (see §8.3 rule 3 trust-boundary note in `references/worktree.md`).
 
 The §2.1.2 / §0.6 worktree-bridging emit logic re-derives
 `main_worktree_path` via the fallback chain (`git worktree list
@@ -573,7 +620,7 @@ fi
 - If `WORKTREE: YES`, set `worktree_mode: true` + `main_worktree_path: <MAIN_WORKTREE>`
   in state.json. Print banner: "Running in worktree mode. §2.1.2 / §0.6 escape
   hatches will emit worktree-bridging recovery prose (cd to main worktree, cd back,
-  git rebase local ref). See §8 for details."
+  git rebase local ref). See §8 in `references/worktree.md` for details."
 - If `WORKTREE: NO`, set `worktree_mode: false` + `main_worktree_path: null`.
 
 ### 0.2 Create state.json
@@ -650,7 +697,7 @@ in-place legacy generation). No hard-fail on a v3/v4/v5 (legacy) read; backward-
 `version < 3` or `version > 6` (or missing/non-integer) → HARD FAIL via
 AskUserQuestion (do not silently default unsupported versions). See
 `/dev resume` subcommand block for the explicit defaulting protocol
-and §8.3 rule 3 for the underlying trust-boundary rationale.
+and §8.3 rule 3 (in `references/worktree.md`) for the underlying trust-boundary rationale.
 
 **Traceability fields** (fixes #26 and #55):
 - `req_ac_map` / `in_scope_ac_ids` / `in_scope_sys_ac_ids` / `waived_scope` are synchronized
@@ -672,6 +719,11 @@ and §8.3 rule 3 for the underlying trust-boundary rationale.
 
 - Read the task description (`$ARGUMENTS`).
 - Read any affected MODULE docs (especially §3.1 and §3.4 to understand current progress).
+- **Accepted-at-limit warning (3.9.0)**: if any in-scope MODULE doc or ARCHITECTURE.md
+  header carries a `> accepted-at-limit:` stamp (a /spec evaluator loop that never
+  converged — the user accepted it with live findings), surface it in the plan as a
+  ⚠ line: this doc's spec quality is NOT evaluator-verified; treat its contracts/ACs
+  with extra scrutiny and consider a `/spec` rerun of that module first.
 - Read the relevant source code.
 - Read the relevant sections of PRD.md and ARCHITECTURE.md.
 - **CONTEXT-MAP + GLOSSARY load (2.4.0+)**:
@@ -1118,7 +1170,9 @@ repeat:
   - Critical findings list (merged, de-duplicated)
   - Warning findings list (merged, de-duplicated)
   - Findings reported by both → high confidence
-  - Findings reported by only one → the main agent arbitrates whether they apply
+  - Findings reported by only one → the main agent arbitrates whether they apply; every
+    dismissal MUST be logged to this round's `arbitrated_out` (see "Arbitration log" in
+    the Evaluator Protocol) and fed to the next round's evaluator prompts
 
   Compute the merged substantive_count = Critical + Warning.
 
@@ -1156,7 +1210,8 @@ repeat:
   - Write the revisions back to plan_file.
   - Return to STEP 1 (spawn fresh evaluators for the revised plan).
 
-  More than 10 rounds without convergence → AskUserQuestion so the user can decide
+  More than 10 rounds of THIS loop without convergence (per-loop count — see "Round-limit
+  semantics") → AskUserQuestion so the user can decide
   (accept current plan / keep polishing / abort).
   Every round, heartbeat-update state.json's eval_round and updated_at.
 ```
@@ -1280,7 +1335,7 @@ Options:
       See VERSIONING.md release checklist for the frozen command contract.
 
       Worktree mode (2.8.0+): when state.json.worktree_mode == true, the
-      4 commands above still run literally — see /dev SKILL.md §8.2 for
+      4 commands above still run literally — see §8.2 in `references/worktree.md` for
       the required cd + git commit + git rebase bridging between them.
       The command block content itself is UNCHANGED from 2.7.0.)
  (B) Spec-only — PRD is correct, but ARCHITECTURE.md or a non-owned
@@ -1294,7 +1349,7 @@ Options:
       single-module in-scope edit.
 
       Worktree mode (2.8.0+): when state.json.worktree_mode == true, the
-      3 commands above still run literally — see /dev SKILL.md §8.2 for
+      3 commands above still run literally — see §8.2 in `references/worktree.md` for
       the cd + git rebase bridging. Frozen 2.7.0 contract preserved.)
  (C) In-scope — the change is confined to this task's owned MODULE(s)
      (the ones already in `docs_allowlist`). Continue DOCS normally.
@@ -1664,7 +1719,9 @@ repeat:
   - Diff review: merge and de-dupe findings from Claude ③ + Codex ④.
   - Cross-dimension: take the union of findings across both dimensions.
   - Findings reported by both evaluators → high confidence.
-  - Findings reported by only one → the main agent arbitrates whether they apply.
+  - Findings reported by only one → the main agent arbitrates whether they apply; every
+    dismissal MUST be logged to this round's `arbitrated_out` (see "Arbitration log" in
+    the Evaluator Protocol) and fed to the next round's evaluator prompts.
 
   Compute the merged substantive_count = Critical + Warning.
 
@@ -1729,7 +1786,8 @@ repeat:
        → scope_expansion_depth is reset to 0.
   - Return to STEP 1 (spawn fresh evaluators).
 
-  More than 10 rounds without convergence → AskUserQuestion so the user can decide.
+  More than 10 rounds of THIS loop without convergence (per-loop count — see "Round-limit
+  semantics") → AskUserQuestion so the user can decide.
   Every round, heartbeat-update state.json's eval_round and updated_at.
 ```
 
@@ -1763,6 +1821,26 @@ repeat:
   eval_round += 1
 
   ──────────────────────────────────────────────────────────────
+  STEP 0: Single mechanical execution (3.9.0 — one run, two analyses)
+  ──────────────────────────────────────────────────────────────
+  The MAIN AGENT executes the witness runs ONCE per round, BEFORE spawning evaluators:
+    1. Run {test_cmd}, capturing the COMPLETE output (stdout + stderr, exit code noted
+       at the end) to `.dev-state/test-output-round-{eval_round}.txt`.
+    2. If in_scope_sys_ac_ids is non-empty AND sysac_harness_cmd is declared: run the
+       harness ONCE, capturing to `.dev-state/sysac-output-round-{eval_round}.txt`.
+  Rationale: two evaluators executing the same suite + the same wired-system harness
+  CONCURRENTLY in one worktree collide on ports / DB schemas / build caches (spurious
+  FAILs that burn rounds), and Codex's mandatory `-s read-only` sandbox cannot write
+  build artifacts or bind localhost ports at all — evaluator-side execution produced
+  sandbox artifacts, not independent evidence. Independence lives in the DIAGNOSIS,
+  not the execution: both evaluators independently ANALYZE the same captured witness
+  output against plan/docs/ACs. The captured file is the round's single source of
+  truth for pass/fail counts; the witness-floor is unchanged (the harness run still
+  drives the REAL wired system — executed once, by the main agent).
+  Evaluators MAY run additional read-only inspections (grep sources, read fixtures,
+  inspect test files) but MUST NOT re-execute {test_cmd} or the harness.
+
+  ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH evaluators in parallel
           (each round must use brand-new agents)
   (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash call
@@ -1774,11 +1852,18 @@ repeat:
        "You are an independent test evaluator. Evaluation round {eval_round}.
         You have ZERO knowledge of how this code was implemented or what was tried before.
 
-        Your job: run the test command, analyze ALL results, diagnose root causes.
-        Do NOT suggest fixes — only diagnose.
+        Your job: analyze the captured test run, verify it is complete and plausible
+        (correct command, full suite, no truncation), diagnose ALL failures' root causes.
+        Do NOT re-execute the test command or the harness (a single mechanical run this
+        round produced the captured output — see paths below). Do NOT suggest fixes —
+        only diagnose.
 
         Plan file: {plan_file_path}  (read it for acceptance criteria)
-        Test command: {test_cmd}
+        Test command (for reference; already executed): {test_cmd}
+        Captured test output (this round's single mechanical run):
+          .dev-state/test-output-round-{eval_round}.txt
+        Captured harness output (only when SYS-AC in scope):
+          .dev-state/sysac-output-round-{eval_round}.txt
         Source files: {file_list}
         MODULE docs: {module_docs_list}
 
@@ -1820,8 +1905,10 @@ repeat:
         in_scope_sys_ac_ids is empty):
         SCOPE: only the EXACT SYS-AC IDs from state.json in_scope_sys_ac_ids.
         Read docs/SYSTEM-ACCEPTANCE.md §1 (journey, Module Chain) + §1.1 (the atomic Criterion
-        per SYS-AC) + §2 (ledger). **Run the declared harness** (`state.json.sysac_harness_cmd`,
-        K4/3.2.0+) to bring up the REAL wired system and execute the e2e test(s); if it is null,
+        per SYS-AC) + §2 (ledger). **Analyze the captured harness output**
+        (`.dev-state/sysac-output-round-{eval_round}.txt`, produced by this round's single
+        mechanical run of `state.json.sysac_harness_cmd` — do NOT re-run the harness); if the
+        harness is null (no captured output exists),
         the in-scope SYS-AC are UNTESTED unless explicitly deferred (see DEFERRED below). The
         passing witness for a SYS-AC MUST be a test that runs the REAL wired system end-to-end —
         a real process/binary exercising the journey's full Module Chain and asserting that
@@ -1890,7 +1977,10 @@ repeat:
   ② Codex Test Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
      prompt: Plan Mode Protocol +
        "You are an independent test evaluator. Round {eval_round}.
-        Run: {test_cmd}
+        Analyze the captured output of this round's single mechanical run of {test_cmd}:
+        read .dev-state/test-output-round-{eval_round}.txt. Do NOT attempt to re-run the
+        suite or the harness — your read-only sandbox cannot write build artifacts or
+        bind ports; the captured file is the round's single source of truth.
         Analyze ALL failures — not just the first one.
         For each failure: test name, error message, root cause diagnosis with file:line.
         Read source files to trace root causes: {file_list}
@@ -1926,9 +2016,10 @@ repeat:
 
         System Acceptance Check (2.10.0+; skip if state.json in_scope_sys_ac_ids empty):
         SCOPE: only the SYS-AC IDs in state.json in_scope_sys_ac_ids. Read
-        docs/SYSTEM-ACCEPTANCE.md §1 (Module Chain) + §1.1 (atomic Criterion) + §2. Run the
-        declared harness (state.json.sysac_harness_cmd) to bring up the REAL wired system and
-        execute the e2e test(s); classify each in-scope SYS-AC PASS / FAIL / UNTESTED /
+        docs/SYSTEM-ACCEPTANCE.md §1 (Module Chain) + §1.1 (atomic Criterion) + §2. Analyze
+        the captured harness output at .dev-state/sysac-output-round-{eval_round}.txt
+        (single mechanical run of state.json.sysac_harness_cmd this round — do NOT re-run
+        it); classify each in-scope SYS-AC PASS / FAIL / UNTESTED /
         MOCK-ONLY / DEFERRED (DEFERRED = listed in state.json.system_acceptance_deferred with a
         user_accepted_at — not a witness-floor violation, still not-passed). A unit/integration
         test or any mock/stub standing in for any module in the chain does NOT satisfy a SYS-AC
@@ -1953,10 +2044,11 @@ repeat:
   Two consecutive rounds of Codex failure → force degraded mode
   (codex_available = false, degraded_from_round = eval_round).
 
-  - Extract pass/fail counts from both reports (should match; on mismatch, flag and take
-    the stricter value).
+  - Extract pass/fail counts from both reports (both analyzed the SAME captured output, so
+    a mismatch is a parsing disagreement — flag it and take the stricter value).
   - Merge failure analyses: root causes diagnosed by both → high confidence.
-  - Findings reported by only one → main agent arbitrates.
+  - Findings reported by only one → main agent arbitrates; every dismissal MUST be logged
+    to this round's `arbitrated_out` (see "Arbitration log" in the Evaluator Protocol).
   - Merge coverage-gap analyses.
 
   ──────────────────────────────────────────────────────────────
@@ -2169,7 +2261,9 @@ repeat:
   (codex_available = false, degraded_from_round = eval_round).
 
   - Findings reported by both evaluators → high confidence.
-  - Findings reported by only one → the main agent arbitrates.
+  - Findings reported by only one → the main agent arbitrates; every dismissal MUST be
+    logged to this round's `arbitrated_out` (see "Arbitration log" in the Evaluator
+    Protocol) and fed to the next round's evaluator prompts.
   - Compute the merged substantive_count = Critical + Warning.
 
   ──────────────────────────────────────────────────────────────
@@ -2220,7 +2314,8 @@ repeat:
           only continue into IMPLEMENT after it converges.
       No → re-run 5.1 test evaluation loop to confirm no regression, then return to STEP 1.
 
-  More than 10 rounds without convergence → AskUserQuestion so the user can decide.
+  More than 10 rounds of THIS loop without convergence (per-loop count — see "Round-limit
+  semantics") → AskUserQuestion so the user can decide.
   Every round, heartbeat-update state.json's updated_at.
 ```
 
@@ -2476,8 +2571,9 @@ accept-at-limit flow). Any substantive evaluator finding must take one of the fo
 three paths:
 1. Fix + commit (the git diff MUST contain changes).
 2. Roll back via branch (b)/(c)/(d) to an upstream phase.
-3. After hitting max_round (10), the user explicitly accept-at-limits → write to
-   deferred_findings.
+3. After the CURRENT loop's round count exceeds max_round (10 per loop — see
+   "Round-limit semantics" in the Evaluator Protocol), the user explicitly
+   accept-at-limits → write to deferred_findings.
 
 **Field whitelist** (any field not in this list is forbidden in output):
 Task / Modified files / Updated docs / Acceptance criteria / Independent evaluator
@@ -2485,8 +2581,9 @@ results / Requirement Traceability / Definition of Done / Cross-Module Regressio
 System Acceptance (2.10.0+; the two-axis system readiness lines) /
 Coverage boundary reminder / Progress change / Overall PRD progress /
 This run's scope & unverified (3.4.0+/K6; structured, mechanically-sourced from `waived_scope` /
-`deferred_findings` / `system_acceptance_deferred` / degraded-mode flags / `Partial` REQs —
-never free-form) /
+`deferred_findings` / `system_acceptance_deferred` / degraded-mode flags / `Partial` REQs /
+`arbitrated_out` entries (3.9.0 — count + fingerprints of single-source findings dismissed in
+merge) — never free-form) /
 Deferred Findings (only rendered when deferred_findings is non-empty; each entry comes
 from state.json).
 
@@ -2628,356 +2725,26 @@ Delete `state.json`.
 
 ---
 
-## 7. /dev board (snapshot dashboard, 2.9.0+)
+## 7. /dev board — body moved to references/board.md (3.9.0)
 
-A read-only meta-feature (NOT a state-machine phase — `Phase N` naming is reserved
-for the state.json-tracked phases enforced by `check-phase.sh`). Invoked as the
-`board` subcommand and backed by `plugins/dev/bin/board.sh`. Aggregates three
-sections of repository state to stdout.
+The full §7 (three output sections, §7.2 read-only contract, rendering rules, §7.4
+sanitisation contract) lives in `references/board.md`, loaded ON DEMAND when the
+`board` subcommand fires. Resolve via tier order: **Tier 1**
+`$CLAUDE_PLUGIN_ROOT/skills/dev/references/board.md`; **Tier 2** installed plugin
+cache copy; **Tier 3** repo-relative `plugins/dev/skills/dev/references/board.md`.
+Read FULLY, execute as if inline (§7.x IDs unchanged). All tiers failing → run
+`bash plugins/dev/bin/board.sh` directly and note the reference file was unavailable.
 
-### 7.1 Three output sections
+## 8. Worktree mode — body moved to references/worktree.md (3.9.0)
 
-**Section 1 — Module progress.** For every `docs/modules/MODULE-*.md`, parse the
-§3.4 ledger and apply the §6.1.1 formula
-`pct = (passed × 100 + active / 2) ÷ active`. Render
-`module title  passed/active  pct  derived status` per module + a trailing
-overall AC-weighted aggregate row `sum_passed / sum_active`. Denominator-zero
-guard everywhere: zero `Active=Y` AC → percentage cell renders as `—`
-(NOT `0%`, NOT `—%`); status text "Not Started".
+The full §8 (four subcommands, §8.2 upstream-coordination bridging, §8.3 concurrency
+constraints + trust boundaries incl. the stop.sh 6-gate description in rule 5 and the
+3.9.0 post-merge ledger-reconciliation rule 6) lives in `references/worktree.md`,
+loaded ON DEMAND when a `worktree-*` subcommand fires OR when `worktree_mode: true`
+is detected at Phase 0. Resolve via tier order: **Tier 1**
+`$CLAUDE_PLUGIN_ROOT/skills/dev/references/worktree.md`; **Tier 2** installed plugin
+cache copy; **Tier 3** repo-relative `plugins/dev/skills/dev/references/worktree.md`.
+Read FULLY, execute as if inline (§8.x IDs unchanged — VERSIONING 2.8.0 freezes
+reference them). All tiers failing → abort the worktree subcommand with an explicit
+error (never improvise merge/removal sequences).
 
-**Section 1 also renders the System E2E readiness axis (2.10.0+).** When
-`docs/SYSTEM-ACCEPTANCE.md` exists, parse its §2 ledger (Active=Y SYS-AC,
-Status=passed) with the same formula + colour band + `—` guard, and render a
-trailing `(system E2E readiness)  passed/active  pct  system` row directly under
-the module aggregate. The two axes are shown adjacent and **never merged** —
-module AC coverage answers "are the parts proven?", system readiness answers
-"does the wired whole run?". Absent file → row omitted (pre-2.10.0 / no
-`Witness:e2e` REQ). **3.6.0/K9 additions** (same single read-only pass): (a) the
-trailing label gains `(N deferred-accepted)` when §3 *Accepted system-acceptance
-deferrals* has N rows — the `pct` still counts each deferral as NOT-passed, so the
-annotation explains the <100% shortfall rather than hiding it; (b) a dim
-`by type: functional P/A · nfr/slo P/A · error-path P/A` sub-line joins §1.1 `Type`
-to §2 status (only Types with ≥1 Active SYS-AC are shown).
-
-**Section 2 — Worktree status.** For every `git worktree list --porcelain` entry,
-overlay `<path>/.dev-state/state.json` if present and valid (`jq empty`). Render
-`worktree path  task_id  phase  eval_round  DEFER  updated_at`, where **DEFER (3.6.0/K9)**
-= `<Nf>f/<Ns>s`: `Nf` = `deferred_findings` length (K6), `Ns` =
-`system_acceptance_deferred` length (K4) — both accepted-but-unverified gaps; `—` when
-both zero. Counts are numeric `jq … | length` reads (never user strings → no sanitize).
-Missing state.json → `(no /dev workflow)` with `—` placeholders. `null` fields normalised
-to `—`.
-
-**Section 3 — Task branches.** For every `git for-each-ref refs/heads/dev-task-*`
-ref, render `branch  ahead  behind  dirty  worktree`. Ahead/behind computed via
-`git rev-list --left-right --count <branch>...<per-branch-base>` where the
-per-branch base is the owning worktree's `state.json.base_branch` (when present
-and verified) or the script-level base chain (see §7.2). Foreign-base rows
-annotate the WORKTREE cell with `(base: <name>)`. Stale flag = branch with no
-worktree pairing renders `(stale — no worktree)`. Section 3 always emits a footer
-disclaimer `(comparison base: <base> — local ref, not re-fetched; run \`git fetch
-<remote>\` to refresh)` so operators know the data is local-cache state.
-
-### 7.2 Read-only contract
-
-`/dev board` does NOT:
-- write `.dev-state/state.json` in any worktree;
-- mutate git state (no `git fetch`, no `git checkout`, no `git worktree
-  add/remove`, no `git branch -d`);
-- invoke evaluator subagents or Codex (no network, no LLM calls);
-- mutate MODULE docs, REQUIREMENTS_REGISTRY, or SYSTEM-ACCEPTANCE.md (read-only file open).
-
-Exit code 0 on success even with empty sections; non-zero only on fatal git
-errors (not inside a git repo).
-
-**Hook-interaction note.** When `/dev board` is invoked while a `.dev-state/
-state.json` exists in the current worktree (an active /dev workflow in plan /
-docs / summary phase), the `check-phase.sh` PreToolUse hook restricts Bash to
-its `READ_CMDS` allowlist; `bash` is not in that list. Result: the user is
-prompted to approve the `bash plugins/dev/bin/board.sh` invocation once.
-Approving is safe — the script is fully read-only by design — but the prompt
-is documented here so operators expect it. To run with no prompt, invoke `/dev
-board` from a worktree with no active /dev workflow (state.json absent → hook
-returns "allow" at its early-exit gate).
-
-**Base-branch resolution chain** (used as the script-level fallback when a
-per-branch override is unavailable; mirrors `worktree-helper.sh new_cmd` so
-behaviour does not diverge):
-1. `state.json.base_branch` (current-cwd worktree's state.json) — reject on
-   shell-metachar pre-check; otherwise verify via `git rev-parse --verify
-   "$candidate^{commit}"` and use if it resolves.
-2. `git symbolic-ref refs/remotes/origin/HEAD` stripped of remote prefix.
-3. `main` (verify by `git rev-parse --verify refs/heads/main^{commit}`).
-4. `master` (same verification).
-5. Current branch via `git symbolic-ref --short HEAD` (guarded with `|| true`).
-6. Unresolvable → footer renders
-   `(comparison base: unresolved — detached HEAD and no main/master)`;
-   ahead/behind cells show `?/?`.
-
-### 7.3 Output rendering rules
-
-- Tab-stop layout via `printf '%-Ns'` width specifiers (NOT actual tab characters).
-- ANSI colour activated only when `[ -t 1 ]`; colour variables empty otherwise.
-- **Colour + width interaction (mandatory pattern)**: `printf '%-Ns'` counts
-  bytes, so ANSI escapes inside the padded segment shift alignment. The safe
-  patterns:
-  - Pad-then-wrap: `printf '%s%-Ns%s ' "$color" "$content" "$reset"` — escapes
-    attach outside the count.
-  - Manual padding: `printf '%s%s%s%*s' "$color" "$content" "$reset" "$pad" ""`
-    where `pad = N - ${#content}`.
-- Section 1 has two independent visual cues: the textual **Status column**
-  (`Not Started` / `In Progress` / `Production` / `—`) and the **percentage
-  colour band** (`≥85%` green, `70-84%` yellow, `<70%` red, `—` dim). They
-  do not need to agree row-by-row — a "Production / green" or "In Progress /
-  yellow" pair is the expected result, but partial progress can also produce
-  e.g. "In Progress / red".
-- Section 2 phase colours: plan/docs cyan; implement/audit/test/adversarial
-  yellow; summary green; everything else uncoloured. **DEFER column (3.6.0/K9)**:
-  yellow when any deferral (`Nf`/`Ns` > 0), dim `—` otherwise.
-- Section 3: dirty `Y (N)` yellow, `N` plain, `?` dim; ahead > 0 green; behind
-  > 0 yellow; stale rows in dim.
-
-### 7.4 Sanitisation contract
-
-Two distinct mechanisms (NOT one) handle externally-sourced strings.
-Both reject **the same metachar set** — what differs is the action
-(substitute vs reject) and the empty-string handling.
-
-**Rejected metachar set (shared)**: any of `$`, backtick, `;`, `|`, `&`,
-`\n`, `\r`, `\t`, `<`, `>`, `\033` (ESC — ANSI / terminal-injection
-introducer), `\x7f` (DEL). The ESC + DEL additions are STRICTER than
-the original `worktree-helper.sh list_cmd` `_sanitize` (which rejected
-only the first 8 of the 12); board.sh extends the set because the board
-also displays `base_branch` values which can carry ANSI escapes.
-
-**`_sanitize` — display-substitution form**: used for display fields
-whose provenance is partially trusted but where a malicious value
-should not become copy-paste-runnable text: state.json values
-(`task_id`/`phase`/`eval_round`/`updated_at`/`base_branch` when shown
-as the per-branch `(base: X)` annotation), git ref names (the branch
-list in Section 3), and module titles. Tainted values are replaced
-with `?` and a stderr warning is emitted; the row is still printed so
-operators retain visibility.
-
-**`_is_safe_ref` — reject-on-metachar control-flow form**: used for any
-value that flows into git invocations (`git rev-parse --verify`,
-`git rev-list --left-right --count`) AND for any value used in the
-Section 3 base-resolution chain. If the candidate hits the shared
-metachar set above OR is empty → reject → the chain falls through to
-the next fallback. Tainted values therefore NEVER reach git.
-
-The footer disclaimer renders the resolved base name as-is (no
-`?`-substitution) because every candidate that survives the
-resolution chain in §7.2 — including step 5 (current branch via
-`git symbolic-ref --short HEAD`), which is also gated by `_is_safe_ref`
-in code — passed the safety check. This is safe by chain-design, not
-by output-time sanitisation. Step 6 (unresolved) is the only path
-where the footer prints a special-case literal string.
-
----
-
-## 8. Worktree mode (2.8.0+)
-
-/dev supports worktree-parallel execution: multiple concurrent /dev tasks
-on independent feature branches from the same base branch, each in its
-own git worktree. `/spec` and `/prd` stay single-flight by design — they
-author repo-shared SSOT files (`docs/PRD.md`, `docs/ARCHITECTURE.md`,
-`docs/modules/*.md`, `docs/REQUIREMENTS_REGISTRY.md`,
-`docs/CONTEXT-MAP.md`, `docs/GLOSSARY.md`, `docs/adr/*.md`,
-`docs/adr/_INDEX.md`) that don't tolerate concurrent divergent writes
-cleanly.
-
-When a /dev task in a worktree hits §2.1.2 or /spec §0.6
-upstream-alignment checks, the abort+restart recovery is augmented with
-`cd` + `git commit` + `git rebase` bridging (§8.2). The ORIGINAL
-4-command Option A and 3-command Option B sequences in §2.1.2 (and the
-3-command sequences in /spec §0.6 Option A and Option B) are UNCHANGED
-— preserving VERSIONING.md 2.7.0 rules 5 + 6 frozen-contract. Bridging
-appears below each frozen block as a parenthetical hint paragraph, not
-as extra commands inside the block.
-
-### 8.1 Four subcommands (labels FROZEN; see VERSIONING.md 2.8.0 rule 1)
-
-`/dev worktree-new <slug> [--base <branch>] [--dry-run]`,
-`/dev worktree-list`,
-`/dev worktree-finish [--dry-run]`,
-`/dev worktree-remove <path> [--dry-run]`.
-
-Each subcommand is backed by `plugins/dev/bin/worktree-helper.sh`. The
-helper NEVER auto-executes `git worktree remove` or `git branch -D` or
-`git merge` (per CLAUDE.md risky-action principle); it prints
-copy-paste commands for the user to run, with the sole exception of
-`git worktree add` in `worktree-new` (creating a new worktree IS the
-requested action, safely-bounded by slug + collision validation).
-
-**`/dev worktree-new <slug>`**: validates slug per the FROZEN grammar
-below, resolves base branch (default `state.json.base_branch` →
-`origin/HEAD` → `main` → `master` → current branch), creates
-`dev-task-<slug>` branch + sibling-dir worktree, then prints next-step
-copy-paste for user to `cd` and start a new Claude Code session.
-`--dry-run` flag: print planned commands without filesystem state.
-
-**`/dev worktree-list`**: enumerates `git worktree list --porcelain`;
-for each worktree path, reads `<path>/.dev-state/state.json` if
-present and reports `task_id`, `phase`, `eval_round`, `updated_at`.
-Tab-aligned output; missing fields show `—` (never literal `null`).
-
-**`/dev worktree-finish`**: gate — allow if current worktree
-`.dev-state/state.json` exists AND `phase == "summary"`; else refuse
-with guidance to use `/dev worktree-remove` for aborted tasks. Prints
-4-line merge-suggestion for user to run in main worktree.
-
-**`/dev worktree-remove <path>`**: gate — allow if
-`<path>/.dev-state/state.json` is absent OR `phase == "summary"`;
-else refuse with guidance to run `/dev abort` (deletes state.json) or
-complete `/dev worktree-finish` first. Prints 2-line removal-
-suggestion (`git worktree remove "<path>"` + `git branch -d
-dev-task-<slug>`); never auto-executes.
-
-**Slug grammar FROZEN** (VERSIONING.md 2.8.0 rule 6):
-- Primary regex: `^[a-z][a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$` (length
-  2-40, starts with letter, ends with alphanumeric, interior allows
-  hyphens, no trailing hyphen).
-- **Secondary guard** (NOT in regex alone): no consecutive hyphens.
-  Helper checks `[[ "$slug" =~ -- ]]` separately and rejects.
-- Reserved-word list forbidden: `status`, `resume`, `abort`, `doctor`,
-  `new`, `list`, `finish`, `remove`.
-
-### 8.2 Upstream coordination (/spec, /prd) — worktree-mode bridging
-
-This section describes the GLUE between the frozen /dev §2.1.2 and
-/spec §0.6 command sequences when `state.json.worktree_mode == true`.
-The command sequences themselves are UNCHANGED; this is narrative
-guidance for the user.
-
-**Precondition**: the main worktree MUST have `<base_branch>` checked
-out (the near-universal case for main worktree on `main` / `master`).
-If main worktree is on a different branch, user must either (a)
-switch to `<base_branch>` before running `/prd` + `/spec`, or (b)
-commit the upstream changes directly onto `<base_branch>`.
-
-**§2.1.2 Option A worktree-mode bridging**: the 4 canonical commands
-stay as printed. User runs in this order:
-
-```
-# In task worktree:
-/dev abort
-
-# Bridge 1 — cd to main worktree:
-cd "<main_worktree_literal_path>"
-
-# In main worktree:
-/prd "{suggested topic}"
-/spec docs/PRD.md
-
-# Bridge 2 — commit upstream changes + cd back + rebase via local ref:
-git add docs/ && git commit -m "prd+spec: <topic>"
-cd "<task_worktree_literal_path>"
-git rebase "<base_branch_literal>"
-
-# In task worktree (now caught up with main):
-/dev {original task description}
-```
-
-Path and branch literals are interpolated by the agent at emit time
-via the fallback chain:
-- L1: read `state.json.main_worktree_path` / `state.json.base_branch`.
-- L2 (if null/absent — e.g., v3 state.json resumed): derive via
-  `git worktree list --porcelain | awk '/^worktree /{sub(/^worktree
-  /,""); print; exit}'` for main path; `git symbolic-ref
-  refs/remotes/origin/HEAD | sed 's|.*/||'` for base branch (with
-  `main` / `master` / `git rev-parse --abbrev-ref HEAD` fallbacks).
-- L3 (if detection fully fails): emit canonical non-worktree Option A
-  text + disclaimer "worktree detection failed; coordinate manually".
-
-The agent NEVER interpolates the literal string `"null"` into emitted
-recovery text.
-
-**§2.1.2 Option B worktree-mode bridging** (spec-only): 3 canonical
-commands preserved. Bridging: `cd <main_worktree>` after `/dev abort`;
-then `/spec`; then `git add docs/ && git commit` + `cd
-<task_worktree>` + `git rebase <base_branch>`; then `/dev {original
-task}`. Same fallback chain.
-
-**Local-ref rebase rationale**: git worktrees share `.git/objects` +
-`.git/refs` via `.git/worktrees/<name>/commondir`. A local commit on
-`<base_branch>` in main worktree updates `refs/heads/<base_branch>`
-in the shared `.git/`; the task worktree's `git rebase
-<base_branch>` reads that ref directly, no `origin/` round-trip
-required. Works in repos without origin too.
-
-**/spec §0.6 Option A worktree-mode bridging**: §0.6 Option A's 3
-canonical commands (`/spec abort`, `/prd "{topic}"`, `/spec
-docs/PRD.md`) preserved. Bridging: after `/spec abort`, `cd` to main
-worktree before running `/prd`. No rebase-back step needed because
-/spec is meant to RESTART in main worktree after /prd.
-
-**/spec §0.6 Option B worktree-mode bridging** (user manually edits
-PRD): 3 canonical commands preserved. User must perform the manual
-PRD edit in main worktree, NOT a task worktree (PRD is SSOT; task-
-worktree divergence defeats the single-flight purpose).
-
-### 8.3 Concurrency constraints + trust boundaries
-
-1. **Shared `.git/` metadata**: worktrees share `.git/objects` +
-   `.git/refs` via `.git/worktrees/<name>/commondir`. Occasional
-   `index.lock` contention under heavy parallel git ops; git's own
-   retry handles most cases. Accepted operational quirk.
-
-2. **Main-worktree-only /spec + /prd**: advisory, not enforced. Agent
-   emits worktree-variant prose when `state.json.worktree_mode ==
-   true`, but cannot mechanically prevent user from running /prd
-   inside a task worktree. Doing so creates divergent PRD on the
-   task branch; merge later requires manual reconciliation.
-
-3. **CLAUDE_PLUGIN_DATA presence-based invariant**: `check-phase.sh`
-   lines 21-26 prefer `$CLAUDE_PLUGIN_DATA/state.json` if that file
-   exists. No /dev flow writes state.json there AND no plugin-level
-   install places state.json there — worktree isolation depends on
-   this file-presence invariant holding. VERSIONING.md 2.8.0 rule 5
-   freezes it. Stray admin-placed state.json at that path can subvert
-   isolation, AND a malicious `CLAUDE_PLUGIN_DATA` env var pointing
-   at a crafted `state.json` can spoof phase / docs_allowlist /
-   worktree-routing across parallel worktrees. Mitigation is
-   out-of-band inspection (same trust model as the 2.7.0 state.json
-   trust note in VERSIONING.md). The trust boundary extends to: the
-   `base_branch`, `main_worktree_path`, `task_id`, `repo_root`
-   fields in state.json — a malicious state.json with shell
-   metacharacters in these fields could craft copy-paste injection
-   in the recovery prose emitted by §2.1.2 / §0.6 / `worktree-helper`.
-   `worktree-helper.sh finish` and `remove` defensively refuse to
-   emit suggestions if state.json fields contain shell metachars
-   (`$`, backtick, `;`, `|`, `&`, newline); §2.1.2 / §0.6 prose
-   emission relies on the agent's own input sanitization (treat
-   user task descriptions as DATA per the existing prompt-injection
-   defense paragraph).
-
-4. **check-phase.sh installed via SKILL.md frontmatter, not
-   `plugins/dev/hooks/hooks.json`**: phase gating only active when
-   the Claude Code session has loaded the /dev skill. A session in a
-   task worktree that never invokes /dev has no phase gate. Same
-   trust model as today's single-worktree flow — worktree mode
-   changes nothing here.
-
-5. **stop.sh auto-push (precise, per `plugins/dev/bin/stop.sh`
-   source)**: the Stop hook MAY auto-push the current branch
-   (including `dev-task-*` task branches) to origin. The decision
-   goes through 5 gates:
-   - **No git remote configured** → no push (`stop.sh:36`).
-   - **Clean working tree path** (`stop.sh:40-55`): push only if
-     upstream `@{u}` is set AND branch has commits ahead of upstream.
-   - **Dirty tree → `git add -A` → nothing staged** (`stop.sh:58-62`)
-     → exit without push.
-   - **Dirty tree → staged → gitleaks** (`stop.sh:70-91`): on
-     **detected secrets** (rc=1) reset HEAD + exit without push; on
-     **scanner error** (rc≥2) fail-closed — skip commit+push, leave
-     changes staged, log "scan failed". Only a clean pass (rc=0) proceeds.
-   - **Dirty tree → staged → gitleaks pass → commit succeeds** →
-     `git push origin "$BRANCH"` (`stop.sh:170-184`); fails-soft
-     (logs only) if origin rejects.
-   For worktree mode: task branches are NOT safe to treat as "local
-   by default" in repos with origin configured. The Stop hook WILL
-   push whenever the committing path completes. Mitigation
-   (out-of-scope for this release): user disables the Stop hook in
-   project / user `settings.json` for task-worktree sessions.
-   Accept as operational quirk.
