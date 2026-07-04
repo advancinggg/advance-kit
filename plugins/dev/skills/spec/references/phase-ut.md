@@ -114,10 +114,12 @@ At entry:
 ### UT.2 Canonical section list (kept in sync with the live templates)
 
 Source of truth: the fenced ```markdown blocks inside Phase 1.2 and Phase 2.2 of
-THIS file (search for headings `### 1.2 Architecture Document Structure` and
-`### 2.2 Unified Module Document Template`). This canonical list and the live
-template blocks must be edited together in one commit (see VERSIONING.md release
-checklist).
+the spec **SKILL.md** (resolved via the Tier 1/2/3 protocol in UT.4 step 1; those
+template blocks stayed in SKILL.md when this Phase UT body moved to
+references/phase-ut.md in 3.9.0 — search SKILL.md for the headings
+`### 1.2 Architecture Document Structure` and `### 2.2 Unified Module Document
+Template`). This canonical list and the live template blocks must be edited together
+in one commit (see VERSIONING.md release checklist).
 
 ```yaml
 module_sections:

@@ -88,10 +88,11 @@ following paths:
    - (d) REGRESSION → fix forward or abort
 
 3. **Explicit AskUserQuestion accept-at-limit**:
-   - Only legal after the **current loop's** round count exceeds `max_round` (10 **per
-     loop**, counted as `len([e for e in eval_history if e.phase == current_loop])` — see
+   - Only legal after the **current loop's current-visit** round count exceeds `max_round`
+     (10 **per loop per visit** — the `loop_rounds` since-last-pass count defined in
      "Round-limit semantics" in the Evaluator Protocol section; NEVER the unified
-     `eval_round` value, which accumulates across loops).
+     `eval_round` value, and NEVER a whole-loop count that includes rounds from a prior
+     converged visit).
    - Once the user accepts, the main agent MUST write to state.json
      `deferred_findings: [{round, severity, description, user_accepted_at}]`.
    - The affected REQ statuses may NOT reach Verified in SUMMARY — they are forced to Partial.
@@ -344,7 +345,8 @@ Violating any one is treated as a process violation.
 Claude Evaluator (Agent tool, subagent_type: claude-auditor, Test Evaluator mode):
 ```
 You are an independent test evaluator. Evaluation round {N}.
-You have ZERO knowledge of why this code was written this way or what was tried before.
+You have ZERO knowledge of why this code was written this way or what was tried before — except the arbitration ledger below.
+Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
 Plan: {plan_file_path}
 Test command (already executed — do NOT re-run): {test_cmd}
@@ -420,9 +422,9 @@ the current loop's current-visit `loop_rounds` exceeds `max_round` — never on 
 round's STEP 2 cross-model merge dismisses a finding reported by only ONE evaluator
 (ruling it inapplicable / false-positive / out of this task's blast radius), the dismissal
 MUST be recorded in that round's eval_history entry under `arbitrated_out`
-(`[{source: "claude"|"codex", severity, fingerprint, rationale}]`) — silently dropping a
-single-source finding is a process violation (single-source findings are historically
-where the substance lives). STEP 1 of the NEXT round MUST include the accumulated
+(`[{round, source: "claude"|"codex", severity, fingerprint, rationale}]`) — silently
+dropping a single-source finding is a process violation (single-source findings are
+historically where the substance lives). STEP 1 of the NEXT round MUST include the accumulated
 `arbitrated_out` list in both evaluator prompts as "previously arbitrated out — re-flag
 ONLY with new evidence", so fresh zero-context evaluators neither churn on re-reporting
 the same finding nor lose the audit trail. Convergence at `substantive_count == 0` with a
@@ -1130,7 +1132,8 @@ repeat:
   ① Claude Plan Evaluator (Agent tool, subagent_type: claude-auditor)
      prompt:
        "You are an independent plan evaluator. Evaluation round {eval_round}.
-        You have ZERO knowledge of how this plan was created or what was tried before.
+        You have ZERO knowledge of how this plan was created or what was tried before — except the arbitration ledger below.
+        Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
         Review this development plan for completeness, feasibility, and risks.
         Read the source files referenced in the plan to verify assumptions.
@@ -1612,7 +1615,8 @@ repeat:
   ① Claude Doc Evaluator (Agent tool, subagent_type: claude-auditor)
      prompt:
        "You are an independent doc-vs-code evaluator. Round {eval_round}.
-        You have ZERO knowledge of how this code was implemented.
+        You have ZERO knowledge of how this code was implemented — except the arbitration ledger below.
+        Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
         Compare MODULE documentation against source code implementation,
         chapter by chapter (chapters 1-10).
@@ -1662,7 +1666,8 @@ repeat:
   ③ Claude Diff Evaluator (Agent tool, subagent_type: claude-auditor)
      prompt:
        "You are an independent diff reviewer. Round {eval_round}.
-        You have ZERO knowledge of implementation decisions.
+        You have ZERO knowledge of implementation decisions — except the arbitration ledger below.
+        Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
         First pass: scan every line of the diff for surface issues.
         Second pass: analyze logic, security, edge cases.
@@ -1881,7 +1886,8 @@ repeat:
   ① Claude Test Evaluator (Agent tool, subagent_type: claude-auditor)
      prompt:
        "You are an independent test evaluator. Evaluation round {eval_round}.
-        You have ZERO knowledge of how this code was implemented or what was tried before.
+        You have ZERO knowledge of how this code was implemented or what was tried before — except the arbitration ledger below.
+        Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
         Your job: analyze the captured test run, verify it is complete and plausible
         (correct command, full suite, no truncation), diagnose ALL failures' root causes.
@@ -2241,7 +2247,8 @@ repeat:
   ① Claude Adversarial Evaluator (Agent tool, subagent_type: claude-auditor)
      prompt:
        "You are an independent security evaluator. Fresh context — round {eval_round}.
-        You have ZERO knowledge of implementation decisions or prior review rounds.
+        You have ZERO knowledge of implementation decisions or prior review rounds — except the arbitration ledger below.
+        Previously arbitrated out (re-flag ONLY with new evidence): {arbitrated_out}
 
         Review the diff from an attacker and chaos engineer perspective.
         Find: security holes, race conditions, resource leaks, data corruption paths,

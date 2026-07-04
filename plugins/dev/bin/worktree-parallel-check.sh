@@ -30,6 +30,9 @@ skipped_count=0
 
 DEV_SKILL=plugins/dev/skills/dev/SKILL.md
 SPEC_SKILL=plugins/dev/skills/spec/SKILL.md
+# §8 Worktree-mode body moved to references/worktree.md in 3.9.0 (progressive
+# disclosure); the §8 anchor/body checks (T3/T4) read it there, not DEV_SKILL.
+WT_REF=plugins/dev/skills/dev/references/worktree.md
 HELPER=plugins/dev/bin/worktree-helper.sh
 
 # ──────────────────────────────────────────────────────────────
@@ -87,24 +90,26 @@ jq -e . .claude-plugin/marketplace.json \
 echo "PASS: T1 syntax lint"
 
 # ──────────────────────────────────────────────────────────────
-# T2: Version consistency (2.8.0 in 5 sync points)
+# T2: Version consistency — plugin.json is the REFERENCE; the other 4 sync points
+#     must MATCH it (3.9.0: generalized from a hardcoded 2.8.0 pin so this orphan
+#     verifier never drifts against the release version — plugin.json is the SSOT).
 # ──────────────────────────────────────────────────────────────
 PLUGIN_VER=$(jq -r .version plugins/dev/.claude-plugin/plugin.json)
 MP_VER=$(jq -r '.plugins[] | select(.name=="dev") | .version' .claude-plugin/marketplace.json)
-[ "$PLUGIN_VER" = "2.8.0" ] \
-  || { echo "FAIL: T2 — plugin.json version is $PLUGIN_VER (expected 2.8.0)"; exit 1; }
-[ "$MP_VER" = "2.8.0" ] \
-  || { echo "FAIL: T2 — marketplace.json dev-entry version is $MP_VER (expected 2.8.0)"; exit 1; }
-grep -qE '^\| +`dev` +\| +`2\.8\.0` +\|' README.md \
-  || { echo "FAIL: T2 — README.md status row not 2.8.0"; exit 1; }
-grep -qE '^\| +`dev` +\| +`2\.8\.0` +\|' README.zh-CN.md \
-  || { echo "FAIL: T2 — README.zh-CN.md status row not 2.8.0"; exit 1; }
-grep -qE '^\| +`dev` +\| +`2\.8\.0` +\|' README.es.md \
-  || { echo "FAIL: T2 — README.es.md status row not 2.8.0"; exit 1; }
-echo "PASS: T2 version consistency (5 sync points)"
+VER_RE=$(printf '%s' "$PLUGIN_VER" | sed 's/\./\\./g')
+[ "$MP_VER" = "$PLUGIN_VER" ] \
+  || { echo "FAIL: T2 — marketplace.json dev-entry version is $MP_VER (expected $PLUGIN_VER)"; exit 1; }
+grep -qE "^\| +\`dev\` +\| +\`${VER_RE}\` +\|" README.md \
+  || { echo "FAIL: T2 — README.md status row not $PLUGIN_VER"; exit 1; }
+grep -qE "^\| +\`dev\` +\| +\`${VER_RE}\` +\|" README.zh-CN.md \
+  || { echo "FAIL: T2 — README.zh-CN.md status row not $PLUGIN_VER"; exit 1; }
+grep -qE "^\| +\`dev\` +\| +\`${VER_RE}\` +\|" README.es.md \
+  || { echo "FAIL: T2 — README.es.md status row not $PLUGIN_VER"; exit 1; }
+echo "PASS: T2 version consistency ($PLUGIN_VER across 5 sync points)"
 
 # ──────────────────────────────────────────────────────────────
-# T3: /dev SKILL.md §8 anchors present exactly once outside fences
+# T3: §8 anchors present exactly once outside fences (in references/worktree.md
+#     since the 3.9.0 progressive-disclosure move)
 # ──────────────────────────────────────────────────────────────
 for anchor in \
   '## 8. Worktree mode (2.8.0+)' \
@@ -112,16 +117,16 @@ for anchor in \
   '### 8.2 Upstream coordination (/spec, /prd) — worktree-mode bridging' \
   '### 8.3 Concurrency constraints + trust boundaries'
 do
-  count=$(count_outside_fence_exact "$DEV_SKILL" "$anchor")
+  count=$(count_outside_fence_exact "$WT_REF" "$anchor")
   [ "$count" = "1" ] \
     || { echo "FAIL: T3 — anchor \"$anchor\" count=$count (expected 1)"; exit 1; }
 done
-echo "PASS: T3 /dev SKILL.md §8 anchors (4 of them) each present exactly once"
+echo "PASS: T3 references/worktree.md §8 anchors (4 of them) each present exactly once"
 
 # ──────────────────────────────────────────────────────────────
 # T4: Subcommand labels in §8.1 body
 # ──────────────────────────────────────────────────────────────
-extract_section "$DEV_SKILL" \
+extract_section "$WT_REF" \
   '^### 8\.1 Four subcommands' '^### 8\.2 ' \
   > "$SCRATCH/sect81.txt"
 [ -s "$SCRATCH/sect81.txt" ] \
@@ -358,11 +363,12 @@ grep -Fq 'worktree' README.zh-CN.md \
   || { echo "FAIL: T9 — README.zh-CN.md missing 'worktree' marker"; exit 1; }
 grep -Fq 'worktree' README.es.md \
   || { echo "FAIL: T9 — README.es.md missing 'worktree' marker"; exit 1; }
-jq -r '.description' plugins/dev/.claude-plugin/plugin.json | grep -Fq '**2.8.0**' \
-  || { echo "FAIL: T9 — plugin.json description missing '**2.8.0**'"; exit 1; }
-jq -r '.plugins[] | select(.name=="dev") | .description' .claude-plugin/marketplace.json | grep -Fq '**2.8.0**' \
-  || { echo "FAIL: T9 — marketplace.json dev-entry description missing '**2.8.0**'"; exit 1; }
-echo "PASS: T9 descriptor presence"
+# NOTE (3.9.0): the former `**2.8.0**` bold-marker description checks were REMOVED — the
+# 2.8.1 rule-9 description format dropped per-release bold markers for a rotating
+# "Latest:/Earlier:" tail, so asserting a fixed `**X.Y.Z**` marker is obsolete (it would
+# fail for every release ≥ 2.8.1). The worktree feature's ongoing presence is covered by
+# the README 'worktree' checks above and the frozen §8 anchor/label checks (T3/T4).
+echo "PASS: T9 descriptor presence (worktree feature documented)"
 
 # ──────────────────────────────────────────────────────────────
 # T10: VERSIONING.md 2.8.0 checklist (7 rules + 2.7.0-still-in-force note)

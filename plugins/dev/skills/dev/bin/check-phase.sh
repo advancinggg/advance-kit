@@ -273,19 +273,26 @@ codex_part = cmd[:pipe_pos] if pipe_pos >= 0 else cmd
 rest = cmd[pipe_pos+1:] if pipe_pos >= 0 else ""
 
 # Check for ; && || (outside quotes) and command substitution (outside SINGLE
-# quotes — $(...)/backticks are live inside double quotes) in the FULL command
+# quotes — $(...)/backticks are live inside double quotes) in the FULL command.
+# EXCEPTION: the canonical codex template uses -C "$(git rev-parse --show-toplevel)" as
+# the ONE sanctioned substitution (that is how the PLAN/DOCS/SUMMARY-phase codex evaluator
+# resolves the repo root). Blank it out before scanning so it is allowed while every
+# OTHER substitution is still denied. Without this, the locked-phase dual-model review
+# self-blocks. Any deviation from the exact literal falls through to deny (fail-safe).
+# (No apostrophes in this comment: it lives inside the outer python3 -c single quotes.)
+scan = cmd.replace("$(git rev-parse --show-toplevel)", " ")
 in_sq = in_dq = esc = False
-for i, c in enumerate(cmd):
+for i, c in enumerate(scan):
     if esc: esc = False; continue
     if c == "\\" and in_dq: esc = True; continue
     if c == chr(39) and not in_dq: in_sq = not in_sq
     elif c == chr(34) and not in_sq: in_dq = not in_dq
     elif not in_sq:
         if c == chr(96): print("deny:cmd_substitution"); sys.exit(0)  # backtick
-        if c == "$" and i+1 < len(cmd) and cmd[i+1] == "(": print("deny:cmd_substitution"); sys.exit(0)
+        if c == "$" and i+1 < len(scan) and scan[i+1] == "(": print("deny:cmd_substitution"); sys.exit(0)
         if not in_dq:
             if c == ";": print("deny:compound_operator"); sys.exit(0)
-            if c == "&" and i+1 < len(cmd) and cmd[i+1] == "&": print("deny:compound_operator"); sys.exit(0)
+            if c == "&" and i+1 < len(scan) and scan[i+1] == "&": print("deny:compound_operator"); sys.exit(0)
 
 # Extract -s value from codex segment (proper shlex parse)
 try:
@@ -360,6 +367,10 @@ print("allow")
   # ── Command substitution is live even inside double quotes: strip only the inert
   #    single-quoted spans, then deny any $( or backtick — inner commands would evade
   #    the per-segment allowlist scan below (e.g. `echo "$(rm x)"`). Locked phases only.
+  #    (A backslash-escaped literal like `grep "\$(x)"` is fail-safe over-denied here —
+  #    acceptable for a rare read-only locked-phase command; the codex branch, which
+  #    must permit the sanctioned `-C "$(git rev-parse --show-toplevel)"`, handles
+  #    escapes precisely instead.)
   SQ_STRIPPED=$(printf '%s' "$COMMAND" | sed "s/'[^']*'//g")
   if printf '%s' "$SQ_STRIPPED" | grep -qE '\$\(|`'; then
     emit_deny "[dev] Command substitution is not allowed during the $PHASE phase"; exit 0

@@ -12,7 +12,7 @@
 #      detection + stale (no worktree) flagging.
 #
 # Read-only contract: no .dev-state/state.json writes, no git mutating ops,
-# no `git fetch`, no LLM/network calls. See SKILL.md §7 for the full
+# no `git fetch`, no LLM/network calls. See references/board.md §7 for the full
 # specification.
 #
 # Bash 3.2 compatible (macOS default). No `declare -A`, no `${var,,}`,
@@ -155,7 +155,7 @@ _verify_ref() {
   git rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1
 }
 
-# Resolve the script-level base branch via the chain (see SKILL.md §7.2).
+# Resolve the script-level base branch via the chain (see references/board.md §7.2).
 # Always echoes a non-empty string; "" (empty) is reserved for the
 # unresolved sentinel which is converted to "unresolved" at the print site.
 _resolve_script_base() {
@@ -316,7 +316,7 @@ print_section_1() {
         status_label="In Progress"
       fi
       # Percentage colour band is independent of status text (see
-      # SKILL.md §7.3 "two-axis classification").
+      # references/board.md §7.3 "two-axis classification").
       if [ "$pct" -ge 85 ]; then
         color="$GREEN"
       elif [ "$pct" -ge 70 ]; then

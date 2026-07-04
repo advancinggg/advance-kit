@@ -1226,7 +1226,9 @@ repeat:
 When `codex_available == false` (by Rule 3 or initial detection):
 - Phase 4 runs Claude-only
 - `phase_4_rounds_run` and `phase_4_claude_rounds_run` advance normally
-- `phase_4_codex_rounds_run` stops at `phase_4_degraded_from_round - 1`
+- `phase_4_codex_rounds_run` stops at the last round Codex actually participated
+  (`phase_4_degraded_from_round - 1` for a mid-flight degrade, or `- 2` after two
+  consecutive failures) — the monotonic-bound invariant (Rule 4) tolerates this lag
 - Final output marks degraded mode: "PRD converged (single-evaluator mode — codex unavailable)"
 
 ---

@@ -845,6 +845,16 @@ progressive disclosure. When editing any of these surfaces, the following rules 
     NON-BLOCKING inconclusive warning + optional back-fill prompt (never auto-filled, never a
     conflict flag without condition (a)); `/spec adr-new` offers a Modules-affected
     AskUserQuestion at creation. NotebookEdit joined the PreToolUse matchers.
+    **Rationale-shift note (deliberate)**: the 2.5.0 rule 5 "suffixed forms deliberately, to
+    avoid prose false positives" design is INTENTIONALLY relaxed by these space-variant aliases
+    (`REST API`, `strong consistency`, `at most once`, `optimistic locking`, `event driven`,
+    `modular monolith`, `push based`, `message queue/topic`, `ACID transactions`/`BASE
+    semantics`, …) — the hyphen-only forms had near-zero recall on natural ADR prose (the
+    original review's "inert conflict detection" finding). False positives are now bounded NOT
+    by the hyphenation but by the unchanged (a)+(b)+(c) conjunction (shared `Modules affected`
+    ∩ + opposing keyword spanning BOTH ADRs + decision-marker proximity), which makes an
+    incidental prose co-occurrence essentially impossible to flag. The 22 hyphenated originals
+    remain frozen and present; the aliases are additive-MINOR NEW rows.
 
 14. **Emergent-journey user arbitration**: Gate 2 surfaces evaluator-discovered emergent
     journeys for per-journey accept/reject; rejections are sanctioned records

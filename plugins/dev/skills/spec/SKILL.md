@@ -11,7 +11,7 @@ description: |
   operational + observability contracts.
   2.5.0+ ships the ADR (Architecture Decision Records) workflow: `/spec adr-new "<title>"`
   creates date-named decision files under `docs/adr/` from an inline template; Phase 1
-  scans Accepted ADRs and runs pairwise conflict detection (22 opposing-keyword pairs +
+  scans Accepted ADRs and runs pairwise conflict detection (34 opposing-keyword pairs +
   decision-marker proximity); CONTEXT-MAP reflects the matched ADRs per scope.
   2.10.0+ adds the system-acceptance layer (REQ `Witness:e2e` + standalone
   `docs/SYSTEM-ACCEPTANCE.md` of cross-module SYS-J journeys + SYS-AC ledger);
@@ -228,9 +228,18 @@ Write `docs/.spec-state/progress.json`:
   "modules_accepted": {},
   "modules_in_progress": {},
   "modules_total": 0,
+  "arbitrated_out": [],
+  "rejected_journeys": [],
   "updated_at": "ISO 8601"
 }
 ```
+
+`arbitrated_out` (3.9.0): anti-churn ledger of single-source evaluator findings dismissed
+at merge — `[{round, source, severity, fingerprint, rationale}]`; appended by Phase 1.3 /
+Phase 2.4 STEP 2 and fed into the next round's evaluator prompts (as DATA). `rejected_journeys`
+(3.9.0): emergent journeys the user rejected at Gate 2 —
+`[{journey, rationale, user_accepted_at}]`; written at Gate 2, read by Phase 1.3 STEP 2 to
+exclude them from `system_uncovered_count` (default `[]`). Both persist across resume.
 
 **Update protocol** (update progress.json at each transition):
 - After Gate 1 confirmed → `phase: "architecture"`
@@ -1802,7 +1811,7 @@ and a §1.1 "Serves PRD topics" sub-section**), existing MODULE docs generated f
 an older template do NOT acquire those sections on an ordinary `/spec` rerun (the
 main-flow merge-preserve machinery handles REQ-ID status, AC-ID ledger,
 Module-ID, Contract-ID, **and — 3.9.0 — the /dev-authored Part-3 prose surfaces
-listed under "Rerun preservation" below**). Three paths to upgrade a legacy doc:
+listed under "Rerun preservation" above**). Three paths to upgrade a legacy doc:
 
 - **Option C (recommended, added in 2.2.0): `/spec upgrade-template`** —
   section-level merge that preserves all existing bodies verbatim (including
@@ -2512,13 +2521,23 @@ txt = open('docs/SYSTEM-ACCEPTANCE.md').read()
 parts = re.split(r'(?m)^## ', txt)
 s11 = next((p for p in parts if p.startswith('1. System Acceptance Journeys')), '')
 s2  = next((p for p in parts if p.startswith('2. System AC Ledger')), '')
+# Fail CLOSED on a heading mismatch: if a §-heading was not found, or §1.1 declares no
+# SYS-AC while §2 has rows (or vice-versa), the doc is structurally broken → VIOLATION
+# (an empty-vs-empty accidental "OK" would let a broken doc pass the gate).
+if not s11 or not s2:
+    print('SECTIONS:', '§1 found' if s11 else '§1 MISSING', '/', '§2 found' if s2 else '§2 MISSING')
+    print('PARITY: VIOLATION (heading mismatch — expected "## 1. System Acceptance Journeys" and "## 2. System AC Ledger")')
+    raise SystemExit
 ids = lambda s: re.findall(r'(?m)^\|\s*(SYS-AC-\d{2})\s*\|', s)
 a, b = ids(s11), ids(s2)
 dup = sorted({x for l in (a, b) for x in l if l.count(x) > 1})
 print('DUPLICATES:', dup or 'none')
 print('ONLY-IN-1.1:', sorted(set(a) - set(b)) or 'none')
 print('ONLY-IN-2:', sorted(set(b) - set(a)) or 'none')
-print('PARITY:', 'OK' if set(a) == set(b) and not dup else 'VIOLATION')
+if not a and not b:
+    print('PARITY: OK (no SYS-AC — vacuous; verify this doc is a genuine no-e2e skeleton)')
+else:
+    print('PARITY:', 'OK' if set(a) == set(b) and not dup else 'VIOLATION')
 PY
 ```
 
