@@ -476,7 +476,7 @@ Options:
      explicitly runs `/spec docs/PRD.md` to pick up the amended PRD.
 
      (Worktree mode (2.8.0+): the 3 commands above still run literally
-      — see /dev SKILL.md §8.2 for the cd bridging. Run /prd in the
+      — see /dev `references/worktree.md` §8.2 for the cd bridging. Run /prd in the
       MAIN worktree, not in a task worktree; PRD is repo-shared SSOT
       and divergent task-worktree edits defeat the single-flight
       purpose.)
@@ -492,7 +492,7 @@ Options:
      invariant while accommodating small hand-edits.
 
      (Worktree mode (2.8.0+): the 3 commands above still run literally
-      — see /dev SKILL.md §8.2 for the cd bridging. The manual PRD
+      — see /dev `references/worktree.md` §8.2 for the cd bridging. The manual PRD
       edit MUST happen in the MAIN worktree, not a task worktree;
       task-worktree PRD divergence defeats the single-flight rule.)
 
@@ -661,7 +661,7 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
      - `codex_rounds_run += 1` (only if Codex's output was valid and participated in merge this round)
    - **Invariant** (main agent must assert this before writing STEP 3):
      - `claude_rounds_run == eval_round`
-     - `codex_rounds_run == eval_round` **OR** `(codex_available == false AND codex_rounds_run == degraded_from_round - 1)`
+     - `0 <= codex_rounds_run <= eval_round` **AND** `(codex_available == true → codex_rounds_run >= eval_round - 1)` (3.9.0 monotonic-bound form; a Codex-absent round legitimately lags and does NOT trip the invariant)
    - Invariant violation → stop the loop and AskUserQuestion to report process failure. Do NOT silently advance.
 
 5. **Rescue bypass isolation + narration discipline**
@@ -1167,8 +1167,10 @@ repeat:
       architecture_codex_rounds_run += 1
   Assert invariants before writing step 3 results:
     architecture_claude_rounds_run == eval_round
-    architecture_codex_rounds_run == eval_round OR
-      (codex_available == false AND architecture_codex_rounds_run == degraded_from_round - 1)
+    0 <= architecture_codex_rounds_run <= eval_round AND
+      (codex_available == true IMPLIES architecture_codex_rounds_run >= eval_round - 1)
+      # 3.9.0 monotonic-bound form (see /dev Sync Protocol rule 4): a Codex-absent round
+      # legitimately lags and must NOT trip the invariant.
   Invariant violation → stop the loop and AskUserQuestion to report process failure.
 
   ──────────────────────────────────────────────────────────────
@@ -2029,8 +2031,9 @@ For each module (in topological order):
         modules_in_progress["MODULE-NNN-name"].codex_rounds_run += 1
     Assert invariants before writing step 3 results:
       claude_rounds_run == eval_round
-      codex_rounds_run == eval_round OR
-        (codex_available == false AND codex_rounds_run == degraded_from_round - 1)
+      0 <= codex_rounds_run <= eval_round AND
+        (codex_available == true IMPLIES codex_rounds_run >= eval_round - 1)
+        # 3.9.0 monotonic-bound form (see /dev Sync Protocol rule 4).
     Invariant violation → stop the loop and AskUserQuestion to report process failure.
 
 
@@ -2498,24 +2501,29 @@ depends on most operationally previously had NO in-run verification of the mater
 files. Run this lint after Phase 3.4 completes; **fix every violation before the Phase 4
 report**. Read-only, mechanical — no evaluator loop needed.
 
-1. **SYSTEM-ACCEPTANCE.md** (when generated):
-   - `set(§1.1 SYS-AC IDs) == set(§2 SYS-AC IDs)`, no duplicate IDs in either — run:
-     ```bash
-     python3 -I - <<'PY'
-     import re
-     txt = open('docs/SYSTEM-ACCEPTANCE.md').read()
-     parts = re.split(r'(?m)^## ', txt)
-     s11 = next((p for p in parts if p.startswith('1. System Acceptance Journeys')), '')
-     s2  = next((p for p in parts if p.startswith('2. System AC Ledger')), '')
-     ids = lambda s: re.findall(r'(?m)^\|\s*(SYS-AC-\d{2})\s*\|', s)
-     a, b = ids(s11), ids(s2)
-     dup = sorted({x for l in (a, b) for x in l if l.count(x) > 1})
-     print('DUPLICATES:', dup or 'none')
-     print('ONLY-IN-1.1:', sorted(set(a) - set(b)) or 'none')
-     print('ONLY-IN-2:', sorted(set(b) - set(a)) or 'none')
-     print('PARITY:', 'OK' if set(a) == set(b) and not dup else 'VIOLATION')
-     PY
-     ```
+1. **SYSTEM-ACCEPTANCE.md** (when generated) — run the §1.1↔§2 parity check below (a
+   heredoc: the fence contents AND the closing `PY` MUST sit at column 0, unindented, or
+   the heredoc will not terminate):
+
+```bash
+python3 -I - <<'PY'
+import re
+txt = open('docs/SYSTEM-ACCEPTANCE.md').read()
+parts = re.split(r'(?m)^## ', txt)
+s11 = next((p for p in parts if p.startswith('1. System Acceptance Journeys')), '')
+s2  = next((p for p in parts if p.startswith('2. System AC Ledger')), '')
+ids = lambda s: re.findall(r'(?m)^\|\s*(SYS-AC-\d{2})\s*\|', s)
+a, b = ids(s11), ids(s2)
+dup = sorted({x for l in (a, b) for x in l if l.count(x) > 1})
+print('DUPLICATES:', dup or 'none')
+print('ONLY-IN-1.1:', sorted(set(a) - set(b)) or 'none')
+print('ONLY-IN-2:', sorted(set(b) - set(a)) or 'none')
+print('PARITY:', 'OK' if set(a) == set(b) and not dup else 'VIOLATION')
+PY
+```
+
+   Plus these checks (`set(§1.1 SYS-AC IDs) == set(§2 SYS-AC IDs)` + no duplicates is the
+   snippet above; the rest are read-only inspections):
    - every journey has ≥1 `functional` row in §1.1;
    - every §1.1/§2 Witness value ∈ {`e2e`, `system`};
    - every Active=Y `Witness:e2e` REQ appears in ≥1 journey's REQ Sources;

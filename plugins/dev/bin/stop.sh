@@ -58,10 +58,14 @@ if   [ -x "$HOME/.local/bin/gitleaks" ]; then GITLEAKS_BIN="$HOME/.local/bin/git
 elif command -v gitleaks >/dev/null 2>&1;   then GITLEAKS_BIN=$(command -v gitleaks)
 fi
 
-# ── Push remote derived from the upstream (falls back to origin) ──
+# ── Push remote derived from the branch's configured remote (falls back to origin) ──
+# NB: parse `branch.<b>.remote`, NOT `${UPSTREAM%%/*}` — a LOCAL-branch upstream
+# (`git branch --set-upstream-to=main`) sets branch.<b>.remote='.' and abbrev-ref
+# returns a slashless name, so the %%/* form would yield a bogus remote ('main')
+# and the [ -z ] fallback can never fire. A '.' (local) or empty remote → origin.
 UPSTREAM=$(git rev-parse --abbrev-ref "@{u}" 2>/dev/null || echo "")
-REMOTE="${UPSTREAM%%/*}"
-[ -z "$REMOTE" ] && REMOTE=origin
+REMOTE=$(git config "branch.$BRANCH.remote" 2>/dev/null || echo "")
+{ [ -z "$REMOTE" ] || [ "$REMOTE" = "." ]; } && REMOTE=origin
 
 # ── Nothing to commit? ──
 if git diff --quiet && git diff --cached --quiet \
@@ -69,21 +73,24 @@ if git diff --quiet && git diff --cached --quiet \
   # No new work to stage, but push any unpushed local commits (e.g., from
   # /dev or /spec inline commits that were created without a push).
   if [ -n "$UPSTREAM" ] && [ -n "$(git log "$UPSTREAM"..HEAD --oneline 2>/dev/null)" ]; then
-    # Scan the OUTGOING RANGE before pushing — commits created inline by a skill
-    # were never staged through the scan below, so this path must scan too
-    # (same fail-closed policy: rc=1 secrets and rc>=2 scanner failure both block).
+    # Scan the OUTGOING COMMITS before pushing — commits created inline by a skill
+    # were never staged through the scan below, so this path must scan too.
+    # Scan `git log -p` of the range (every commit's patch), NOT `git diff A..HEAD`
+    # (the two-dot endpoint diff hides a secret that a later unpushed commit removes
+    # — the add-then-remove case — while the commit still carries it into pushed
+    # history). Same fail-closed policy: rc=1 secrets and rc>=2 scanner failure both block.
     if [ -n "$GITLEAKS_BIN" ]; then
       GL_EXIT=0
-      GL_OUT=$(git diff "$UPSTREAM"..HEAD | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GL_EXIT=$?
+      GL_OUT=$(git log -p "$UPSTREAM"..HEAD | "$GITLEAKS_BIN" detect --pipe --no-banner 2>&1) || GL_EXIT=$?
       if [ "$GL_EXIT" -ne 0 ]; then
         echo "[$(date)] GITLEAKS BLOCKED unpushed-commit push (rc=$GL_EXIT) in $PROJECT_DIR" >> "$LOG"
         echo "[$(date)] $GL_OUT" >> "$LOG"
         echo "gitleaks blocked the push of unpushed commits (rc=$GL_EXIT). See $LOG for details."
         exit 0
       fi
-      echo "[$(date)] GITLEAKS PASS (outgoing range) in $PROJECT_DIR" >> "$LOG"
+      echo "[$(date)] GITLEAKS PASS (outgoing commits) in $PROJECT_DIR" >> "$LOG"
     else
-      echo "[$(date)] gitleaks not installed, skipping outgoing-range scan in $PROJECT_DIR" >> "$LOG"
+      echo "[$(date)] gitleaks not installed, skipping outgoing-commit scan in $PROJECT_DIR" >> "$LOG"
     fi
     echo "[$(date)] No new changes, but pushing unpushed commits in $PROJECT_DIR" >> "$LOG"
     if git push "$REMOTE" "$BRANCH" 2>>"$LOG"; then

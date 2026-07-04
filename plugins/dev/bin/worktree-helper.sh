@@ -365,15 +365,16 @@ worktree-helper finish: SUMMARY done. Run these in the main worktree to merge:
   git worktree remove "$REPO_ROOT"
   git branch -d "$task_branch"  # safety: -d (not -D), refuses if not merged
 
-RECONCILE shared ledgers after the merge (3.9.0 — see /dev SKILL.md §8.3 rule 6):
+RECONCILE shared ledgers after the merge (3.9.0 — see references/worktree.md §8.3 rule 6):
 parallel SUMMARYs write MODULE §3.1/§3.4, REQUIREMENTS_REGISTRY Status,
-SYSTEM-ACCEPTANCE §2, and ARCHITECTURE % from per-branch views that go stale the
+SYSTEM-ACCEPTANCE §2/§3, and ARCHITECTURE % from per-branch views that go stale the
 moment another task branch merges first. In the main worktree, for every module
 more than one task branch touched: re-derive §3.1 + the registry Status from the
 MERGED §3.4 rows (the §6.1.1 formula), and the ARCHITECTURE overview % from the
-merged ledgers. A same-line merge conflict in a ledger row means two SUMMARYs
-wrote the same REQ/AC — resolve by recomputing from the merged §3.4, never by
-picking a side blindly. '/dev board' shows the merged per-module state.
+merged ledgers. A same-line merge conflict in a ledger row (incl. a SYSTEM-ACCEPTANCE
+§3 deferral row) means two SUMMARYs wrote the same REQ/AC/SYS-AC — resolve by
+recomputing from the merged §3.4/§2, never by picking a side blindly. Run
+/dev board to view the merged per-module state.
 
 EOF
 }

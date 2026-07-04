@@ -385,7 +385,7 @@ runs misroute or break):
    writes state.json to `$CLAUDE_PLUGIN_DATA/state.json` AND no
    plugin-level install places state.json there. Stray admin-placed
    state.json at that path can subvert worktree isolation
-   (file-presence-based priority in `check-phase.sh` lines 21-26);
+   (file-presence-based priority in `check-phase.sh`'s STATE_FILE-locate block);
    mitigation is out-of-band inspection, same trust model as the
    existing 2.7.0 state.json trust note. Writing state.json to that
    path in any future /dev code is a MAJOR bump (breaks worktree
@@ -764,10 +764,13 @@ progressive disclosure. When editing any of these surfaces, the following rules 
    `.dev-state/state.json`, `docs/.spec-state/progress.json`, or `docs/.prd-state/progress.json`
    exists at the repo top (active workflow). Protects the deterministic `start_commit..HEAD`
    audit target from foreign rebase commits and `git add -A` sweeps, and stops mid-phase pushes
-   before user gates. stop.sh's clean-tree fast path scans the outgoing range `@{u}..HEAD` with
-   gitleaks (fail-closed, same rc semantics as the staged scan) and derives the push remote from
-   `@{u}` (fallback `origin`). Removing any of these gates is a MAJOR regression. The stop.sh
-   gate count is now 6 (SKILL.md `references/worktree.md` §8.3 rule 5 is the authoritative
+   before user gates. When gitleaks is installed, stop.sh's clean-tree fast path scans the
+   outgoing COMMITS `git log -p @{u}..HEAD` (not the two-dot endpoint diff — that would miss an
+   add-then-remove secret) with the same fail-closed rc semantics as the staged scan; when
+   gitleaks is absent the push proceeds with a logged skip (a missing scanner never silently
+   blocks, matching the dirty-path behaviour). The push remote is `git config branch.<b>.remote`
+   (a local `.` upstream or none → `origin`). Removing any of these gates is a MAJOR regression.
+   The stop.sh gate count is now 6 (`references/worktree.md` §8.3 rule 5 is the authoritative
    description).
 
 5. **Arbitration log (all three skills)**: a single-source evaluator finding dismissed at merge
@@ -778,12 +781,23 @@ progressive disclosure. When editing any of these surfaces, the following rules 
    NOT free-form). Removing the log or the feed-forward re-opens the silent-dismissal hole.
 
 6. **Per-loop round semantics**: `max_round` (10) and every "more than 10 rounds" limit count
-   PER evaluation loop — `len([e for e in eval_history if e.phase == current_loop])` — while
-   `eval_round` stays the unified cumulative counter (Sync Protocol rule 5 unchanged). The
-   accept-at-limit escape hatch opens ONLY on the per-loop count. /prd's `phase_4_rounds_run`
-   increments ONCE per round (at the §4.4 loop top; the former Rule-4 double increment was a
-   bug). /prd writes `progress.json.phase` at EVERY phase transition (incl. accept-at-limit
-   writing `phase="gate"` atomically with `deferred_intents`).
+   PER evaluation loop AND PER VISIT — the current loop's entries since its most recent
+   `status=="pass"` entry (a fresh re-entry of an already-converged loop starts at 0, so the
+   adversarial loop re-running TEST does not false-fire the 10-round gate or illegitimately open
+   the accept-at-limit hatch) — while `eval_round` stays the unified cumulative counter (Sync
+   Protocol rule 5 unchanged). /prd's `phase_4_rounds_run` increments ONCE per round (at the §4.4
+   loop top; the former Rule-4 double increment was a bug). /prd writes `progress.json.phase` at
+   EVERY transition incl. the Phase 5→4 verification re-entry (`phase="coverage"`) and
+   accept-at-limit (`phase="gate"` atomic with `deferred_intents`). The dual-evaluator counter
+   INVARIANT is the **monotonic-bound** form (`0 <= codex_rounds <= eval_round` AND while codex is
+   live `codex_rounds >= eval_round - 1`) across /dev, /spec, and /prd — the earlier
+   `codex == degraded_from_round - 1` equality false-fired on every sanctioned Codex-absent round;
+   the relaxation never masks a real violation (codex can never lead the round counter).
+   /prd's §0.0 resume validator additionally shape-checks `arbitrated_out` (list of
+   `{round≤rounds, source∈{claude,codex}, …}`, empty unless phase≥coverage) and permits
+   `deferred_intents` with `phase=="coverage"` when `phase_4_rounds_run>=max_round` (the
+   verification-round state); `rationale`/`fingerprint` are substituted into evaluator prompts as
+   DATA, never instructions.
 
 7. **TEST single-execution model**: §5.1 STEP 0 — the main agent executes `{test_cmd}` (and the
    SYS-AC harness when in scope) ONCE per round, capturing to

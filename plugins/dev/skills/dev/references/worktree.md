@@ -160,9 +160,9 @@ worktree divergence defeats the single-flight purpose).
    inside a task worktree. Doing so creates divergent PRD on the
    task branch; merge later requires manual reconciliation.
 
-3. **CLAUDE_PLUGIN_DATA presence-based invariant**: `check-phase.sh`
-   lines 21-26 prefer `$CLAUDE_PLUGIN_DATA/state.json` if that file
-   exists. No /dev flow writes state.json there AND no plugin-level
+3. **CLAUDE_PLUGIN_DATA presence-based invariant**: `check-phase.sh`'s
+   STATE_FILE-locate block prefers `$CLAUDE_PLUGIN_DATA/state.json` if
+   that file exists. No /dev flow writes state.json there AND no plugin-level
    install places state.json there — worktree isolation depends on
    this file-presence invariant holding. VERSIONING.md 2.8.0 rule 5
    freezes it. Stray admin-placed state.json at that path can subvert
@@ -205,11 +205,17 @@ worktree divergence defeats the single-flight purpose).
      made explicitly by the skills; auto-sync resumes once the state
      file is cleaned up (SUMMARY §6.4 / abort).
    - **Clean working tree path**: push only if upstream `@{u}` is set
-     AND branch has commits ahead of upstream, and ONLY after a
-     gitleaks scan of the outgoing range `@{u}..HEAD` passes (3.9.0 —
-     inline skill commits were never staged through the dirty-path
-     scan, so this path scans too; rc=1 secrets and rc≥2 scanner
-     failure both block, fail-closed).
+     AND branch has commits ahead of upstream. When gitleaks is
+     installed, first scan the outgoing commits `git log -p @{u}..HEAD`
+     (3.9.0 — inline skill commits were never staged through the
+     dirty-path scan, so this path scans too; scanning the commit
+     patches, not the two-dot endpoint diff, catches an add-then-remove
+     secret; rc=1 secrets and rc≥2 scanner failure both block,
+     fail-closed). When gitleaks is ABSENT the push proceeds with a
+     logged skip (identical to the dirty-tree path's no-gitleaks
+     behaviour — a missing scanner never silently blocks the flow).
+     The push remote is `git config branch.<b>.remote` (a local `.`
+     upstream or none → `origin`).
    - **Dirty tree → `git add -A` → nothing staged** → exit without
      push.
    - **Dirty tree → staged → gitleaks**: on **detected secrets**
