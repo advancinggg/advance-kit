@@ -1,5 +1,5 @@
 ---
-description: Install optional dependencies for the dev plugin (Codex dual-model review).
+description: Install optional dependencies for the dev plugin (claude+codex review backend; not needed under Grok Build).
 allowed-tools: [Bash, Read]
 ---
 
@@ -7,11 +7,16 @@ allowed-tools: [Bash, Read]
 
 Check and install optional dependencies for the dev workflow plugin.
 
+> **Grok Build note (3.10.0+)**: under Grok Build, `/dev` auto-selects the `grok-dual`
+> review backend (two native `spawn_subagent` evaluators) — the codex CLI and plugin
+> below are NOT used there and nothing needs installing. This setup applies to the
+> `claude+codex` backend (Claude Code / compatible harnesses).
+
 ## Dependencies
 
 | Dependency | Purpose | Required |
 |-----------|---------|----------|
-| codex CLI | Dual-model code review via Codex exec | Optional (degrades to single-model) |
+| codex CLI | Cross-model code review via Codex exec (claude+codex backend) | Optional (degrades to single-evaluator) |
 | codex@openai-codex plugin | Codex integration for Claude Code | Optional |
 
 ## Instructions
@@ -55,10 +60,15 @@ Show a summary:
   codex CLI:     {INSTALLED | NOT_FOUND — install from https://github.com/openai/codex}
   codex plugin:  {INSTALLED | JUST INSTALLED | SKIPPED (no codex CLI)}
 
-  Dual-model review: {ENABLED | DISABLED (single-model fallback)}
+  claude+codex cross-model review: {ENABLED | DISABLED (single-evaluator fallback)}
 ```
 
 If all dependencies are installed, output:
 ```
-All dependencies are installed. Dual-model review is enabled.
+All dependencies are installed. Cross-model review (claude+codex backend) is enabled.
+```
+
+If running under Grok Build, output instead:
+```
+Grok Build detected — /dev uses the grok-dual backend (native subagents); nothing to install.
 ```

@@ -870,3 +870,75 @@ progressive disclosure. When editing any of these surfaces, the following rules 
 **All prior freezes (2.4.0–3.8.0) REMAIN in force.** The 3.9.0 rules above are additive (rule 2
 refines 3.8.0 rule 8(c)'s detection mechanism while preserving its frozen trigger semantics; rule
 12 relocates frozen bodies without changing their contracts).
+
+## Release checklist (for grok-dual review backend — 3.10.0+)
+
+The 3.10.0 minor adds a **review-backend abstraction** to `/dev`: every review point
+(plan / doc-audit / diff / test / adversarial) runs the same dual-evaluator protocol, but the
+two evaluators are now selected by a runtime-detected backend — `claude+codex` (the pre-3.10.0
+behaviour, unchanged) or `grok-dual` (Grok Build: two parallel native `spawn_subagent`
+evaluators, no codex CLI). It is **additive and backward-compatible**: on Claude Code /
+compatible harnesses nothing changes; the grok path activates only when the toolset detection
+selects it. When editing any of these surfaces, the following rules MUST hold:
+
+1. **Backend enum FROZEN**: `review_backend ∈ {"claude+codex", "grok-dual"}`, with the
+   detection priority (1) Agent/Task tool that can launch `subagent_type: claude-auditor` →
+   `claude+codex`; (2) else `spawn_subagent` in the toolset → `grok-dual`; (3) neither →
+   AskUserQuestion (abort / single-evaluator). Renaming or removing a value, or inverting the
+   priority (grok-dual must never shadow an available claude+codex — cross-model coverage is
+   strictly stronger), is MAJOR. Adding a new backend value is MINOR.
+
+2. **Positional A/B field semantics FROZEN (deliberate no-rename decision)**: the state.json
+   fields `claude_rounds_run` / `claude_findings` track **Evaluator A** and `codex_rounds_run` /
+   `codex_consecutive_failures` / `codex_available` / `codex_findings` /
+   `arbitrated_out[].source: "claude"|"codex"` track **Evaluator B** — under EVERY backend.
+   Field names are frozen for schema stability; they are positional labels, not model claims.
+   Renaming them (e.g., to `evaluator_a_*`) is a breaking state.json change → MAJOR. All Sync
+   Protocol rules, counters, and invariants read positionally and are backend-invariant.
+
+3. **state.json `version: 7` schema**: ONE additive field `review_backend`, read-defaulting on
+   v6-or-older reads to `"claude+codex"` (pre-3.10.0 behaviour), next write bumps `version: 7`
+   in place. Supported window is now v3–v7 (`version > 7` → HARD FAIL). Removing the field or
+   changing the defaulting is MAJOR. Backend re-detection runs on every `/dev resume`; a
+   cross-harness resume overwrites `review_backend` with a one-line notice (counters stay valid
+   because they are positional — rule 2).
+
+4. **grok-dual invocation contract FROZEN**: both evaluators are `spawn_subagent` calls with
+   `background: false` (foreground/blocking — no background+polling), fired side-by-side in the
+   SAME assistant response (Sync Protocol rule 1 applies unchanged across backends), using
+   `subagent_type: "general-purpose"` + `capability_mode: "execute"` (read + run commands, NO
+   file-edit tools — the codex `-s read-only` analog; shell read-only discipline is
+   instruction-level, same trust model as claude-auditor's Bash allowance). Prompts are the
+   SAME per-loop templates, prefixed by the auditor persona (tier-resolved
+   `agents/claude-auditor.md` body; inline fallback) plus, for Evaluator B ONLY, the hardened
+   cross-examination charter (blind — B never sees A's output). Weakening to a write-capable
+   mode, dropping the same-response spawn, or feeding A's output into B's prompt is a
+   regression (the last one breaks decision independence and re-opens the confirmation-bias
+   hole the architecture exists to close).
+
+5. **grok-dual is a FIRST-CLASS backend, not a degraded mode**: its rounds are NOT flagged
+   `degraded`, do NOT cap Verified confidence, and do NOT force a merge-gate re-review (unlike
+   `dual-claude-degraded`, which remains the claude+codex mid-flight fallback). The backend IS
+   reported mechanically (state.json `review_backend` → `/dev status`, the SUMMARY
+   "Independent evaluator results (…; backend: X)" header) — honest disclosure without a
+   degraded flag. Two frozen directions: (a) flagging every grok-dual round `degraded` would
+   make the backend unusable (regression); (b) presenting grok-dual as cross-model would be a
+   false claim (regression). On Evaluator-B failure, grok-dual degrades straight to
+   single-evaluator (no dual-claude intermediate — B already IS the dual-context fallback);
+   degradation stays irreversible per Sync rule 3.
+
+6. **Rescue side-channel scope**: `codex:codex-rescue` remains claude+codex-only. grok-dual has
+   NO rescue side-channel; nothing under grok-dual may count toward `codex_rounds_run` except a
+   valid Evaluator-B merge. Routing rescue calls into the counters is a regression of Sync
+   rule 5.
+
+7. **8-sync-point + description rotation still apply** (Hard rules 1+2+5, 2.8.1 rule 9): all 8
+   points moved to 3.10.0 together; the description tail rotated (Latest 3.10.0, Earlier
+   3.9.0/3.8.0/3.7.0, dropped 3.6.0).
+
+**All prior freezes (2.4.0–3.9.0) REMAIN in force.** The 3.10.0 rules above are additive: the
+claude+codex backend keeps every pre-3.10.0 contract verbatim (codex template, reasoning-effort
+tiering, foreground workaround, dual-claude-degraded fallback); grok-dual adds a parallel
+backend without touching them. The system-acceptance rule-7 "supported window v3–v6" statement
+is superseded by rule 3 above (window now v3–v7) — that is the sanctioned, additive widening
+pattern already used by v5→v6.

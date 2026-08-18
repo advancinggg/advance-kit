@@ -33,8 +33,10 @@
 对每个开发任务强制执行完整闭环：**plan → docs → implement → audit → test → summary**。
 通过 `PreToolUse` hook 按阶段控制文件访问权限，主 agent 无法跨阶段或静默修改当前步骤之外的文件。
 
-- **双模型审查**——每个审查点都会并行运行 Claude subagent（隔离上下文）与 Codex exec
-  （agent 自主探索），再跨模型合并结论。
+- **双评估器审查**——每个审查点并行运行两个独立评估器并合并结论，评审后端在运行时
+  自动识别（3.10.0+）：Claude Code / 兼容环境下为 Claude subagent（隔离上下文）+
+  Codex exec（agent 自主探索，跨模型）；Grok Build 下为两个并行的原生 `spawn_subagent`
+  评估器（标准审计员 + 强化对抗审查员），无需 Codex CLI。
 - **独立评估器架构**——plan / audit / test / adversarial 每一轮都启动全新评估器，
   零实现上下文，以结构化收敛指标（`substantive_count`、`pass_rate`）作为客观判定依据。
 - **规格驱动模块拆分**——内置 `/spec` skill 把 PRD 转换成架构文档和自包含的 MODULE 规范，
@@ -52,7 +54,8 @@
 - `claude-auditor` —— 每个审查点使用的隔离上下文审查者
 
 **Commands：**
-- `/dev:setup` —— 安装可选依赖（Codex CLI），启用双模型审查
+- `/dev:setup` —— 安装可选依赖（Codex CLI），用于 claude+codex 评审后端
+  （Grok Build 下使用原生 subagent，无需安装）
 
 ### `claude-best-practice`——工作方法指引
 
@@ -90,10 +93,14 @@ claude plugin update code-companion
 
 ## 可选依赖
 
-`dev` 插件支持双模型审查（Claude + Codex）。如果没有 Codex，会自动降级为单模型审查，
-并在审查结论中标注为 `single-model`。
+`dev` 插件的双评估器审查按运行时自动选择后端：
 
-启用双模型审查：
+- **Claude Code / 兼容环境（`claude+codex`）**：Claude subagent + Codex exec。
+  没有 Codex 时自动降级为单评估器审查，并在审查结论中相应标注。
+- **Grok Build（`grok-dual`）**：两个并行的原生 `spawn_subagent` 评估器——
+  零额外依赖，无需安装任何东西。
+
+在 `claude+codex` 后端启用跨模型审查：
 
 1. 安装 [Codex CLI](https://github.com/openai/codex)。
 2. 运行 `/dev:setup` 拉取匹配的 Codex 插件。
@@ -128,7 +135,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.9.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双模评审、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.9.0 修复 PreToolUse 强制层——hook 判定改用 Claude Code 实际识别的 `hookSpecificOutput` 结构（此前阶段门禁一直静默失效）；并加固全链路：语义化 DOCS 退出检测、活跃工作流期间自动同步 hook 停手、TEST 单次执行 + 双评估器独立分析、按循环计的轮次上限、仲裁日志、/spec rerun 保留 /dev 写入的 MODULE 知识（§3.2/§3.5–§3.8）、可操作的增量 Update Mode、冷路径渐进披露到 references/。**早期：** 3.8.0 机械化 DOCS 退出 ledger 一致性门、3.7.0 §1.5↔§3.4 ledger 一致性（§1.5 权威 + fail-closed 门）、3.6.0 `/dev board` 系统验收轴 + §3 持久化。 |
+| `dev` | `3.10.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双评估器审查（claude+codex 或 grok-dual 后端）、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.10.0 新增 Grok Build 评审后端——/dev 运行时自动识别环境（state v7 `review_backend`），所有评审点（plan / doc-audit / diff / test / adversarial）改用两个并行的原生 `spawn_subagent` 评估器（标准审计员 + 强化对抗审查员），无需 Codex CLI，Evaluator-A/B 位置化计数器冻结；claude+codex 后端保持不变。**早期：** 3.9.0 PreToolUse 强制层修复（`hookSpecificOutput` 判定结构）+ 全链路加固、3.8.0 机械化 DOCS 退出 ledger 一致性门、3.7.0 §1.5↔§3.4 ledger 一致性（§1.5 权威 + fail-closed 门）。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

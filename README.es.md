@@ -38,9 +38,13 @@ Obliga a que toda tarea de desarrollo recorra el ciclo completo
 acceso a archivos por fase, de modo que el agente principal no pueda saltarse pasos
 ni mutar en silencio archivos fuera del paso actual.
 
-- **Revisión con doble modelo** — cada punto de auditoría ejecuta un subagente de
-  Claude (contexto aislado) *y* una pasada de `codex exec` (exploración agente), y
-  luego fusiona los hallazgos de ambos modelos.
+- **Revisión con doble evaluador** — cada punto de auditoría ejecuta dos evaluadores
+  independientes y fusiona sus hallazgos. El backend se detecta automáticamente en
+  tiempo de ejecución (3.10.0+): bajo Claude Code / harnesses compatibles, un
+  subagente de Claude (contexto aislado) *y* una pasada de `codex exec` (exploración
+  agente, entre modelos); bajo Grok Build, dos evaluadores nativos paralelos vía
+  `spawn_subagent` (auditor estándar + contraexaminador reforzado) — sin necesidad
+  del CLI de Codex.
 - **Arquitectura de evaluadores independientes** — las fases plan / audit / test /
   adversarial lanzan evaluadores nuevos en cada ronda, con cero contexto de
   implementación, y usan métricas de convergencia estructuradas
@@ -64,8 +68,8 @@ ni mutar en silencio archivos fuera del paso actual.
 - `claude-auditor` — revisor de contexto aislado usado en cada punto de auditoría
 
 **Comandos:**
-- `/dev:setup` — instala las dependencias opcionales (Codex CLI) para la revisión
-  con doble modelo
+- `/dev:setup` — instala las dependencias opcionales (Codex CLI) para el backend de
+  revisión claude+codex (innecesario bajo Grok Build, que usa subagentes nativos)
 
 ### `claude-best-practice` — Contexto de buenas prácticas
 
@@ -107,11 +111,16 @@ claude plugin update code-companion
 
 ## Dependencias opcionales
 
-El plugin `dev` admite revisión con doble modelo (Claude + Codex). Sin Codex,
-degrada automáticamente a revisión con un solo modelo y anota las conclusiones de la
-auditoría como `single-model`.
+El plugin `dev` ejecuta la revisión con doble evaluador según el backend detectado
+en tiempo de ejecución:
 
-Para habilitar la revisión con doble modelo:
+- **Claude Code / harnesses compatibles (`claude+codex`)**: subagente de Claude +
+  Codex exec. Sin Codex, degrada automáticamente a revisión con un solo evaluador y
+  lo anota en las conclusiones de la auditoría.
+- **Grok Build (`grok-dual`)**: dos evaluadores nativos paralelos vía
+  `spawn_subagent` — sin dependencias extra; no hay nada que instalar.
+
+Para habilitar la revisión entre modelos bajo el backend `claude+codex`:
 
 1. Instala el [Codex CLI](https://github.com/openai/codex).
 2. Ejecuta `/dev:setup` para instalar el plugin de Codex correspondiente.
@@ -148,7 +157,7 @@ Luego añade a `~/.claude/settings.json`:
 
 | Plugin | Versión | Estado |
 |---|---|---|
-| `dev` | `3.9.0` | Estable — flujo /dev + /spec + /prd con evaluadores duales, progreso MODULE por AC, ADR system, /dev paralelo por worktree, panel snapshot de solo lectura `/dev board`, capa de aceptación de sistema, visibilidad de deriva de versión de plantilla. Incluye skills `dev` / `spec` / `prd` + statusline opcional. **Más reciente:** 3.9.0 repara la capa de enforcement PreToolUse — las decisiones de hook usan ahora la forma `hookSpecificOutput` que Claude Code realmente respeta (la compuerta de fases fallaba abierta en silencio) — más detección semántica de salida de DOCS, hooks de auto-sync en pausa durante workflows activos, testigo TEST de ejecución única con doble análisis independiente, límites de rondas por bucle, registro de arbitraje, /spec preserva el conocimiento MODULE escrito por /dev (§3.2/§3.5–§3.8), Update Mode incremental operacionalizado y divulgación progresiva a references/. **Anterior:** 3.8.0 compuerta mecánica de paridad de ledger en salida de DOCS, 3.7.0 paridad §1.5↔§3.4 (§1.5 autoritativo + compuertas fail-closed), 3.6.0 eje de aceptación de sistema en `/dev board` + persistencia §3. |
+| `dev` | `3.10.0` | Estable — flujo /dev + /spec + /prd con revisión de doble evaluador (backend claude+codex o grok-dual), progreso MODULE por AC, ADR system, /dev paralelo por worktree, panel snapshot de solo lectura `/dev board`, capa de aceptación de sistema, visibilidad de deriva de versión de plantilla. Incluye skills `dev` / `spec` / `prd` + statusline opcional. **Más reciente:** 3.10.0 añade un backend de revisión para Grok Build — /dev detecta el runtime automáticamente (state v7 `review_backend`) y ejecuta cada punto de revisión (plan / doc-audit / diff / test / adversarial) como dos evaluadores nativos paralelos vía `spawn_subagent` (auditor estándar + contraexaminador reforzado), sin CLI de Codex; el backend claude+codex no cambia. **Anterior:** 3.9.0 reparación del enforcement PreToolUse (forma `hookSpecificOutput`) + endurecimiento del bucle, 3.8.0 compuerta mecánica de paridad de ledger en salida de DOCS, 3.7.0 paridad §1.5↔§3.4 (§1.5 autoritativo + compuertas fail-closed). |
 | `claude-best-practice` | `1.0.0` | Estable |
 | `code-companion` | `1.0.0` | Estable (solo macOS) |
 | `telegram-channels-pro` | `0.1.3` | v0.1 completo (solo macOS) — 8 módulos: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 herramientas MCP) + routing (LRU + control de admin + comandos slash) + deployment (CLI launchd + socket de control + ROLLBACK.md). |

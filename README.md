@@ -36,8 +36,12 @@ Enforces the full lifecycle **plan → docs → implement → audit → test →
 every development task. A `PreToolUse` hook gates file access per phase so the main
 agent cannot skip ahead or silently mutate files outside the current step.
 
-- **Dual-model review** — every audit point runs a Claude subagent (isolated context)
-  *and* a Codex exec pass (agent exploration), then merges findings across models.
+- **Dual-evaluator review** — every audit point runs two independent evaluators and
+  merges their findings. The backend is auto-detected at runtime (3.10.0+): under
+  Claude Code / compatible harnesses, a Claude subagent (isolated context) *and* a
+  Codex exec pass (agent exploration, cross-model); under Grok Build, two parallel
+  native `spawn_subagent` evaluators (standard auditor + hardened cross-examiner) —
+  no Codex CLI needed.
 - **Independent evaluator architecture** — the plan / audit / test / adversarial phases
   spawn fresh evaluators every round with zero implementation context, using
   structured convergence metrics (`substantive_count`, `pass_rate`) as the objective
@@ -59,7 +63,8 @@ agent cannot skip ahead or silently mutate files outside the current step.
 - `claude-auditor` — isolated-context reviewer used for every audit point
 
 **Commands:**
-- `/dev:setup` — install optional dependencies (Codex CLI) for dual-model review
+- `/dev:setup` — install optional dependencies (Codex CLI) for the claude+codex review
+  backend (not needed under Grok Build, which uses native subagents)
 
 ### `claude-best-practice` — Coaching context
 
@@ -99,11 +104,15 @@ claude plugin update code-companion
 
 ## Optional dependencies
 
-The `dev` plugin supports dual-model review (Claude + Codex). Without Codex it
-falls back to single-model review automatically and annotates audit conclusions as
-`single-model`.
+The `dev` plugin runs dual-evaluator review with a runtime-detected backend:
 
-To enable dual-model review:
+- **Claude Code / compatible harnesses (`claude+codex`)**: Claude subagent + Codex exec.
+  Without Codex it falls back to single-evaluator review automatically and annotates
+  audit conclusions accordingly.
+- **Grok Build (`grok-dual`)**: two parallel native `spawn_subagent` evaluators — no
+  extra dependency; nothing to install.
+
+To enable cross-model review under the `claude+codex` backend:
 
 1. Install the [Codex CLI](https://github.com/openai/codex).
 2. Run `/dev:setup` to pull in the matching Codex plugin.
@@ -139,7 +148,7 @@ Then add to `~/.claude/settings.json`:
 
 | Plugin | Version | Status |
 |---|---|---|
-| `dev` | `3.9.0` | Stable — enforced /dev + /spec + /prd with dual-model evaluators, AC-driven MODULE progress, ADR system, worktree-parallel /dev, read-only `/dev board` snapshot dashboard, system-acceptance witness layer, template-version drift visibility. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 3.9.0 repairs the PreToolUse enforcement layer — hook decisions now use the `hookSpecificOutput` shape Claude Code actually honors (the phase gate had been silently fail-open) — plus semantic DOCS-exit flip detection, auto-sync hooks standing down during active workflows, single-execution TEST witness with dual independent analysis, per-loop round limits, arbitration logging, /spec reruns preserving /dev-authored MODULE knowledge (§3.2/§3.5–§3.8), an operationalized incremental Update Mode, and progressive disclosure of cold paths into references/. **Earlier:** 3.8.0 mechanical fail-open DOCS-exit ledger-parity gate, 3.7.0 §1.5↔§3.4 ledger parity (§1.5 authoritative + fail-closed gates), 3.6.0 `/dev board` system-acceptance axis + durable §3 persistence. |
+| `dev` | `3.10.0` | Stable — enforced /dev + /spec + /prd with dual-evaluator review (claude+codex or grok-dual backend), AC-driven MODULE progress, ADR system, worktree-parallel /dev, read-only `/dev board` snapshot dashboard, system-acceptance witness layer, template-version drift visibility. Includes `dev`, `spec`, `prd` skills + opt-in statusline. **Latest:** 3.10.0 adds a Grok Build review backend — /dev auto-detects the runtime (state v7 `review_backend`) and runs every review point (plan / doc-audit / diff / test / adversarial) as two parallel native `spawn_subagent` evaluators (standard auditor + hardened cross-examiner), no Codex CLI required; the claude+codex backend is unchanged. **Earlier:** 3.9.0 PreToolUse enforcement repair (`hookSpecificOutput` decision shape) + loop hardening, 3.8.0 mechanical fail-open DOCS-exit ledger-parity gate, 3.7.0 §1.5↔§3.4 ledger parity (§1.5 authoritative + fail-closed gates). |
 | `claude-best-practice` | `1.0.0` | Stable |
 | `code-companion` | `1.0.0` | Stable (macOS only) |
 | `telegram-channels-pro` | `0.1.3` | v0.1 complete (macOS only) — 8 modules: daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools (5 MCP tools) + routing (LRU + admin gate + slash commands) + deployment (launchd CLI + control socket + ROLLBACK.md). |

@@ -3,7 +3,11 @@ name: dev
 version: 3.3.0
 description: |
   Enforced development workflow: plan → docs → implement → audit → test → summary.
-  Cross-model dual audit: Claude subagent (isolated context) + Codex exec (agent exploration).
+  Dual-evaluator review at every gate, with a runtime-detected review backend (3.10.0+):
+  claude+codex — Claude subagent (isolated context) + Codex exec (agent exploration,
+  cross-model) — on Claude Code / compatible harnesses, or grok-dual — two parallel
+  native spawn_subagent evaluators (standard auditor + hardened cross-examiner,
+  cross-context) — on Grok Build.
   Independent evaluator architecture: plan/audit/test/adversarial phases each spawn fresh
   independent evaluators every round, with zero implementation context, using structured
   convergence metrics as the objective decision criterion.
@@ -23,6 +27,7 @@ allowed-tools:
   - AskUserQuestion
   - Agent
   - Skill
+  - spawn_subagent
 hooks:
   PreToolUse:
     - matcher: "Edit"
@@ -54,8 +59,9 @@ the full closed loop: **plan → update docs → implement → audit → test �
 
 **Core principles:**
 - **Docs first**: MODULE documentation must be updated before any code is written.
-- **Dual-model audit**: every review point = Claude subagent (isolated context) + Codex exec
-  (agent exploration) → cross-model comparison.
+- **Dual-evaluator audit**: every review point = Evaluator A + Evaluator B per the active
+  review backend (claude+codex: Claude subagent + Codex exec, cross-model; grok-dual: two
+  parallel native subagents, cross-context) → merged cross-evaluator comparison.
 - **Independent evaluators**: the plan/audit/test/adversarial phases all use fresh independent
   evaluators every round (zero implementation context), with structured convergence metrics
   (substantive_count / pass_rate) as the objective decision criterion.
@@ -134,12 +140,48 @@ explicitly forbids that escape hatch, while REQUIRING the structured boundary di
 
 ## Review Architecture
 
-All review points use the unified **Claude subagent + Codex exec** dual-model pattern:
+All review points run the SAME dual-evaluator protocol — two independent, fresh,
+read-only evaluators fired in parallel, merged by the main agent as arbiter. WHICH two
+evaluators run is decided by the **review backend**, auto-detected at Phase 0 and
+stored in state.json `review_backend` (3.10.0+):
 
-**Claude subagent**: launched via the Agent tool, with an isolated context to avoid
-confirmation bias (grading your own homework).
-**Codex exec**: invoked via the Bash tool as `codex exec`, running in agent mode to
-autonomously explore source. Command template:
+| Backend | Evaluator A | Evaluator B | Independence axes |
+|---|---|---|---|
+| `claude+codex` — Claude Code / Cursor / any harness whose Agent tool can launch `claude-auditor` | Claude subagent (Agent tool, `subagent_type: claude-auditor`, isolated context) | `codex exec` via the Bash tool (agent exploration) | cross-model + cross-context |
+| `grok-dual` — Grok Build / any harness whose toolset has `spawn_subagent` | native subagent #1: standard auditor | native subagent #2: hardened cross-examiner | cross-context + cross-charter (same model) |
+
+**Detection priority (evaluated at Phase 0 INIT, re-evaluated on `/dev resume`)**:
+1. The toolset has an Agent/Task tool that can launch `subagent_type: claude-auditor`
+   → `review_backend: "claude+codex"` (`codex_available` from the §0.1 CLI detection).
+2. Else the toolset has `spawn_subagent` (Grok Build; absent when `GROK_SUBAGENTS=0`
+   disabled subagents) → `review_backend: "grok-dual"` (`codex_available` initializes
+   `true` — see the positional naming contract below; the §0.1 `CODEX:` detection line
+   is recorded but gates nothing).
+3. Neither → AskUserQuestion: abort (recommended — install the dev plugin's auditor
+   agent, or run under a harness with native subagents), or continue single-evaluator
+   (codex exec only, if the CLI is present) with every round labelled "single-evaluator".
+
+A resume whose re-detected backend differs from state.json (cross-harness resume)
+overwrites `review_backend` with a one-line notice — all counters are positional (A/B),
+so they remain valid across a backend switch.
+
+**Positional naming contract (3.10.0, FROZEN)**: throughout this skill, prose reading
+"Claude (Evaluator)" and fields named `claude_*` mean **Evaluator A** of the active
+backend; prose reading "Codex (Evaluator)" and fields named `codex_*` mean
+**Evaluator B**. The state.json field names (`claude_rounds_run`, `codex_rounds_run`,
+`codex_available`, `codex_consecutive_failures`, eval_history `claude_findings` /
+`codex_findings`, `arbitrated_out[].source: "claude"|"codex"`) are POSITIONAL labels
+frozen for schema stability — not model claims. Under `grok-dual`, `codex_available`
+tracks the second grok evaluator (the codex CLI is irrelevant there), and every
+protocol sentence like "retry Codex once in the same round" reads "retry Evaluator B
+once in the same round".
+
+### Backend `claude+codex`
+
+**Claude subagent (Evaluator A)**: launched via the Agent tool, with an isolated
+context to avoid confirmation bias (grading your own homework).
+**Codex exec (Evaluator B)**: invoked via the Bash tool as `codex exec`, running in
+agent mode to autonomously explore source. Command template:
 
 ```bash
 codex exec "<Plan Mode Protocol + review instructions>" \
@@ -163,14 +205,14 @@ codex exec "<Plan Mode Protocol + review instructions>" \
 blocking). **Do NOT** pass `run_in_background: true`. See the "Known bug workaround"
 note below for why foreground is mandatory.
 
-**Reasoning-effort tiering (3.9.0, optional)**: `model_reasoning_effort="xhigh"` stays the
+**Reasoning-effort tiering (3.9.0, optional; claude+codex only)**: `model_reasoning_effort="xhigh"` stays the
 default for every loop (the 3.6.2 quality decision). Two sanctioned downshifts exist, both
 MAY not MUST: the PLAN evaluation loop (§1.3), and AUDIT rounds whose diff is small
 (`git diff start_commit..HEAD` < 100 changed lines) MAY run Codex at
 `model_reasoning_effort="high"` to cut the foreground block. TEST, adversarial, and any
 security-relevant round ALWAYS stay `xhigh`. When in doubt, keep `xhigh`.
 
-**Known bug workaround — Codex must run in foreground** (anthropics/claude-code#21048):
+**Known bug workaround — Codex must run in foreground (claude+codex only)** (anthropics/claude-code#21048):
 
 Claude Code 2.1.19+ has a regression where background Bash task completion notifications
 frequently fail to fire, leaving the main agent stuck on
@@ -185,8 +227,66 @@ foreground Bash call** (`timeout: 600000`, no `run_in_background: true`):
 - Do NOT revert to `timeout: 300000` + background execution until upstream confirms the
   regression is fixed (still reproducing on Claude Code 2.1.101 as of 2026-04-11).
 
-Both carry the Plan Mode Protocol prefix (built into the auditor system prompt; for codex
-exec it must be included explicitly in the prompt):
+### Backend `grok-dual` (3.10.0+)
+
+Both evaluators are native subagents, each invoked with:
+
+```
+spawn_subagent(
+  description: "{loop} evaluator {A|B} round {N}",
+  subagent_type: "general-purpose",
+  capability_mode: "execute",   // read + run (read-only) commands; NO file-edit tools — the codex `-s read-only` analog
+  background: false,            // foreground/blocking: the result is safe to read on return
+  prompt: "{evaluator prefix}\n\n{the SAME per-loop evaluator prompt the claude+codex backend uses}"
+)
+```
+
+- **Same-response spawn**: the two `spawn_subagent` calls MUST be fired side-by-side in
+  the SAME assistant response (Sync Protocol rule 1). Whether the harness executes them
+  concurrently or serially is irrelevant — decision independence comes from authoring
+  both prompts before either result exists. Do NOT use `background: true` + output
+  polling (same determinism rationale as the claude+codex foreground rule).
+- **Evaluator A prefix (standard auditor persona)**: resolve `agents/claude-auditor.md`
+  via tier order — **Tier 1** `$CLAUDE_PLUGIN_ROOT/agents/claude-auditor.md`; **Tier 2**
+  the installed plugin cache copy; **Tier 3** repo-relative
+  `plugins/dev/agents/claude-auditor.md` — and inline its BODY (everything below the
+  YAML frontmatter) verbatim as the prompt prefix. All tiers failing → inline fallback:
+  the Plan Mode Protocol block below + "You are a strict, independent technical
+  reviewer with fresh eyes. READ-ONLY: never modify files; diagnose, do not fix. Every
+  finding carries a severity (Critical/Warning/Info) and file:line. End with `Verdict:
+  PASS | FAIL` and `Findings: N total (Critical: X, Warning: Y, Info: Z)`."
+- **Evaluator B prefix (hardened cross-examiner)**: Evaluator A's prefix PLUS this
+  charter appended: "You are the second, adversarial reviewer of this artifact. Assume
+  the standard review missed something: hunt for what a first reviewer typically
+  overlooks — implicit contracts, cross-file interactions, failure paths, spec text the
+  code silently narrows, and over-claimed verdicts. Prioritize disconfirming evidence
+  over confirmation. You have NOT seen any other evaluator's output; do not ask for
+  it." (Blind by construction — B's prompt is authored in the same response as A's.)
+- **Persona note**: if the harness registered the plugin's `claude-auditor` agent
+  definition as a spawnable agent type, `subagent_type: "claude-auditor"` (prompts
+  unchanged, no `capability_mode` override) is a sanctioned substitute for the inline
+  prefix. A type-resolution spawn failure falls back to the canonical form above within
+  the same round and does NOT count as an evaluator failure (Sync rule 3 counts
+  evaluator-output failures, not type-resolution retries).
+- **Read-only discipline**: `capability_mode: "execute"` removes the file-edit tools;
+  shell commands must stay read-only by instruction — the same trust level as
+  claude-auditor's Bash allowance under `permissionMode: plan`. Evaluators never
+  delegate, so Grok Build's subagent depth limit (children cannot spawn children) is
+  never hit.
+- **Independence rationale**: grok-dual loses cross-MODEL blind-spot coverage (both
+  evaluators are the same model). It keeps context independence (fresh, isolated child
+  contexts with zero implementation context) and adds charter diversity (standard vs
+  hardened-adversarial prompts) — the 3.7.0 `dual-claude-degraded` design promoted to a
+  first-class backend. grok-dual rounds are therefore NOT flagged `degraded`, do NOT
+  cap Verified confidence, and do NOT force a merge-gate re-review; the backend is
+  reported in `/dev status` and the SUMMARY evaluator-results header. When Evaluator B
+  fails per Sync rule 3, grok-dual degrades straight to single-evaluator — the
+  `dual-claude-degraded` intermediate is claude+codex-only (under grok-dual, Evaluator
+  B already IS the dual-context fallback).
+
+Both backends carry the Plan Mode Protocol prefix (claude+codex: built into the
+auditor system prompt, and included explicitly in every codex exec prompt; grok-dual:
+the leading block of both evaluator prefixes):
 ```
 [PLAN MODE — DEEP REVIEW]
 
@@ -203,11 +303,14 @@ Phase 3 — SYNTHESIZE: Consolidate findings, assign severity levels
 (Critical > Warning > Info), and produce your final verdict (PASS or FAIL).
 ```
 
-**Cross-model comparison**: merge both sets of findings, annotate overlaps and differences,
-and have Claude act as the arbiter.
+**Cross-evaluator comparison**: merge both sets of findings, annotate overlaps and
+differences, and have the main agent act as the arbiter. (Cross-model under
+claude+codex; cross-context/cross-charter under grok-dual — the merge and arbitration
+protocol is identical.)
 
-**Degraded mode**: if `codex_available: false`, skip Codex exec and run only the Claude
-subagent review. Mark the review conclusion as "single-model".
+**Degraded mode**: if `codex_available: false` (Evaluator B unavailable), skip
+Evaluator B and run only the Evaluator A review. Mark the review conclusion as
+"single-evaluator" ("single-model" is the legacy claude+codex spelling).
 
 ---
 
@@ -234,7 +337,7 @@ evaluators, using a single objective metric (`val_bpb`) as the verdict.
              │                                     │
     ┌────────▼─────────────────────────────────────▼──────────┐
     │             FRESH Evaluators (each round)               │
-    │  ① Claude Evaluator  ②  Codex Evaluator  (parallel)    │
+    │  ① Evaluator A  ②  Evaluator B  (parallel, by backend) │
     │  Input: spec + code + test_cmd                          │
     │  Output: structured verdict                             │
     │  Rule: READ-ONLY, zero implementation context           │
@@ -252,10 +355,16 @@ loop: Plan / Audit / Test / Adversarial):**
 The five hard constraints below must be obeyed explicitly by every round's STEP 1 / STEP 2.
 Violating any one is treated as a process violation.
 
+(Backend-neutral reading: "the Claude Agent call" = Evaluator A's spawn; "the Codex
+Bash call" = Evaluator B's spawn. Under `grok-dual` both are `spawn_subagent` calls per
+the Review Architecture templates; the `codex_*` identifiers below are the frozen
+positional Evaluator-B fields of the naming contract.)
+
 1. **Parallel spawn enforcement (single-message rule)**
-   - In STEP 1, the Claude Agent call and the Codex Bash call **must be fired in the same
-     assistant response**, side-by-side. Sequential spawning (Claude first, wait, then Codex)
-     is forbidden.
+   - In STEP 1, the Evaluator A call and the Evaluator B call (claude+codex: the Agent
+     call + the codex Bash call; grok-dual: the two spawn_subagent calls) **must be
+     fired in the same assistant response**, side-by-side. Sequential spawning (A first,
+     wait, then B) is forbidden.
    - Do NOT branch on "let me check Claude's result before deciding whether to run Codex".
    - If preparatory work is needed (read files, compute `file_list`, etc.), do it in a
      **separate** response first, then use **one dedicated response** to fire both evaluators
@@ -274,6 +383,9 @@ Violating any one is treated as a process violation.
      until `codex exec` exits, so stdout is safe to read immediately on return. There is
      no task-notification race. **Do NOT** set `run_in_background: true` — see the
      "Known bug workaround" note near the Codex command template for context.
+   - grok-dual: both `spawn_subagent` calls run `background: false` (blocking), so
+     results are likewise safe to read on return. **Do NOT** use `background: true` +
+     output polling.
 
 3. **Mid-flight degradation protocol**
    - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the
@@ -297,6 +409,11 @@ Violating any one is treated as a process violation.
      - All remaining rounds skip the second reviewer entirely and are labelled "single-evaluator"
      - **Degradation is irreversible** within the same task.
    - Any round where Codex succeeds → reset `codex_consecutive_failures = 0`.
+   - **grok-dual degradation path**: the same retry / two-strikes protocol applies to
+     Evaluator B (the second spawn_subagent). On forced degradation, grok-dual skips the
+     `dual-claude-degraded` intermediate (Evaluator B already IS the dual-context
+     fallback) and goes straight to "single-evaluator" rounds — flagged
+     `"degraded": true`, irreversible, exactly as above.
 
 4. **Per-evaluator counters + invariant**
    - state.json maintains `claude_rounds_run` / `codex_rounds_run`.
@@ -315,11 +432,12 @@ Violating any one is treated as a process violation.
      failure. Do NOT silently advance with a sick state.
 
 5. **Rescue bypass isolation + narration discipline**
-   - `codex:codex-rescue` subagent calls are a **rescue side-channel**; they do **NOT** count
+   - `codex:codex-rescue` subagent calls are a **rescue side-channel** (claude+codex
+     only — grok-dual has no rescue side-channel); they do **NOT** count
      toward `codex_rounds_run` and are **NOT** written to eval_history.
    - All narration output (progress reports, SUMMARY, the "round" hint inside evaluator
-     prompts) **must NOT** use "Claude round X / Codex round Y" phrasing. Always use the
-     single unified `eval_round`.
+     prompts) **must NOT** use "Claude round X / Codex round Y" (or "Evaluator A round X /
+     Evaluator B round Y") phrasing. Always use the single unified `eval_round`.
    - To report an evaluator's per-round finding count, reference
      `eval_history[-1].claude_findings` / `codex_findings` fields — do not expose separate
      round numbers.
@@ -337,12 +455,13 @@ Violating any one is treated as a process violation.
 3. **Read-only**: evaluators do not modify code, they only diagnose problems.
 4. **Structured output**: evaluators must emit a structured report (pass/fail counts,
    per-failure analysis, coverage gaps).
-5. **Dual evaluators**: Claude Evaluator + Codex Evaluator run in parallel and
-   cross-validate results.
+5. **Dual evaluators**: Evaluator A + Evaluator B (per the active review backend) run
+   in parallel and cross-validate results.
 
 **Evaluator prompt templates:**
 
-Claude Evaluator (Agent tool, subagent_type: claude-auditor, Test Evaluator mode):
+Evaluator A (claude+codex: Agent tool, subagent_type claude-auditor · grok-dual:
+spawn_subagent + Evaluator-A prefix; Test Evaluator mode):
 ```
 You are an independent test evaluator. Evaluation round {N}.
 You have ZERO knowledge of why this code was written this way or what was tried before — except the arbitration ledger below.
@@ -357,13 +476,14 @@ Analyze the captured test output (this round's single mechanical run — §5.1 S
 report structured verdict. Do NOT suggest fixes — only diagnose root causes.
 ```
 
-Codex Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking):
+Evaluator B (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false):
 ```
 codex exec "[PLAN MODE — DEEP REVIEW] ... You are an independent test evaluator.
 Round {N}. Analyze the captured output of this round's single mechanical run of {test_cmd}:
 read .dev-state/test-output-round-{N}.txt. Do NOT re-run the suite or the harness — the
-read-only sandbox cannot write build artifacts or bind ports; the captured file is the
-round's single source of truth (§5.1 STEP 0). Analyze ALL failures.
+evaluator is read-only by contract (codex: sandbox-enforced; grok: instruction-enforced);
+the captured file is the round's single source of truth (§5.1 STEP 0). Analyze ALL failures.
 For each: test name, error, root cause diagnosis. Read source files: {file_list}.
 Do NOT suggest fixes." \
   -C "$(git rev-parse --show-toplevel)" \
@@ -371,7 +491,9 @@ Do NOT suggest fixes." \
   -c 'model_reasoning_effort="xhigh"' \
   --json 2>/dev/null | jq -r --unbuffered '...'
 ```
-(Use the jq JSON-parser template from the "Review Architecture" section above.)
+(claude+codex: use the jq JSON-parser template from the "Review Architecture" section
+above. grok-dual: send the same prompt body — without the codex CLI flags — via the
+spawn_subagent template.)
 
 **Result tracking (eval_history):** every round's evaluation result is appended to
 `state.json`'s `eval_history` array, analogous to autoresearch's `results.tsv`:
@@ -422,7 +544,9 @@ the current loop's current-visit `loop_rounds` exceeds `max_round` — never on 
 round's STEP 2 cross-model merge dismisses a finding reported by only ONE evaluator
 (ruling it inapplicable / false-positive / out of this task's blast radius), the dismissal
 MUST be recorded in that round's eval_history entry under `arbitrated_out`
-(`[{round, source: "claude"|"codex", severity, fingerprint, rationale}]`) — silently
+(`[{round, source: "claude"|"codex", severity, fingerprint, rationale}]`; the source
+values are the frozen positional labels — "claude" = Evaluator A, "codex" =
+Evaluator B, under every backend) — silently
 dropping a single-source finding is a process violation (single-source findings are
 historically where the substance lives). STEP 1 of the NEXT round MUST include the accumulated
 `arbitrated_out` list in both evaluator prompts as "previously arbitrated out — re-flag
@@ -444,7 +568,7 @@ read-only banner script is allowlisted by `check-phase.sh` so it runs even on `r
 into a locked phase.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.9.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" dev 3.10.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -481,7 +605,8 @@ Test command:    {test_cmd}
 Test attempts:   {test_attempts}/{max_test_attempts}
 Eval round:      {eval_round}
 Latest pass_rate:{last eval_history entry pass_rate or "N/A"}
-Codex available: {codex_available}
+Review backend:  {review_backend}
+Evaluator B:     {codex_available} (codex exec under claude+codex; grok subagent #2 under grok-dual)
 Last updated:    {updated_at}
 ```
 
@@ -489,23 +614,29 @@ Last updated:    {updated_at}
 
 Read the existing `state.json` and continue executing the logic for its current phase.
 
-**v3→v6 schema defaulting (2.8.0+ / 2.10.0+ / 3.2.0+)**: Read `state.json.version` and
+**v3→v7 schema defaulting (2.8.0+ / 2.10.0+ / 3.2.0+ / 3.10.0+)**: Read `state.json.version` and
 branch on its integer value:
-- `version == 6` (current): all fields present; no defaulting needed.
+- `version == 7` (current): all fields present; no defaulting needed. (The §0.1 backend
+  re-detection still runs — a cross-harness resume overwrites `review_backend` with a
+  one-line notice; counters are positional A/B and stay valid.)
+- `version == 6` (3.2.0–3.9.x): treat missing `review_backend` as `"claude+codex"`
+  (pre-3.10.0 behaviour; §0.1 re-detection may immediately override with a notice).
+  The next state.json write bumps `version: 7` in place.
 - `version == 5` (2.10.0–3.1.x): treat missing `sysac_harness_cmd` as `null` and
   `system_acceptance_deferred` as `[]` (no harness declared, nothing deferred — pre-K4
-  behaviour). The next state.json write bumps `version: 6` in place.
+  behaviour), plus the v6 default above. The next state.json write bumps `version: 7` in place.
 - `version == 4` (2.8.0–2.9.x): treat missing `in_scope_sys_ac_ids` as `[]`
-  (no system ACs in scope — pre-2.10.0 behaviour), plus the v5 defaults above. The next
-  state.json write bumps `version: 6` in place. No hard-fail on v4 read; backward-compatible.
+  (no system ACs in scope — pre-2.10.0 behaviour), plus the v5/v6 defaults above. The next
+  state.json write bumps `version: 7` in place. No hard-fail on v4 read; backward-compatible.
 - `version == 3` (pre-2.8.0): treat missing fields as in-memory
   defaults (`worktree_mode = false`, `main_worktree_path = null`,
   `in_scope_sys_ac_ids = []`, `sysac_harness_cmd = null`,
-  `system_acceptance_deferred = []`). The next state.json write (heartbeat or
-  transition) bumps `version: 6` in place. No hard-fail on v3 read.
-- `version < 3` OR `version > 6` OR field missing/non-integer: HARD
+  `system_acceptance_deferred = []`, `review_backend = "claude+codex"`). The next
+  state.json write (heartbeat or
+  transition) bumps `version: 7` in place. No hard-fail on v3 read.
+- `version < 3` OR `version > 7` OR field missing/non-integer: HARD
   FAIL via AskUserQuestion: "state.json reports version `{N}` which
-  is outside the supported v3/v4/v5/v6 window. This may indicate a
+  is outside the supported v3/v4/v5/v6/v7 window. This may indicate a
   hand-edit, a downgrade attempt, or a future-incompatible state.
   Options: (a) abort and start fresh (`/dev abort` then re-invoke),
   (b) inspect state.json manually and decide." Do NOT silently
@@ -523,16 +654,20 @@ Delete `state.json`, then output "Workflow aborted".
 
 ### /dev doctor
 
-Check six items:
+Check six items (items 3–5 are backend-scoped, 3.10.0+):
 1. Is `jq` available (`which jq`) — core dependency of the hook; missing it breaks phase
    control.
 2. Is `python3` available (`which python3`) — dependency for path normalization in the hook.
-3. Does the `claude-auditor` agent exist (`ls ~/.claude/agents/claude-auditor.md`)?
-4. Is the `codex` CLI available (`which codex`)?
-5. Is `codex-plugin-cc` installed (check for `codex@openai-codex` in
+3. [claude+codex] Does the `claude-auditor` agent exist (`ls ~/.claude/agents/claude-auditor.md`)?
+4. [claude+codex] Is the `codex` CLI available (`which codex`)?
+5. [claude+codex] Is `codex-plugin-cc` installed (check for `codex@openai-codex` in
    `~/.claude/plugins/installed_plugins.json`)?
+   [grok-dual] Items 3–5 are replaced by ONE check: is the `spawn_subagent` tool present
+   in the current toolset (subagents not disabled via `GROK_SUBAGENTS=0`)?
 6. `state.json` health check:
    - `updated_at` more than 2 hours old → possibly stale
+   - `review_backend` matches the re-detected runtime backend? A mismatch means a
+     cross-harness resume — report it (the resume flow will overwrite with a notice).
    - Recommend an action after weighing the signals: clean / keep / resume.
 
 ### /dev board
@@ -625,8 +760,15 @@ fi
    Keep plan → implement → diff review → test → adversarial.)
 - If `SDD_DOCS: EXISTS`, set `sdd_mode: true` and run the full workflow.
 - If `ACTIVE_WORKFLOW: YES`, use AskUserQuestion: resume / abort and restart / cancel.
-- If `CODEX: NOT_FOUND`, set `codex_available: false`; warn but do not abort (run only the
-  Claude subagent review).
+- **Review backend detection (3.10.0+)**: inspect the current toolset per the Review
+  Architecture detection priority — an Agent/Task tool that can launch
+  `subagent_type: claude-auditor` → `review_backend: "claude+codex"`; else a
+  `spawn_subagent` tool (Grok Build) → `review_backend: "grok-dual"`; neither → the
+  detection-rule-3 AskUserQuestion. Under `grok-dual`, initialize `codex_available: true`
+  (it tracks Evaluator B — the second grok evaluator), record the `CODEX:` detection
+  line without acting on it, and suppress the NOT_FOUND warning below.
+- If `CODEX: NOT_FOUND` and the backend is `claude+codex`, set `codex_available: false`;
+  warn but do not abort (run only the Evaluator A review).
 - Test command priority: project `.claude/CLAUDE.md` declaration → auto-detection →
   AskUserQuestion.
 - **System-acceptance harness (K4, 3.2.0+)**: the **runnable command** that brings up + runs the
@@ -667,7 +809,7 @@ grep -q '.dev-state' "$REPO_ROOT/.gitignore" 2>/dev/null || echo '.dev-state/' >
 Use the Write tool to create `$STATE_DIR/state.json`:
 ```json
 {
-  "version": 6,
+  "version": 7,
   "phase": "plan",
   "repo_root": "{REPO_ROOT}",
   "task_id": "dev-{repo_name}-{date}-{short_hash}",
@@ -697,6 +839,7 @@ Use the Write tool to create `$STATE_DIR/state.json`:
   "scope_expansion": [],
   "scope_expansion_depth": 0,
   "deferred_findings": [],
+  "review_backend": "claude+codex" | "grok-dual",
   "codex_available": true/false,
   "sdd_mode": true/false,
   "base_branch": "{BASE}",
@@ -709,15 +852,18 @@ Use the Write tool to create `$STATE_DIR/state.json`:
 
 **v3→v4 forward-compat (2.8.0+)**: `/dev resume` reading a v3 state.json
 treats missing fields as `worktree_mode: false`,
-`main_worktree_path: null`. Next heartbeat write bumps `version: 4`
+`main_worktree_path: null`. Next heartbeat write bumps the version
 in-place. **v4→v5 forward-compat (2.10.0+)**: `/dev resume` reading a v4
 state.json treats missing `in_scope_sys_ac_ids` as `[]` (no system ACs in
 scope — behaves exactly as pre-2.10.0); next heartbeat write bumps the version
 in-place. **v5→v6 forward-compat (3.2.0+)**: a v5 read treats missing
 `sysac_harness_cmd` as `null` and `system_acceptance_deferred` as `[]` (pre-K4
-behaviour), then writes `version: 6`. INIT always writes the current version (no
-in-place legacy generation). No hard-fail on a v3/v4/v5 (legacy) read; backward-compatible.
-`version < 3` or `version > 6` (or missing/non-integer) → HARD FAIL via
+behaviour). **v6→v7 forward-compat (3.10.0+)**: a v6 read treats missing
+`review_backend` as `"claude+codex"` (pre-3.10.0 behaviour; the §0.1 backend
+re-detection may immediately override it with a notice), then writes `version: 7`.
+INIT always writes the current version (no
+in-place legacy generation). No hard-fail on a v3/v4/v5/v6 (legacy) read; backward-compatible.
+`version < 3` or `version > 7` (or missing/non-integer) → HARD FAIL via
 AskUserQuestion (do not silently default unsupported versions). See
 `/dev resume` subcommand block for the explicit defaulting protocol
 and §8.3 rule 3 (in `references/worktree.md`) for the underlying trust-boundary rationale.
@@ -1125,11 +1271,14 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH Plan evaluators in parallel
           (brand-new agents every round)
-  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash
-   call MUST be fired side-by-side in the SAME assistant response, not sequentially.)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Evaluator A call and the Evaluator B
+   call MUST be fired side-by-side in the SAME assistant response, not sequentially.
+   Under grok-dual both are spawn_subagent calls — Review Architecture templates.)
   ──────────────────────────────────────────────────────────────
 
-  ① Claude Plan Evaluator (Agent tool, subagent_type: claude-auditor)
+  ① Evaluator A — Plan Evaluator
+     (claude+codex: Agent tool, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent plan evaluator. Evaluation round {eval_round}.
         You have ZERO knowledge of how this plan was created or what was tried before — except the arbitration ledger below.
@@ -1160,7 +1309,9 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Plan Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
+  ② Evaluator B — Plan Evaluator
+     (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: Plan Mode Protocol +
        "You are an independent plan evaluator. Round {eval_round}.
         Review this development plan. Read referenced source files to verify assumptions.
@@ -1174,8 +1325,9 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS (zero Critical+Warning) | FAIL"
      Use the codex exec command template (see "Review Architecture"); pass `-s read-only`.
+     (claude+codex only — grok-dual sends the same prompt via spawn_subagent.)
 
-  Degraded: when codex_available: false, run only the Claude Evaluator and mark the round
+  Degraded: when codex_available: false, run only Evaluator A and mark the round
   as "single-evaluator".
 
   ──────────────────────────────────────────────────────────────
@@ -1605,14 +1757,17 @@ repeat:
   (Per Dual-Evaluator Sync Protocol rule 1: all 4 evaluators MUST be fired side-by-side
    in the SAME assistant response, not split across sequential responses. Even under
    degraded / lightweight mode, the actually-invoked subset still has to be fired in one
-   response.)
+   response. Under grok-dual all four are spawn_subagent calls: ①③ carry the
+   Evaluator-A prefix, ②④ the Evaluator-B hardened prefix.)
   ──────────────────────────────────────────────────────────────
 
   Launch 4 evaluators at once (2 pairs: doc consistency + diff review):
 
   ── Doc consistency evaluation (skipped in lightweight mode) ──
 
-  ① Claude Doc Evaluator (Agent tool, subagent_type: claude-auditor)
+  ① Evaluator A — Doc Evaluator
+     (claude+codex: Agent tool, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent doc-vs-code evaluator. Round {eval_round}.
         You have ZERO knowledge of how this code was implemented — except the arbitration ledger below.
@@ -1652,18 +1807,22 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Doc Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
+  ② Evaluator B — Doc Evaluator
+     (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: Plan Mode Protocol +
        "Independent doc-vs-code evaluator. Round {eval_round}.
         Compare MODULE docs against source code, chapter by chapter.
         Docs: {docs_list}. Source files: {file_list}.
         Output: Critical/Warning/Info findings with doc:section and file:line.
         Substantive Findings count. Verdict: PASS | FAIL."
-     Use the codex exec command template; `-s read-only`.
+     Use the codex exec command template; `-s read-only`. (claude+codex only.)
 
   ── Diff Review evaluation ──
 
-  ③ Claude Diff Evaluator (Agent tool, subagent_type: claude-auditor)
+  ③ Evaluator A — Diff Evaluator
+     (claude+codex: Agent tool, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent diff reviewer. Round {eval_round}.
         You have ZERO knowledge of implementation decisions — except the arbitration ledger below.
@@ -1710,7 +1869,9 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ④ Codex Diff Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
+  ④ Evaluator B — Diff Evaluator
+     (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: Plan Mode Protocol +
        "Independent diff reviewer. Round {eval_round}.
         Run: git diff {start_commit}..HEAD
@@ -1729,7 +1890,7 @@ repeat:
         Step 4: report under 'Contract Drift' section
         Output: Critical/Warning/Info findings with file:line + Contract Drift section.
         Substantive Findings count. Verdict: PASS | FAIL."
-     Use the codex exec command template; `-s read-only`.
+     Use the codex exec command template; `-s read-only`. (claude+codex only.)
 
   Degraded: when codex_available: false, run only ① and ③ and mark as "single-evaluator".
   Lightweight mode (sdd_mode: false): skip ① and ②; run only ③ and ④ (Diff Review).
@@ -1739,15 +1900,15 @@ repeat:
   ──────────────────────────────────────────────────────────────
   **Barrier assertion (Sync Protocol rule 2)**: before entering this step, ALL of the
   following must hold:
-    - Claude results for ① and ③ have returned and are format-valid
-    - Codex results for ② and ④ have returned and are format-valid, OR codex_available == false
+    - Evaluator A results for ① and ③ have returned and are format-valid
+    - Evaluator B results for ② and ④ have returned and are format-valid, OR codex_available == false
   If either fails → apply Sync Protocol rule 3 (retry Codex once in the same round).
   Two consecutive rounds of Codex failure → force degraded mode
   (codex_available = false, degraded_from_round = eval_round).
 
   Merge 4 reports (or 2 in degraded/lightweight mode):
-  - Doc consistency: merge and de-dupe findings from Claude ① + Codex ②.
-  - Diff review: merge and de-dupe findings from Claude ③ + Codex ④.
+  - Doc consistency: merge and de-dupe findings from Evaluator A ① + Evaluator B ②.
+  - Diff review: merge and de-dupe findings from Evaluator A ③ + Evaluator B ④.
   - Cross-dimension: take the union of findings across both dimensions.
   - Findings reported by both evaluators → high confidence.
   - Findings reported by only one → the main agent arbitrates whether they apply; every
@@ -1868,7 +2029,9 @@ repeat:
   CONCURRENTLY in one worktree collide on ports / DB schemas / build caches (spurious
   FAILs that burn rounds), and Codex's mandatory `-s read-only` sandbox cannot write
   build artifacts or bind localhost ports at all — evaluator-side execution produced
-  sandbox artifacts, not independent evidence. Independence lives in the DIAGNOSIS,
+  sandbox artifacts, not independent evidence. (grok-dual: Evaluator B has no codex
+  sandbox, but the same rule holds by contract — evaluators analyze the captured
+  witness, never re-execute.) Independence lives in the DIAGNOSIS,
   not the execution: both evaluators independently ANALYZE the same captured witness
   output against plan/docs/ACs. The captured file is the round's single source of
   truth for pass/fail counts; the witness-floor is unchanged (the harness run still
@@ -1879,11 +2042,14 @@ repeat:
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH evaluators in parallel
           (each round must use brand-new agents)
-  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash call
-   MUST be fired side-by-side in the SAME assistant response, not sequentially.)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Evaluator A call and the Evaluator B
+   call MUST be fired side-by-side in the SAME assistant response, not sequentially.
+   Under grok-dual both are spawn_subagent calls — Review Architecture templates.)
   ──────────────────────────────────────────────────────────────
 
-  ① Claude Test Evaluator (Agent tool, subagent_type: claude-auditor)
+  ① Evaluator A — Test Evaluator
+     (claude+codex: Agent tool, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent test evaluator. Evaluation round {eval_round}.
         You have ZERO knowledge of how this code was implemented or what was tried before — except the arbitration ledger below.
@@ -2011,13 +2177,15 @@ repeat:
 
         Verdict: PASS | FAIL"
 
-  ② Codex Test Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
+  ② Evaluator B — Test Evaluator
+     (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: Plan Mode Protocol +
        "You are an independent test evaluator. Round {eval_round}.
         Analyze the captured output of this round's single mechanical run of {test_cmd}:
         read .dev-state/test-output-round-{eval_round}.txt. Do NOT attempt to re-run the
-        suite or the harness — your read-only sandbox cannot write build artifacts or
-        bind ports; the captured file is the round's single source of truth.
+        suite or the harness — you are read-only by contract (codex: sandbox-enforced;
+        grok: instruction-enforced); the captured file is the round's single source of truth.
         Analyze ALL failures — not just the first one.
         For each failure: test name, error message, root cause diagnosis with file:line.
         Read source files to trace root causes: {file_list}
@@ -2066,8 +2234,9 @@ repeat:
         Do NOT suggest fixes. Only diagnose.
         Output: pass/fail counts, per-failure analysis, coverage gaps, AC Verification, Regression Check, System Acceptance."
      Use the codex exec command template (see "Review Architecture"); `-s read-only`.
+     (claude+codex only — grok-dual sends the same prompt via spawn_subagent.)
 
-  Degraded: when codex_available: false, run only the Claude Evaluator and mark as
+  Degraded: when codex_available: false, run only Evaluator A and mark as
   "single-evaluator".
 
   ──────────────────────────────────────────────────────────────
@@ -2240,11 +2409,14 @@ repeat:
 
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn two FRESH adversarial evaluators in parallel
-  (Per Dual-Evaluator Sync Protocol rule 1: the Claude Agent call and the Codex Bash call
-   MUST be fired side-by-side in the SAME assistant response, not sequentially.)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Evaluator A call and the Evaluator B
+   call MUST be fired side-by-side in the SAME assistant response, not sequentially.
+   Under grok-dual both are spawn_subagent calls — Review Architecture templates.)
   ──────────────────────────────────────────────────────────────
 
-  ① Claude Adversarial Evaluator (Agent tool, subagent_type: claude-auditor)
+  ① Evaluator A — Adversarial Evaluator
+     (claude+codex: Agent tool, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent security evaluator. Fresh context — round {eval_round}.
         You have ZERO knowledge of implementation decisions or prior review rounds — except the arbitration ledger below.
@@ -2273,7 +2445,9 @@ repeat:
            Source: file:line
         Verdict: PASS | FAIL"
 
-  ② Codex Adversarial Evaluator (Bash tool, codex exec, timeout: 600000, foreground blocking)
+  ② Evaluator B — Adversarial Evaluator
+     (claude+codex: Bash tool, codex exec, timeout: 600000, foreground blocking ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: Plan Mode Protocol +
        "You are an independent security evaluator. Round {eval_round}. Fresh context.
         Run: git diff {start_commit}..HEAD
@@ -2288,8 +2462,9 @@ repeat:
         [Critical] witness-floor violation.
         No compliments. Only report problems with severity, attack vector, file:line."
      Use the codex exec command template (see "Review Architecture"); `-s read-only`.
+     (claude+codex only — grok-dual sends the same prompt via spawn_subagent.)
 
-  Degraded: when codex_available: false, run only the Claude Evaluator and mark as
+  Degraded: when codex_available: false, run only Evaluator A and mark as
   "single-evaluator".
 
   ──────────────────────────────────────────────────────────────
@@ -2436,7 +2611,7 @@ Before entering the SUMMARY phase, every one of these conditions must hold:
 **Soft gates** (can be user-accepted past the round limit): Doc Consistency, Diff
 Info-only findings.
 
-Degraded mode (codex_available: false): only the Claude Evaluator needs to PASS.
+Degraded mode (codex_available: false — Evaluator B absent): only Evaluator A needs to PASS.
 Lightweight mode (sdd_mode: false): skip Doc Consistency.
 
 **DoD AC-scope rule:**
@@ -2649,7 +2824,7 @@ Modified files:     {file list}
 Updated docs:       {doc list}
 Acceptance criteria:{checked}/{total}
 
-Independent evaluator results (eval_history):
+Independent evaluator results (eval_history; backend: {review_backend}):
   Plan eval:        {plan_rounds} rounds, substantive {N} → ... → 0
   Audit eval:       {audit_rounds} rounds, substantive {N} → ... → 0 (doc: {N}, diff: {N})
   Test eval:        {test_rounds} rounds, pass_rate {X}% → ... → 100%
@@ -2720,7 +2895,7 @@ This run's scope & unverified (mechanically sourced from state.json — NEVER fr
 this is the sanctioned home for boundary disclosure, per the §0 Iron Rule discriminator):
   Waived scope:   {waived_scope descriptions | none}
   Deferred:       {deferred_findings + system_acceptance_deferred entries, each with reason + user_accepted_at | none}
-  Degraded modes: {single-evaluator (codex absent) / lightweight (sdd_mode:false) / heuristic tier | none}
+  Degraded modes: {single-evaluator (Evaluator B absent) / lightweight (sdd_mode:false) / heuristic tier | none}
   Left Partial:   {REQ-IDs still Partial + the mechanical reason (e.g. Witness:e2e SYS-AC deferred / some AC untested) | none}
 ```
 
