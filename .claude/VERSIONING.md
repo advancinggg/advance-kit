@@ -942,3 +942,53 @@ tiering, foreground workaround, dual-claude-degraded fallback); grok-dual adds a
 backend without touching them. The system-acceptance rule-7 "supported window v3–v6" statement
 is superseded by rule 3 above (window now v3–v7) — that is the sanctioned, additive widening
 pattern already used by v5→v6.
+
+## Release checklist (for grok-dual adoption in /spec + /prd — 3.11.0+)
+
+The 3.11.0 minor extends the 3.10.0 review-backend abstraction from /dev to **/spec and /prd**:
+their evaluator loops (Phase 1.3 Architecture, Phase 2.4 Module, UT.10 journey discovery,
+/prd Phase 4 COVERAGE) select Evaluator A/B by the same runtime-detected backend. Additive and
+backward-compatible: on claude+codex harnesses nothing changes. When editing any of these
+surfaces, the following rules MUST hold:
+
+1. **One backend contract, three skills (FROZEN)**: the backend enum, detection priority,
+   positional A/B field semantics, and the grok-dual invocation contract are the SAME frozen
+   3.10.0 rules 1/2/4 across /dev, /spec, and /prd. The positional mapping covers /spec's
+   `architecture_claude_rounds_run` / `architecture_codex_rounds_run` + per-module
+   `claude_rounds_run` / `codex_rounds_run` counters and /prd's `phase_4_claude_rounds_run` /
+   `phase_4_codex_rounds_run` / `phase_4_codex_consecutive_failures`. Diverging any skill from
+   the shared contract (different enum, different detection order, a skill-local rename) is a
+   regression; renaming the counter fields is MAJOR.
+
+2. **progress.json additive `review_backend` field (/spec + /prd)**: neither state file carries
+   an integer schema version (unlike /dev state.json v7), so the field is additive with
+   read-defaulting — missing on resume → `"claude+codex"`, then Phase-0 re-detection may
+   override with a notice. /prd's §0.0 resume validator MUST NOT list `review_backend` as a
+   required field (legacy states must keep resuming); adding it to `required` is a breaking
+   change → MAJOR.
+
+3. **`arbitrated_out.source` enum UNCHANGED**: stays `{"claude","codex"}` (positional A/B
+   labels) in /prd's §0.0 shape check and /spec's ledger. Extending or renaming the enum
+   (e.g. adding "grok") breaks resume validation on cross-version states → MAJOR.
+
+4. **UT.10 tier semantics preserved**: Tier 1 = both evaluators of the active backend;
+   Tier 2 = Evaluator B absent; Tier 3 = no evaluator-capable subagent at all (claude+codex:
+   auditor missing; grok-dual: `spawn_subagent` absent, e.g. `GROK_SUBAGENTS=0`). The UT.9
+   summary reports `dual-evaluator ({review_backend})`. Dropping the backend name from the
+   tier report, or collapsing the tiers, is a regression.
+
+5. **grok-dual stays first-class in /spec + /prd** (3.10.0 rule 5 extended): rounds are NOT
+   flagged degraded and there is no confidence cap; the backend is reported in `/spec status`
+   and the /spec Final Report "Evaluator tier" line. /prd's degraded-mode literal changed from
+   "single-evaluator mode — codex unavailable" to the canonical positional
+   "single-evaluator mode — Evaluator B unavailable"; anything parsing the old literal must
+   accept both spellings (the old one may still appear in pre-3.11.0 transcripts).
+
+6. **8-sync-point + description rotation still apply** (Hard rules 1+2+5, 2.8.1 rule 9): all 8
+   points moved to 3.11.0 together; the description tail rotated (Latest 3.11.0, Earlier
+   3.10.0/3.9.0/3.8.0, dropped 3.7.0).
+
+**All prior freezes (2.4.0–3.10.0) REMAIN in force.** The 3.11.0 rules above are additive: the
+claude+codex paths in /spec and /prd keep every pre-3.11.0 contract verbatim (the codex exec
+recipes, foreground workaround, degradation ladder, UT.10 tier ladder); grok-dual joins as a
+parallel backend without touching them.

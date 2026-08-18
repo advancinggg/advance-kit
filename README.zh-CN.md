@@ -135,7 +135,7 @@ chmod +x ~/.claude/bin/statusline.sh
 
 | 插件 | 版本 | 状态 |
 |---|---|---|
-| `dev` | `3.10.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双评估器审查（claude+codex 或 grok-dual 后端）、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.10.0 新增 Grok Build 评审后端——/dev 运行时自动识别环境（state v7 `review_backend`），所有评审点（plan / doc-audit / diff / test / adversarial）改用两个并行的原生 `spawn_subagent` 评估器（标准审计员 + 强化对抗审查员），无需 Codex CLI，Evaluator-A/B 位置化计数器冻结；claude+codex 后端保持不变。**早期：** 3.9.0 PreToolUse 强制层修复（`hookSpecificOutput` 判定结构）+ 全链路加固、3.8.0 机械化 DOCS 退出 ledger 一致性门、3.7.0 §1.5↔§3.4 ledger 一致性（§1.5 权威 + fail-closed 门）。 |
+| `dev` | `3.11.0` | 稳定版——强制执行的 /dev + /spec + /prd 工作流，双评估器审查（claude+codex 或 grok-dual 后端）、AC 驱动的 MODULE 进度、ADR 系统、worktree 并行 /dev、只读 `/dev board` 快照看板、系统验收见证层、模版版本漂移可见性。包含 `dev` / `spec` / `prd` 三个 skill + 可选 statusline。**最新：** 3.11.0 将 Grok Build 评审后端扩展到 /spec 与 /prd——架构 / 模块 / UT.10 旅程发现 / PRD 覆盖评估循环均改用两个并行的原生 `spawn_subagent` 评估器（标准审计员 + 强化对抗审查员），沿用冻结的 Evaluator-A/B 位置化计数器（progress.json 增量 `review_backend` 字段）；Grok Build 下全程无需 Codex CLI。**早期：** 3.10.0 /dev 的 Grok Build 评审后端（运行时自动识别、state v7、所有评审点双 spawn_subagent 评估器）、3.9.0 PreToolUse 强制层修复（`hookSpecificOutput` 判定结构）+ 全链路加固、3.8.0 机械化 DOCS 退出 ledger 一致性门。 |
 | `claude-best-practice` | `1.0.0` | 稳定版 |
 | `code-companion` | `1.0.0` | 稳定版（仅 macOS） |
 | `telegram-channels-pro` | `0.1.3` | v0.1 完成（仅 macOS）—— 8 个模块：daemon-core + telegram-client + mcp-server-proxy + admin-auth + observability + mcp-tools（5 个 MCP 工具）+ routing（LRU + 管理员鉴权 + slash 命令）+ deployment（launchd CLI + 控制 socket + ROLLBACK.md）。 |

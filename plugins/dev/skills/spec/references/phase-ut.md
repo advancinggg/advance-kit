@@ -589,8 +589,10 @@ active-workflow gate; its results feed the UT.9 summary. **Skipped entirely** wh
 behaves as pre-2.10.0). Idempotent and merge-preserving on re-run.
 
 **Scope contract (3.0.0+)**: UT.10 runs **evaluator-backed journey discovery** — the same
-dual-evaluator method as Phase 1.3 (Claude auditor + Codex, loop-until-dry), degrading to
-single-evaluator (Codex absent) or to a legacy heuristic (no evaluator available at all). It
+dual-evaluator method as Phase 1.3 (Evaluator A + Evaluator B per the runtime-detected
+review backend — claude+codex: Claude auditor + Codex; grok-dual: two spawn_subagent
+evaluators — loop-until-dry), degrading to single-evaluator (Evaluator B absent) or to a
+legacy heuristic (no evaluator-capable subagent available at all). It
 discovers under-classified REQs and emergent cross-module journeys; it is NOT merely a grep.
 What UT.10 still does NOT do: regenerate ARCHITECTURE.md / MODULE docs or re-run their
 evaluator loops — so a full `/spec` rerun remains the path for complete spec re-convergence
@@ -624,10 +626,11 @@ UT.10.A policy prompt (step 5).
    dormant. The separator row gains a matching `---` cell. ALL other columns / cells /
    rows are preserved verbatim (a mechanical column insert, NOT a regeneration).
 4. **e2e-candidate + journey discovery (3.0.0+, evaluator-backed; tiered)**. Discover which
-   REQs are system-behaviour and what journeys exist, using the best available tier (read the
-   `codex_available` flag + auditor presence from the Phase 0.1 dependency check):
+   REQs are system-behaviour and what journeys exist, using the best available tier (read
+   `review_backend` + the `codex_available` flag (Evaluator B) + Evaluator-A availability
+   from the Phase 0.1 dependency check):
 
-   - **Tier 1 — dual-evaluator (default; Claude auditor + Codex both available).** Spawn TWO
+   - **Tier 1 — dual-evaluator (default; both evaluators of the active backend available).** Spawn TWO
      fresh independent evaluators in the SAME assistant response (Dual-Evaluator Sync Protocol
      rule 1), ZERO prior-classification knowledge. Inputs: the just-migrated
      `REQUIREMENTS_REGISTRY.md` (Witness column all `unit`), `docs/PRD.md` / `docs/00-prd/*.md`
@@ -640,15 +643,17 @@ UT.10.A policy prompt (step 5).
      cross-module user-observable behaviour that NO single REQ captures (arises from a chain
      of REQs/modules); list each as: short name — REQ-IDs spanned — module chain. Output:
      `Under-classified REQs:`, `Emergent journeys:`, `Substantive Findings: N`,
-     `Verdict: PASS|FAIL`." Codex runs foreground `codex exec -s read-only` (timeout 600000),
-     per the Phase 1.3 Codex command template. **loop-until-dry**: re-spawn fresh evaluators
+     `Verdict: PASS|FAIL`." claude+codex: Evaluator B runs foreground `codex exec -s read-only`
+     (timeout 600000), per the Phase 1.3 Codex command template; grok-dual: both evaluators are
+     spawn_subagent calls per the Sync Protocol's grok-dual template (A prefix / B hardened
+     prefix, `background: false`). **loop-until-dry**: re-spawn fresh evaluators
      each round; stop when a round surfaces NO new under-classified REQ AND NO new emergent
      journey (cap 5 rounds → take the union so far, note in UT.9). Merge both evaluators by
      UNION; a one-evaluator-only finding is arbitrated toward INCLUSION (completion, never
      pruning — this is the anti-"silently-drop-journey" rule).
-   - **Tier 2 — single-evaluator (Codex unavailable per dep check).** Same prompt, Claude
-     auditor only; loop-until-dry as above.
-   - **Tier 3 — heuristic fallback (no auditor available at all).** Legacy rule, no evaluator:
+   - **Tier 2 — single-evaluator (Evaluator B unavailable per dep check / Sync rule 3).** Same
+     prompt, Evaluator A only; loop-until-dry as above.
+   - **Tier 3 — heuristic fallback (no evaluator-capable subagent available at all).** Legacy rule, no evaluator:
      a REQ is a candidate if its `Module(s)` cell names ≥2 distinct `MODULE-NNN` IDs, OR its
      Source/Section maps to a PRD §3 flow flagged `System acceptance journey: Yes` — when
      matching that marker, accept BOTH the canonical ?-less spelling AND the legacy
@@ -743,13 +748,13 @@ Part markers: all 3/3 present in each MODULE doc post-upgrade.
 Legacy-body flags: Y (user-resolved via UT.6.1).
 
 System-acceptance migration (UT.10):
-  Journey discovery tier: {dual-evaluator | single-evaluator (Codex absent) | heuristic fallback (no evaluator)} — {N} round(s); {M} under-classified REQ(s) + {K} emergent journey(s) found
+  Journey discovery tier: {dual-evaluator ({review_backend}) | single-evaluator (Evaluator B absent) | heuristic fallback (no evaluator)} — {N} round(s); {M} under-classified REQ(s) + {K} emergent journey(s) found
   Witness column: {added — N REQs defaulted unit, M marked e2e | already present (skipped) | n/a (no registry)}
   docs/SYSTEM-ACCEPTANCE.md: {created skeleton (0 e2e REQs) | created with {J} SYS-J / {A} atomic SYS-AC seeded | merge-preserved ({P} passed SYS-AC kept, {B} §1.1 criteria backfilled, {D} §3 deferrals kept) | n/a} — §3 Accepted-deferrals section + `> dev-template:` stamp ensured (3.6.1)
   NOTE: UT.10 ran evaluator-grade JOURNEY discovery (tier above) but did NOT regenerate
      ARCHITECTURE.md / MODULE docs — run a full `/spec` for complete spec re-convergence
      (PRD coverage, MECE, interface consistency). If the tier is "heuristic fallback", the
-     journey set may be incomplete: rerun with Codex/auditor available, or run a full `/spec`.
+     journey set may be incomplete: rerun with both evaluators available, or run a full `/spec`.
 
 This run's scope & unverified (factual — NEVER softening a finding):
   Not regenerated:        ARCHITECTURE.md / MODULE bodies (upgrade-template upgrades structure only).

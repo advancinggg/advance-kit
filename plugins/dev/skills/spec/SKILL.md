@@ -5,6 +5,9 @@ description: |
   Generate architecture and module specification documents from PRD.
   MECE module decomposition, self-contained specs for AI agent implementation.
   Independent evaluator architecture: PRD coverage evaluator ensures zero requirements lost.
+  Review backend (3.11.0+): runtime auto-detected — claude+codex (Claude auditor + Codex
+  exec) on Claude Code / compatible harnesses, or grok-dual (two parallel native
+  spawn_subagent evaluators) on Grok Build.
   Supports greenfield and existing project modes.
   MODULE template (2.3.0+): §1.1 includes "Serves PRD topics" reverse mapping;
   §2.13 Operations (runbook) and §2.14 Observability (log/metric/trace schema) capture
@@ -31,6 +34,7 @@ allowed-tools:
   - Grep
   - AskUserQuestion
   - Agent
+  - spawn_subagent
 ---
 
 # /spec: Specification Driven Development
@@ -43,7 +47,7 @@ module specifications → determine implementation order.
 - **MECE**: Module decomposition must be Mutually Exclusive and Collectively Exhaustive
 - **Self-contained**: Each module spec includes sufficient context for independent AI Agent implementation
 - **Explicit dependencies**: Inter-module dependencies must be clearly labeled
-- **Independent evaluators**: Architecture and Module specs are validated by fresh evaluators (Claude + Codex) checking PRD coverage, MECE compliance, interface consistency — convergence = zero substantive findings
+- **Independent evaluators**: Architecture and Module specs are validated by fresh evaluators (Evaluator A + Evaluator B per the runtime-detected review backend — claude+codex: Claude auditor + Codex exec; grok-dual on Grok Build: two parallel native spawn_subagent evaluators) checking PRD coverage, MECE compliance, interface consistency — convergence = zero substantive findings
 - **English output**: All generated documents use English
 
 **Iron Rule — No Escape Hatch (fixes #27 and #30; a global constraint across /dev and /spec):**
@@ -102,7 +106,7 @@ drift). The version literal in the command below is the **session-bound** versio
 on every dev-plugin bump (VERSIONING Hard rule 1 / "version-drift visibility" checklist).
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.10.0 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-}/bin/dev-version-banner.sh" spec 3.11.0 2>/dev/null
 ```
 
 - Show the banner output. If it reports **VERSION DRIFT**, surface the warning prominently, then
@@ -131,10 +135,24 @@ which mktemp 2>/dev/null && echo "MKTEMP: OK" || echo "MKTEMP: MISSING (upgrade-
 [ -f "$HOME/.claude/agents/claude-auditor.md" ] && echo "AUDITOR: OK" || echo "AUDITOR: MISSING"
 ```
 
-- `jq` missing → set `codex_available: false` (Codex evaluator pipeline depends on jq for JSON parsing)
-- `codex` missing → set `codex_available: false`
-- Either case: evaluators run Claude-only (single-evaluator mode), warn user
-- `claude-auditor` missing → for the **main PRD workflow**, error: evaluator loops cannot function (abort or run without evaluators — user choice via AskUserQuestion). For **`upgrade-template`**, do NOT abort: record the auditor absence and let UT.10.A step 4 degrade to its Tier-3 heuristic fallback (UT.9 reports the heuristic tier). Likewise, missing `codex` degrades UT.10 to Tier 2 (single-evaluator), not an error.
+- **Review backend detection (3.11.0+, same contract as /dev "Review Architecture")**:
+  inspect the current toolset — an Agent/Task tool that can launch
+  `subagent_type: claude-auditor` → `review_backend: "claude+codex"`; else a
+  `spawn_subagent` tool (Grok Build) → `review_backend: "grok-dual"`; neither →
+  AskUserQuestion (abort, or run without evaluators). Store `review_backend` in
+  progress.json (missing on an older resume → default `"claude+codex"`, then re-detect).
+  **Positional naming contract (frozen)**: prose reading "Claude" and `claude_*` fields
+  mean **Evaluator A**; prose reading "Codex" and `codex_*` fields mean **Evaluator B**
+  — under EVERY backend. Under `grok-dual`: `codex_available` initializes `true` and
+  tracks Evaluator B (the second grok evaluator); the `JQ:`/`CODEX:`/`AUDITOR:` lines
+  above are recorded but do NOT gate anything (jq/codex are not used; the auditor FILE
+  may be absent — the Evaluator-A persona is tier-read from `agents/claude-auditor.md`
+  per the grok-dual invocation template in the Dual-Evaluator Sync Protocol below, with
+  an inline fallback).
+- [claude+codex] `jq` missing → set `codex_available: false` (Codex evaluator pipeline depends on jq for JSON parsing)
+- [claude+codex] `codex` missing → set `codex_available: false`
+- Either case: evaluators run Evaluator-A-only (single-evaluator mode), warn user
+- [claude+codex] `claude-auditor` missing → for the **main PRD workflow**, error: evaluator loops cannot function (abort or run without evaluators — user choice via AskUserQuestion). For **`upgrade-template`**, do NOT abort: record the auditor absence and let UT.10.A step 4 degrade to its Tier-3 heuristic fallback (UT.9 reports the heuristic tier). Likewise, missing `codex` degrades UT.10 to Tier 2 (single-evaluator), not an error. [grok-dual] the equivalent hard failure is `spawn_subagent` absent (e.g. `GROK_SUBAGENTS=0`) — same AskUserQuestion for the main workflow, same Tier-3 heuristic degradation for `upgrade-template`.
 - `python3` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires python3 for UT.1 path canonicalization. Install python3 and retry. (python3 is not required for the main PRD workflow.)"
 - `mktemp` missing AND sub-command is `upgrade-template` → REFUSE with error "`upgrade-template` requires mktemp for UT.6 atomic write. Install GNU coreutils / BSD mktemp and retry."
 
@@ -215,6 +233,7 @@ Write `docs/.spec-state/progress.json`:
   "phase": "init",
   "prd_paths": [],
   "mode": "greenfield|existing_project",
+  "review_backend": "claude+codex" | "grok-dual",
   "codex_available": true,
   "codex_consecutive_failures": 0,
   "degraded_from_round": null,
@@ -295,7 +314,8 @@ exclude them from `system_uncovered_count` (default `[]`). Both persist across r
 Phase: {phase}
 Mode: {mode}
 PRD: {prd_paths}
-Codex: {codex_available}
+Review backend: {review_backend}
+Evaluator B: {codex_available} (codex exec under claude+codex; grok subagent #2 under grok-dual)
 Architecture: {architecture_done} ({converged in {architecture_eval_rounds} rounds | accepted at round {architecture_accepted_at_round}})
 Modules: {len(modules_completed)} converged, {len(modules_accepted)} accepted, {len(modules_in_progress)} in progress / {modules_total} total
 Last updated: {updated_at}
@@ -640,8 +660,36 @@ When §0.0 dispatch routes to `adr-new`:
 
 The following 5 hard constraints are **shared** by every evaluator loop in /spec. Violating any one is treated as a process violation and the main agent must stop and report.
 
+**Backend-neutral reading (3.11.0)**: "the Claude Agent call" = Evaluator A's spawn; "the
+Codex Bash call" = Evaluator B's spawn; the `codex_*` identifiers are the frozen positional
+Evaluator-B fields (see Phase 0.1 backend detection). Under `review_backend: "grok-dual"`
+(Grok Build) both evaluators are `spawn_subagent` calls:
+
+```
+spawn_subagent(
+  description: "{loop} evaluator {A|B} round {N}",
+  subagent_type: "general-purpose",
+  capability_mode: "execute",   // read + run (read-only) commands; NO file-edit tools — the codex `-s read-only` analog
+  background: false,            // foreground/blocking: the result is safe to read on return
+  prompt: "{evaluator prefix}\n\n{the SAME per-loop evaluator prompt the claude+codex backend uses}"
+)
+```
+
+Evaluator A's prefix = the auditor persona (tier-resolve `agents/claude-auditor.md` —
+Tier 1 `$CLAUDE_PLUGIN_ROOT/agents/claude-auditor.md`; Tier 2 installed plugin cache;
+Tier 3 repo-relative `plugins/dev/agents/claude-auditor.md` — inline its BODY below the
+frontmatter; all tiers failing → the Plan Mode Protocol block + "You are a strict,
+independent technical reviewer with fresh eyes. READ-ONLY. Findings carry severity +
+file:line. End with Verdict + Findings counts."). Evaluator B's prefix = A's prefix PLUS
+the hardened cross-examination charter ("You are the second, adversarial reviewer.
+Assume the standard review missed something; prioritize disconfirming evidence. You
+have NOT seen any other evaluator's output; do not ask for it."). Same contract as /dev
+"Review Architecture" Backend `grok-dual`; grok-dual is a FIRST-CLASS backend (rounds
+are NOT flagged degraded, no confidence cap — the backend is reported in `/spec status`
+and the Final Report evaluator tier).
+
 1. **Parallel spawn enforcement (single-message rule)**
-   - In STEP 1, the Claude Agent call and Codex Bash call **must be fired in the same assistant response**, side-by-side. Sequential spawning (Claude first, wait, then Codex) is forbidden.
+   - In STEP 1, the Evaluator A call and the Evaluator B call (claude+codex: the Claude Agent call + the Codex Bash call; grok-dual: the two spawn_subagent calls) **must be fired in the same assistant response**, side-by-side. Sequential spawning (A first, wait, then B) is forbidden.
    - Do NOT branch on "let me check Claude's result before deciding whether to run Codex".
    - If preparatory work is needed (read files, compute inputs), do it in a **separate** response first, then use **one dedicated response** to fire both evaluators simultaneously.
    - Violation (sequential spawn) → Codex is treated as "did not participate this round" and `eval_round` does NOT advance.
@@ -652,6 +700,7 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
      b. `codex_result != null AND format_valid(codex_result)` **OR** `codex_available == false` (in degraded mode only check a)
    - If either fails (output missing, empty, malformed) → STEP 2 is **forbidden**; handle per rule 3.
    - Codex foreground Bash (`timeout: 600000`, blocking): the Bash tool does NOT return until `codex exec` exits, so stdout is safe to read immediately on return. **Do NOT pass `run_in_background: true`** — see the "Known bug workaround" note near the Codex command template.
+   - grok-dual: both `spawn_subagent` calls run `background: false` (blocking) — results are likewise safe to read on return. **Do NOT** use `background: true` + output polling.
 
 3. **Mid-flight degradation protocol**
    - Within a single round, if Codex returns failure/timeout/empty → retry Codex **once in the same round** (Claude's result is cached, do NOT re-run Claude).
@@ -662,6 +711,7 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
      - All subsequent rounds skip Codex, mark as "single-evaluator"
      - **Degradation is irreversible** within the same spec run.
    - Any round where Codex succeeds → reset `codex_consecutive_failures = 0`.
+   - grok-dual: the same retry / two-strikes protocol applies to Evaluator B (the second spawn_subagent); forced degradation likewise goes straight to "single-evaluator" (Evaluator A only), irreversible.
 
 4. **Per-evaluator counters + invariant**
    - State file maintains `claude_rounds_run` / `codex_rounds_run` (per architecture eval and per module eval).
@@ -674,8 +724,8 @@ The following 5 hard constraints are **shared** by every evaluator loop in /spec
    - Invariant violation → stop the loop and AskUserQuestion to report process failure. Do NOT silently advance.
 
 5. **Rescue bypass isolation + narration discipline**
-   - `codex:codex-rescue` subagent calls are **rescue side-channels** — they do **NOT** count toward `codex_rounds_run` and do **NOT** get written to `eval_history`.
-   - All narration output (progress reports, Final Report, evaluator prompt round hints) **must NOT** use "Claude round X / Codex round Y" phrasing — always use the single unified `eval_round`.
+   - `codex:codex-rescue` subagent calls are **rescue side-channels** (claude+codex only — grok-dual has no rescue side-channel) — they do **NOT** count toward `codex_rounds_run` and do **NOT** get written to `eval_history`.
+   - All narration output (progress reports, Final Report, evaluator prompt round hints) **must NOT** use "Claude round X / Codex round Y" (or "Evaluator A round X / Evaluator B round Y") phrasing — always use the single unified `eval_round`.
    - To report an evaluator's per-round finding count, reference `eval_history[-1].claude_findings` / `codex_findings` fields — do not expose separate round numbers.
 
 ---
@@ -981,11 +1031,14 @@ repeat:
 
   ──────────────────────────────────────────────────────────────
   STEP 1: Spawn TWO fresh Architecture Evaluators in parallel
-  (Per Dual-Evaluator Sync Protocol rule 1: Claude Agent call + Codex Bash
-   MUST be fired in the SAME assistant response, not sequentially.)
+  (Per Dual-Evaluator Sync Protocol rule 1: the Evaluator A call + the Evaluator B call
+   MUST be fired in the SAME assistant response, not sequentially. Under grok-dual both
+   are spawn_subagent calls — see the Sync Protocol's grok-dual template.)
   ──────────────────────────────────────────────────────────────
 
-  ① Claude Architecture Evaluator (Agent, subagent_type: claude-auditor)
+  ① Evaluator A — Architecture Evaluator
+     (claude+codex: Agent, subagent_type claude-auditor ·
+      grok-dual: spawn_subagent + Evaluator-A prefix)
      prompt:
        "You are an independent architecture evaluator. Round {eval_round}.
         You have ZERO knowledge of how this architecture was designed.
@@ -1046,7 +1099,9 @@ repeat:
         Substantive Findings: {Critical + Warning count}
         Verdict: PASS | FAIL"
 
-  ② Codex Architecture Evaluator (Bash, codex exec, timeout: 600000)
+  ② Evaluator B — Architecture Evaluator
+     (claude+codex: Bash, codex exec, timeout: 600000 ·
+      grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
      prompt: "[PLAN MODE — DEEP REVIEW] Before reviewing, create a review plan. Phase 1: identify all review dimensions. Phase 2: execute systematically. Phase 3: synthesize findings with severity levels and verdict." +
        "Independent architecture evaluator. Round {eval_round}.
         Read PRD: {prd_paths}. Read: docs/ARCHITECTURE.md.
@@ -1110,8 +1165,10 @@ repeat:
        '
      ```
      Bash timeout: 600000. Run in **foreground** — do NOT set `run_in_background: true`.
+     (Command + workaround below are claude+codex only — grok-dual sends the same prompt
+      via the Sync Protocol's spawn_subagent template.)
 
-     **Known bug workaround — Codex must run in foreground** (anthropics/claude-code#21048):
+     **Known bug workaround — Codex must run in foreground (claude+codex only)** (anthropics/claude-code#21048):
      Claude Code 2.1.19+ has a regression where background Bash task completion notifications
      frequently fail to fire, leaving the main agent stuck on
      `Churned for Nm Ks · 1 shell still running` until the user manually sends another
@@ -1121,13 +1178,14 @@ repeat:
      task-notification race. Do NOT revert to background execution until upstream confirms
      the regression is fixed (still reproducing on 2.1.101 as of 2026-04-11).
 
-  Fallback: codex not available → Claude only, mark as single-evaluator.
+  Fallback: Evaluator B unavailable (codex_available: false) → Evaluator A only, mark as single-evaluator.
 
   **IMPORTANT: Wait for BOTH evaluators to complete before proceeding.**
   The Codex Bash command runs in the **foreground** (`timeout: 600000`, blocking;
   **do NOT** set `run_in_background: true`). The Bash tool does not return until
   `codex exec` exits, so stdout is safe to read immediately on return. See the
   "Known bug workaround" note near the Codex command template for context.
+  (grok-dual: both spawn_subagent calls block with `background: false` — same guarantee.)
   Do NOT proceed to STEP 2 until both evaluator outputs are fully available.
 
   ──────────────────────────────────────────────────────────────
@@ -1878,11 +1936,14 @@ For each module (in topological order):
 
     ──────────────────────────────────────────────────────────────
     STEP 1: Spawn TWO fresh Module Evaluators in parallel
-    (Per Dual-Evaluator Sync Protocol rule 1: Claude Agent call + Codex Bash
-     MUST be fired in the SAME assistant response, not sequentially.)
+    (Per Dual-Evaluator Sync Protocol rule 1: the Evaluator A call + the Evaluator B call
+     MUST be fired in the SAME assistant response, not sequentially. Under grok-dual both
+     are spawn_subagent calls — see the Sync Protocol's grok-dual template.)
     ──────────────────────────────────────────────────────────────
 
-    ① Claude Module Evaluator (Agent, subagent_type: claude-auditor)
+    ① Evaluator A — Module Evaluator
+       (claude+codex: Agent, subagent_type claude-auditor ·
+        grok-dual: spawn_subagent + Evaluator-A prefix)
        prompt:
          "You are an independent module spec evaluator. Round {eval_round}.
           You have ZERO knowledge of how this spec was generated.
@@ -1945,7 +2006,9 @@ For each module (in topological order):
           Substantive Findings: {Critical + Warning count}
           Verdict: PASS | FAIL"
 
-    ② Codex Module Evaluator (Bash, codex exec, timeout: 600000)
+    ② Evaluator B — Module Evaluator
+       (claude+codex: Bash, codex exec, timeout: 600000 ·
+        grok-dual: spawn_subagent + Evaluator-B hardened prefix, background: false)
        prompt: "[PLAN MODE — DEEP REVIEW] Before reviewing, create a review plan. Phase 1: identify all review dimensions. Phase 2: execute systematically. Phase 3: synthesize findings with severity levels and verdict." +
          "Independent module spec evaluator. Round {eval_round}.
           Read PRD: {prd_paths}. Read ARCHITECTURE: docs/ARCHITECTURE.md.
@@ -2008,15 +2071,17 @@ For each module (in topological order):
            else empty end
          '
        ```
-       Bash timeout: 600000.
+       Bash timeout: 600000. (Command is claude+codex only — grok-dual sends the same
+       prompt via the Sync Protocol's spawn_subagent template.)
 
-    Fallback: codex not available → Claude only.
+    Fallback: Evaluator B unavailable (codex_available: false) → Evaluator A only.
 
     **IMPORTANT: Wait for BOTH evaluators to complete before proceeding.**
     The Codex Bash command runs in the **foreground** (`timeout: 600000`, blocking;
     **do NOT** set `run_in_background: true`). The Bash tool does not return until
     `codex exec` exits, so stdout is safe to read immediately on return. See the
     "Known bug workaround" note near the Codex command template for context.
+    (grok-dual: both spawn_subagent calls block with `background: false` — same guarantee.)
     Do NOT proceed to STEP 2 until both evaluator outputs are fully available.
 
     ──────────────────────────────────────────────────────────────
@@ -2595,7 +2660,7 @@ Evaluator Results:
     ...
 
 Scope & unverified (factual boundaries — NEVER softening a finding):
-  Evaluator tier:         {dual-evaluator (Claude+Codex) | single-evaluator (Codex unavailable)}
+  Evaluator tier:         {dual-evaluator (claude+codex) | dual-evaluator (grok-dual) | single-evaluator (Evaluator B unavailable)}
   Accepted-at-limit:      {sections accept-at-limit'd at round N (user_accepted_at {timestamp}) — NOT converged: <list> | none}
   Not evaluator-verified: {the accepted-at-limit sections above | none}
 
